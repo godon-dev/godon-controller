@@ -49,23 +49,23 @@ jobs:
           from breeder_service import BreederService
           from database import execute_query, execute_ddl_query
 
-          # Setup test config - simulate different database connections
+          # Setup test config - use the actual database names
           # Meta DB connection
           meta_db_config = {
               'host': 'localhost',
               'port': '5432',
               'user': 'postgres_user',
               'password': 'postgres_password',
-              'database': 'test_meta_db'
+              'database': 'meta_data'
           }
 
-          # Archive DB connection (different database like in production)
+          # Archive DB connection
           archive_db_config = {
               'host': 'localhost',
               'port': '5432',
               'user': 'postgres_user',
               'password': 'postgres_password',
-              'database': 'test_archive_db'
+              'database': 'archive_db'
           }
 
           DatabaseConfig.META_DB = meta_db_config.copy()
@@ -86,13 +86,13 @@ jobs:
               'database': 'postgres_db'
           }
 
-          # Create metadata database
-          execute_ddl_query(admin_config, 'CREATE DATABASE test_meta_db;')
-          print('✓ Created test_meta_db')
+          # Create the actual databases that the services expect
+          execute_ddl_query(admin_config, 'CREATE DATABASE meta_data;')
+          print('✓ Created meta_data')
 
-          # Create archive database
-          execute_ddl_query(admin_config, 'CREATE DATABASE test_archive_db;')
-          print('✓ Created test_archive_db')
+          # Create archive database (needed for breeder databases)
+          execute_ddl_query(admin_config, 'CREATE DATABASE archive_db;')
+          print('✓ Created archive_db')
 
           # Test 1: Create breeder (tests schema creation + data insertion)
           print('Testing breeder creation (schema + data)...')
