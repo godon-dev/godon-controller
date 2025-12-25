@@ -5,7 +5,7 @@ import copy
 import logging
 from dateutil.parser import parse
 
-from .database import ArchiveDatabaseRepository, MetadataDatabaseRepository
+from database import ArchiveDatabaseRepository, MetadataDatabaseRepository
 
 logger = logging.getLogger(__name__)
 
