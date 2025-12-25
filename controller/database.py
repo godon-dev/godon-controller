@@ -59,7 +59,7 @@ class ArchiveDatabaseRepository:
     def create_database(self, breeder_id):
         """Create a new database for a breeder"""
         db_config = self.base_config.copy()
-        db_config.update(dbname="archive_db")
+        db_config['database'] = "archive_db"
 
         query = f"CREATE DATABASE {breeder_id};"
         execute_ddl_query(db_config, query)
@@ -68,7 +68,7 @@ class ArchiveDatabaseRepository:
     def drop_database(self, breeder_id):
         """Drop a breeder database"""
         db_config = self.base_config.copy()
-        db_config.update(dbname="archive_db")
+        db_config['database'] = "archive_db"
 
         query = f"DROP DATABASE IF EXISTS {breeder_id};"
         execute_ddl_query(db_config, query)
@@ -84,7 +84,7 @@ class MetadataDatabaseRepository:
     def _get_db_config(self):
         """Get database config with metadata database name"""
         db_config = self.base_config.copy()
-        db_config.update(dbname='meta_data')
+        db_config['database'] = 'meta_data'
         return db_config
 
     def create_table(self):
