@@ -22,7 +22,7 @@ def get_db_connection(db_config):
             logger.debug("Closed database connection")
 
 def execute_query(db_config, query, with_result=False):
-    """Execute a database query"""
+    """Execute a database query within a transaction"""
     try:
         with get_db_connection(db_config) as connection:
             with connection.cursor() as cursor:
@@ -38,6 +38,18 @@ def execute_query(db_config, query, with_result=False):
         logger.error(f"Query execution failed: {e}")
         raise
 
+def execute_ddl_query(db_config, query):
+    """Execute DDL statements that require autocommit (CREATE DATABASE, etc.)"""
+    try:
+        with get_db_connection(db_config) as connection:
+            connection.set_session(autocommit=True)
+            with connection.cursor() as cursor:
+                cursor.execute(query)
+                logger.debug(f"DDL executed: {query[:50]}...")
+    except Exception as e:
+        logger.error(f"DDL execution failed: {e}")
+        raise
+
 class ArchiveDatabaseRepository:
     """Repository for archive database operations"""
 
@@ -50,7 +62,7 @@ class ArchiveDatabaseRepository:
         db_config.update(dbname="archive_db")
 
         query = f"CREATE DATABASE {breeder_id};"
-        execute_query(db_config, query)
+        execute_ddl_query(db_config, query)
         logger.info(f"Created archive database: {breeder_id}")
 
     def drop_database(self, breeder_id):
@@ -59,7 +71,7 @@ class ArchiveDatabaseRepository:
         db_config.update(dbname="archive_db")
 
         query = f"DROP DATABASE IF EXISTS {breeder_id};"
-        execute_query(db_config, query)
+        execute_ddl_query(db_config, query)
         logger.info(f"Dropped archive database: {breeder_id}")
 
 class MetadataDatabaseRepository:

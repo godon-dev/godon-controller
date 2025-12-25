@@ -47,7 +47,7 @@ jobs:
           # Test imports
           from config import DatabaseConfig
           from breeder_service import BreederService
-          from database import execute_query
+          from database import execute_query, execute_ddl_query
 
           # Setup test config - simulate different database connections
           # Meta DB connection
@@ -87,11 +87,11 @@ jobs:
           }
 
           # Create metadata database
-          execute_query(admin_config, 'CREATE DATABASE test_meta_db;')
+          execute_ddl_query(admin_config, 'CREATE DATABASE test_meta_db;')
           print('✓ Created test_meta_db')
 
           # Create archive database
-          execute_query(admin_config, 'CREATE DATABASE test_archive_db;')
+          execute_ddl_query(admin_config, 'CREATE DATABASE test_archive_db;')
           print('✓ Created test_archive_db')
 
           # Test 1: Create breeder (tests schema creation + data insertion)
