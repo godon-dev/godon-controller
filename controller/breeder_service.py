@@ -5,7 +5,7 @@ import copy
 import logging
 from dateutil.parser import parse
 
-from .database import ArchiveDatabaseRepository, MetadataDatabaseRepository
+from database import ArchiveDatabaseRepository, MetadataDatabaseRepository
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +111,10 @@ class BreederService:
             self.metadata_repo.create_table()
             breeder_meta_data_row = self.metadata_repo.fetch_meta_data(breeder_id)
 
-            if breeder_meta_data_row:
+            if breeder_meta_data_row and len(breeder_meta_data_row) > 0:
                 breeder_data = json.dumps({
-                    "creation_timestamp": breeder_meta_data_row[1].isoformat(),
-                    "breeder_definition": breeder_meta_data_row[2]
+                    "creation_timestamp": breeder_meta_data_row[0][1].isoformat(),
+                    "breeder_definition": breeder_meta_data_row[0][2]
                 })
                 result = "SUCCESS"
             else:
