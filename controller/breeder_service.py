@@ -58,11 +58,55 @@ def determine_config_shard(run_id, target_id, targets_count, config, parallel_ru
     config_result['settings']['sysctl'] = settings_space
     return config_result
 
-def start_optimization_flow(flow_id, config):
-    """Start an optimization flow (placeholder for actual flow logic)"""
-    logger.info(f"Starting optimization flow {flow_id} with config")
-    logger.debug(f"Config: {config}")
-    return flow_id, config
+def start_optimization_flow(flow_id, shard_config, run_id, target_id, breeder_id):
+    """Start breeder worker optimization flow in Windmill
+    
+    Launches a breeder worker flow with its sharded configuration.
+    The full breeder config is stored in meta DB; workers receive their
+    specific shard (either full config for cooperative mode, or sharded
+    parameter ranges for non-cooperative mode).
+    
+    Args:
+        flow_id: Identifier for this flow instance
+        shard_config: Worker-specific configuration (full or sharded)
+        run_id: Parallel run identifier for this worker
+        target_id: Target identifier for this worker
+        breeder_id: UUID of the breeder
+    
+    Returns:
+        tuple: (flow_id, job_id) - Flow identifier and Windmill job ID
+    """
+    try:
+        import wmill
+        
+        breeder_name = shard_config.get('breeder', {}).get('name', 'unknown_breeder')
+        flow_path = f"f/breeder/{breeder_name}/breeder_worker"
+        
+        # Pass shard_config directly - worker uses it, no DB fetch needed
+        flow_inputs = {
+            'config': shard_config,
+            'breeder_id': breeder_id,
+            'run_id': run_id,
+            'target_id': target_id
+        }
+        
+        logger.info(f"Starting flow {flow_id} at path: {flow_path}")
+        logger.debug(f"Flow inputs: breeder_id={breeder_id}, run_id={run_id}, target_id={target_id}")
+        logger.debug(f"Shard config: {shard_config.get('settings', {}).get('sysctl', {})}")
+        
+        # Launch the breeder worker flow
+        job_id = wmill.run_flow_async(
+            path=flow_path,
+            args=flow_inputs
+        )
+        
+        logger.info(f"Flow {flow_id} started with job ID: {job_id}")
+        
+        return flow_id, job_id
+        
+    except Exception as e:
+        logger.error(f"Failed to start optimization flow {flow_id}: {e}")
+        raise
 
 class BreederService:
     """Service for managing breeder lifecycle operations"""
@@ -101,7 +145,7 @@ class BreederService:
 
                 for run_id in range(parallel_runs):
                     flow_config = breeder_config
-                    flow_id = f'{breeder_name}_{run_id}'
+                    flow_id = f'{breeder_name}_{target_count}_{run_id}'
 
                     if not is_cooperative:
                         flow_config = determine_config_shard(
@@ -112,7 +156,13 @@ class BreederService:
                             parallel_runs_count=parallel_runs
                         )
 
-                    start_optimization_flow(flow_id, flow_config)
+                    start_optimization_flow(
+                        flow_id=flow_id,
+                        shard_config=flow_config,
+                        run_id=run_id,
+                        target_id=target_count,
+                        breeder_id=breeder_uuid
+                    )
 
                 target_count += 1
 
