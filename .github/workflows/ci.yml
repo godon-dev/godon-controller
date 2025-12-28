@@ -44,6 +44,10 @@ jobs:
           import os
           sys.path.insert(0, 'controller')
 
+          # Mock wmill before imports (new start_optimization_flow uses it)
+          from unittest.mock import MagicMock
+          sys.modules['wmill'] = MagicMock()
+
           # Test imports
           from config import DatabaseConfig
           from breeder_service import BreederService
