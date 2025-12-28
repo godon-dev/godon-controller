@@ -1,5 +1,16 @@
 import os
 
+# Internal breeder capabilities - not customer configurable
+BREEDER_CAPABILITIES = {
+    "linux_performance": {
+        "supported_target_types": ["ssh"]
+    },
+    # Future breeders:
+    # "api_performance": {
+    #     "supported_target_types": ["http", "api"],
+    # },
+}
+
 class DatabaseConfig:
     ARCHIVE_DB = dict(
         user="yugabyte",
@@ -56,6 +67,23 @@ class BreederConfig:
 
         if not breeder_config.get('settings', {}).get('sysctl'):
             errors.append("Missing settings.sysctl configuration")
+
+        # Validate target type compatibility
+        breeder_name = breeder_config.get('breeder', {}).get('name')
+        if breeder_name in BREEDER_CAPABILITIES:
+            supported_types = BREEDER_CAPABILITIES[breeder_name]['supported_target_types']
+            
+            for idx, target in enumerate(breeder_config.get('effectuation', {}).get('targets', [])):
+                target_type = target.get('type')
+                
+                if not target_type:
+                    errors.append(f"Target {idx}: Missing required 'type' field")
+                elif target_type not in supported_types:
+                    errors.append(
+                        f"Target {idx} ({target.get('address', 'unknown')}): "
+                        f"Type '{target_type}' not supported by breeder '{breeder_name}'. "
+                        f"Supported types: {supported_types}"
+                    )
 
         if errors:
             error_msg = "Config validation failed:\n" + "\n".join(f"  - {err}" for err in errors)
