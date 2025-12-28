@@ -10,7 +10,11 @@ from database import ArchiveDatabaseRepository, MetadataDatabaseRepository
 logger = logging.getLogger(__name__)
 
 def determine_config_shard(run_id, target_id, targets_count, config, parallel_runs_count):
-    """Determine configuration shard for parallel runs"""
+    """Determine configuration shard for parallel runs using hash-based assignment with overlap
+    
+    Uses hash-based deterministic assignment to distribute parameter space across workers,
+    with 10% overlap between shards to avoid boundary blind spots.
+    """
     config_result = copy.deepcopy(config)
     settings_space = config_result.get('settings', {}).get('sysctl', {})
 
@@ -25,13 +29,29 @@ def determine_config_shard(run_id, target_id, targets_count, config, parallel_ru
         if upper is None or lower is None:
             continue
 
+        # Hash-based worker assignment for even distribution
+        worker_id = f"{run_id}_{target_id}_{setting_key}"
+        worker_hash = int(hashlib.sha256(worker_id.encode()).hexdigest(), 16)
+        
+        total_shards = targets_count * parallel_runs_count
+        shard_index = worker_hash % total_shards
+        
+        # Calculate shard boundaries
         delta = abs(upper - lower)
-        shard_size = delta / targets_count * parallel_runs_count
-        offset = (run_id + target_id)
-
-        new_lower = int(lower + shard_size * offset)
-        new_upper = int(new_lower + shard_size)
-
+        shard_size = delta / total_shards
+        
+        # Add overlap to avoid boundary blind spots
+        overlap_percent = 0.10
+        overlap = int(shard_size * overlap_percent)
+        
+        # Calculate shard boundaries with overlap
+        new_lower = int(lower + shard_size * shard_index)
+        new_upper = int(lower + shard_size * (shard_index + 1))
+        
+        # Respect original boundaries
+        new_lower = max(lower, new_lower - overlap)
+        new_upper = min(upper, new_upper + overlap)
+        
         setting_value['constraints']['lower'] = new_lower
         setting_value['constraints']['upper'] = new_upper
 
