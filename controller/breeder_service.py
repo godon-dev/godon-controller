@@ -129,6 +129,7 @@ class BreederService:
 
             breeder_uuid = str(uuid.uuid4())
             breeder_config['uuid'] = breeder_uuid
+            creation_ts = datetime.datetime.now()
 
             __uuid_common_name = f"breeder_{breeder_uuid.replace('-', '_')}"
             breeder_id = f'{__uuid_common_name}'
@@ -138,7 +139,7 @@ class BreederService:
             self.metadata_repo.create_table()
             self.metadata_repo.insert_breeder_meta(
                 breeder_id=breeder_uuid,
-                creation_ts=datetime.datetime.now(),
+                creation_ts=creation_ts,
                 meta_state=breeder_config
             )
 
@@ -147,7 +148,8 @@ class BreederService:
                 hash_suffix = hashlib.sha256(str.encode(target.get('address', ''))).hexdigest()[0:6]
 
                 for run_id in range(parallel_runs):
-                    flow_config = breeder_config
+                    flow_config = breeder_config.copy()
+                    flow_config['creation_ts'] = creation_ts.isoformat()
                     flow_id = f'{breeder_name}_{target_count}_{run_id}'
 
                     if not is_cooperative:
