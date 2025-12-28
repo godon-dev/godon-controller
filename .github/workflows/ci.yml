@@ -104,7 +104,12 @@ jobs:
               'breeder': {
                   'name': 'linux_performance'
               },
-              'run': {'parallel': 1},
+              'run': {
+                  'parallel': 1,
+                  'completion_criteria': {
+                      'iterations': {'min': 10, 'max': 100}
+                  }
+              },
               'effectuation': {
                   'targets': [{
                       'type': 'ssh',
