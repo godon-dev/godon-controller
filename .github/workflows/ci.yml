@@ -49,9 +49,9 @@ jobs:
           sys.modules['wmill'] = MagicMock()
 
           # Test imports
-          from config import DatabaseConfig
-          from breeder_service import BreederService
-          from database import execute_query, execute_ddl_query
+          from controller.config import DatabaseConfig
+          from controller.breeder_service import BreederService
+          from controller.database import execute_query, execute_ddl_query
 
           # Setup test config - use the actual database names
           # Meta DB connection
@@ -101,10 +101,22 @@ jobs:
           # Test 1: Create breeder (tests schema creation + data insertion)
           print('Testing breeder creation (schema + data)...')
           breeder_config = {
-              'name': 'test_breeder',
+              'breeder': {
+                  'name': 'linux_performance'
+              },
               'run': {'parallel': 1},
-              'effectuation': {'targets': [{'address': 'test.local'}]},
+              'effectuation': {
+                  'targets': [{
+                      'type': 'ssh',
+                      'address': 'test.local',
+                      'connection': {
+                          'username': 'test_user',
+                          'private_key': '/path/to/key'
+                      }
+                  }]
+              },
               'cooperation': {'active': False},
+              'objectives': [{'name': 'test_metric', 'direction': 'minimize'}],
               'settings': {
                   'sysctl': {
                       'vm_swappiness': {
@@ -143,7 +155,7 @@ jobs:
           # Test 3: Create another breeder (tests schema is reused)
           print('Testing second breeder creation...')
           breeder_config_2 = breeder_config.copy()
-          breeder_config_2['name'] = 'test_breeder_2'
+          breeder_config_2['breeder']['name'] = 'linux_performance'
           result = service.create_breeder(breeder_config_2)
           assert result['result'] == 'SUCCESS', f'Create 2 failed: {result}'
           breeder_id_2 = result['breeder_id']

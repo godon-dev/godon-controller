@@ -1,4 +1,4 @@
-from config import DatabaseConfig, BreederConfig
+from controller.config import DatabaseConfig, BreederConfig
 from breeder_service import BreederService
 
 def main(breeder_config=None):

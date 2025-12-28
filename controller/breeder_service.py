@@ -5,7 +5,8 @@ import copy
 import logging
 from dateutil.parser import parse
 
-from database import ArchiveDatabaseRepository, MetadataDatabaseRepository
+from controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
+from controller.config import BreederConfig, BREEDER_CAPABILITIES
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,8 @@ class BreederService:
     def create_breeder(self, breeder_config):
         """Create a new breeder instance"""
         try:
+            BreederConfig.validate_minimal(breeder_config)
+            
             breeder_name = breeder_config.get('name', 'unnamed_breeder')
             parallel_runs = breeder_config.get('run', {}).get('parallel', 1)
             targets = breeder_config.get('effectuation', {}).get('targets', [])
