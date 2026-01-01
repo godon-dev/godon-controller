@@ -68,6 +68,15 @@ class BreederConfig:
         if not breeder_config.get('settings', {}).get('sysctl'):
             errors.append("Missing settings.sysctl configuration")
 
+        # Validate cooperation configuration
+        if breeder_config.get('cooperation', {}).get('active', False):
+            parallel_workers = breeder_config.get('run', {}).get('parallel', 1)
+            if parallel_workers <= 1:
+                errors.append(
+                    f"Cooperation enabled but run.parallel={parallel_workers}. "
+                    "Cooperation requires parallel > 1 for multiple workers to share trials."
+                )
+
         # Validate target type compatibility
         breeder_name = breeder_config.get('breeder', {}).get('name')
         if breeder_name in BREEDER_CAPABILITIES:
