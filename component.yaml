@@ -1,5 +1,5 @@
 name: controller
-target: f/controller
+target: controller
 workspace: godon
 
 scripts:
