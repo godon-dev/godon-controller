@@ -198,8 +198,186 @@ jobs:
           print('✓ Cleaned up test breeder')
 
           print('')
-          print('ALL TESTS PASSED ✅')
+          print('ALL BREEDER TESTS PASSED ✅')
           print('Schema creation, data insertion, retrieval, listing, and deletion all work!')
+          "
+
+      - name: Run credential integration tests
+        run: |
+          python3 -c "
+          import sys
+          import os
+          sys.path.insert(0, 'controller')
+
+          # Mock wmill before imports
+          from unittest.mock import MagicMock
+          sys.modules['wmill'] = MagicMock()
+
+          # Test imports
+          from controller.config import DatabaseConfig
+          from controller.database import execute_query, execute_ddl_query
+          from controller.credential_create import main as create_credential
+          from controller.credential_get import main as get_credential
+          from controller.credentials_get import main as list_credentials
+          from controller.credential_delete import main as delete_credential
+
+          # Setup test config - use the actual database names
+          meta_db_config = {
+              'host': 'localhost',
+              'port': '5432',
+              'user': 'postgres_user',
+              'password': 'postgres_password',
+              'database': 'meta_data'
+          }
+
+          DatabaseConfig.META_DB = meta_db_config.copy()
+
+          print('')
+          print('CREDENTIAL INTEGRATION TESTS')
+          print('=' * 50)
+
+          # Test 1: Create first credential (tests table creation + data insertion)
+          print('Testing credential creation (table + data)...')
+          credential_data_1 = {
+              'name': 'test_ssh_key',
+              'credential_type': 'ssh_private_key',
+              'description': 'Test SSH key credential'
+          }
+          result = create_credential(credential_data_1)
+          assert result['result'] == 'SUCCESS', f'Create failed: {result}'
+          credential_id_1 = result['credential']['id']
+          print(f'✓ Created credential: {credential_id_1}')
+
+          # Test 2: Get credential (tests data retrieval)
+          print('Testing credential retrieval...')
+          result = get_credential(credential_id_1)
+          assert result['result'] == 'SUCCESS', f'Get failed: {result}'
+          assert result['credential']['name'] == 'test_ssh_key'
+          assert result['credential']['credential_type'] == 'ssh_private_key'
+          print('✓ Retrieved credential data')
+
+          # Test 3: Create second credential with different type
+          print('Testing second credential creation...')
+          credential_data_2 = {
+              'name': 'test_api_token',
+              'credential_type': 'api_token',
+              'description': 'Test API token credential'
+          }
+          result = create_credential(credential_data_2)
+          assert result['result'] == 'SUCCESS', f'Create 2 failed: {result}'
+          credential_id_2 = result['credential']['id']
+          print(f'✓ Created second credential: {credential_id_2}')
+
+          # Test 4: Create third credential with yet another type
+          print('Testing third credential creation...')
+          credential_data_3 = {
+              'name': 'test_db_connection',
+              'credential_type': 'database_connection',
+              'description': 'Test database connection credential'
+          }
+          result = create_credential(credential_data_3)
+          assert result['result'] == 'SUCCESS', f'Create 3 failed: {result}'
+          credential_id_3 = result['credential']['id']
+          print(f'✓ Created third credential: {credential_id_3}')
+
+          # Test 5: List credentials (tests listing with multiple records)
+          print('Testing credential listing...')
+          result = list_credentials()
+          assert result['result'] == 'SUCCESS', f'List failed: {result}'
+          assert len(result['credentials']) >= 3, f'Expected >=3 credentials, got {len(result[\"credentials\"])}'
+          print(f'✓ Found {len(result[\"credentials\"])} credential(s)')
+
+          # Test 6: Delete credential (tests deletion logic)
+          print('Testing credential deletion...')
+          result = delete_credential(credential_id_1)
+          assert result['result'] == 'SUCCESS', f'Delete failed: {result}'
+          print('✓ Deleted credential')
+
+          # Test 7: Verify deletion (tests get after delete)
+          print('Testing deleted credential retrieval...')
+          result = get_credential(credential_id_1)
+          assert result['result'] == 'FAILURE', 'Should not find deleted credential'
+          assert 'not found' in result['error'].lower()
+          print('✓ Verified deletion')
+
+          # Test 8: Verify list updated (tests list after deletion)
+          print('Testing credential listing after deletion...')
+          result = list_credentials()
+          assert result['result'] == 'SUCCESS', f'List failed: {result}'
+          assert len(result['credentials']) >= 2, 'Should have 2 credentials left'
+          print(f'✓ Found {len(result[\"credentials\"])} credential(s) after deletion')
+
+          # Test 9: Test validation - duplicate name
+          print('Testing duplicate name validation...')
+          credential_data_duplicate = {
+              'name': 'test_api_token',  # Already exists
+              'credential_type': 'api_token',
+              'description': 'Duplicate name test'
+          }
+          result = create_credential(credential_data_duplicate)
+          assert result['result'] == 'FAILURE', 'Should fail with duplicate name'
+          assert 'already exists' in result['error'].lower()
+          print('✓ Duplicate name validation works')
+
+          # Test 10: Test validation - invalid credential type
+          print('Testing invalid credential type validation...')
+          credential_data_invalid = {
+              'name': 'test_invalid',
+              'credential_type': 'invalid_type',
+              'description': 'Invalid type test'
+          }
+          result = create_credential(credential_data_invalid)
+          assert result['result'] == 'FAILURE', 'Should fail with invalid type'
+          assert 'invalid credential_type' in result['error'].lower()
+          print('✓ Invalid credential type validation works')
+
+          # Test 11: Test validation - invalid name format
+          print('Testing invalid name format validation...')
+          credential_data_bad_name = {
+              'name': 'test invalid name!',  # Contains spaces and special chars
+              'credential_type': 'api_token',
+              'description': 'Invalid name format test'
+          }
+          result = create_credential(credential_data_bad_name)
+          assert result['result'] == 'FAILURE', 'Should fail with invalid name format'
+          assert 'invalid name format' in result['error'].lower()
+          print('✓ Invalid name format validation works')
+
+          # Test 12: Test validation - missing required fields
+          print('Testing missing required fields validation...')
+          credential_data_missing = {
+              'name': 'test_missing'
+              # Missing credential_type
+          }
+          result = create_credential(credential_data_missing)
+          assert result['result'] == 'FAILURE', 'Should fail with missing fields'
+          assert 'missing required fields' in result['error'].lower()
+          print('✓ Missing required fields validation works')
+
+          # Test 13: Test get non-existent credential
+          print('Testing non-existent credential retrieval...')
+          fake_id = '00000000-0000-0000-0000-000000000000'
+          result = get_credential(fake_id)
+          assert result['result'] == 'FAILURE', 'Should fail with non-existent ID'
+          assert 'not found' in result['error'].lower()
+          print('✓ Non-existent credential retrieval works')
+
+          # Test 14: Test delete non-existent credential
+          print('Testing non-existent credential deletion...')
+          result = delete_credential(fake_id)
+          assert result['result'] == 'FAILURE', 'Should fail with non-existent ID'
+          assert 'not found' in result['error'].lower()
+          print('✓ Non-existent credential deletion works')
+
+          # Cleanup remaining credentials
+          print('Cleaning up test credentials...')
+          delete_credential(credential_id_2)
+          delete_credential(credential_id_3)
+          print('✓ Cleaned up test credentials')
+
+          print('')
+          print('ALL CREDENTIAL TESTS PASSED ✅')
+          print('Table creation, data insertion, retrieval, listing, deletion, and validation all work!')
           "
         env:
           POSTGRES_HOST: localhost
