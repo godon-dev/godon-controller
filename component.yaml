@@ -9,3 +9,5 @@ scripts:
       summary: "Godon Controller API"
       description: "Controller logic for managing Godon breeder lifecycles"
       timeout: 120
+
+flows: []
