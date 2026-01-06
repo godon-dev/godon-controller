@@ -175,7 +175,7 @@ class MetadataDatabaseRepository:
         """Insert credential catalog entry"""
         db_config = self._get_db_config()
         metadata_json = json.dumps(metadata) if metadata else 'NULL'
-        description_escaped = description.replace("'", "''") if description else 'NULL'
+        description_escaped = "'" + description.replace("'", "''") + "'" if description else 'NULL'
         
         query = f"""
         INSERT INTO {self.credentials_table_name} 
