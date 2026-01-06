@@ -1,0 +1,33 @@
+from controller.config import DatabaseConfig
+from controller.database import MetadataDatabaseRepository
+import logging
+
+logger = logging.getLogger(__name__)
+
+def main(credential_id=None):
+    """Delete a credential by ID"""
+    if not credential_id:
+        return {"result": "FAILURE", "error": "Missing credential_id parameter"}
+
+    try:
+        meta_db = MetadataDatabaseRepository(DatabaseConfig.META_DB)
+        
+        # Check if credential exists first
+        credential = meta_db.fetch_credential_by_id(credential_id)
+        if not credential:
+            return {
+                "result": "FAILURE",
+                "error": f"Credential with ID '{credential_id}' not found"
+            }
+        
+        # Delete from database catalog
+        meta_db.delete_credential(credential_id)
+        
+        return {
+            "result": "SUCCESS",
+            "message": f"Credential '{credential[1]}' (ID: {credential_id}) successfully deleted"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to delete credential: {e}", exc_info=True)
+        return {"result": "FAILURE", "error": str(e)}

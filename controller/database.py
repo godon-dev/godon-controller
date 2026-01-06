@@ -79,7 +79,8 @@ class MetadataDatabaseRepository:
 
     def __init__(self, base_config):
         self.base_config = base_config.copy()
-        self.table_name = 'breeder_meta_data'
+        self.breeder_table_name = 'breeder_meta_data'
+        self.credentials_table_name = 'credentials'
 
     def _get_db_config(self):
         """Get database config with metadata database name"""
@@ -92,7 +93,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        CREATE TABLE IF NOT EXISTS {self.table_name}
+        CREATE TABLE IF NOT EXISTS {self.breeder_table_name}
         (
         id uuid PRIMARY KEY,
         creation_tsz TIMESTAMPTZ,
@@ -101,7 +102,30 @@ class MetadataDatabaseRepository:
         """
 
         execute_query(db_config, query)
-        logger.info(f"Ensured metadata table exists: {self.table_name}")
+        logger.info(f"Ensured metadata table exists: {self.breeder_table_name}")
+
+    def create_credentials_table(self):
+        """Create the credentials catalog table"""
+        db_config = self._get_db_config()
+
+        query = f"""
+        CREATE TABLE IF NOT EXISTS {self.credentials_table_name}
+        (
+        id uuid PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        credential_type VARCHAR(50) NOT NULL,
+        description TEXT,
+        windmill_variable VARCHAR(255) NOT NULL,
+        store_type VARCHAR(50) DEFAULT 'windmill_variable',
+        metadata JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        last_used_at TIMESTAMPTZ,
+        last_verified_at TIMESTAMPTZ
+        );
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Ensured credentials table exists: {self.credentials_table_name}")
 
     def insert_breeder_meta(self, breeder_id, creation_ts, meta_state):
         """Insert breeder metadata"""
@@ -109,7 +133,7 @@ class MetadataDatabaseRepository:
         json_string = json.dumps(meta_state).replace("'", "''")
 
         query = f"""
-        INSERT INTO {self.table_name} (id, creation_tsz, definition)
+        INSERT INTO {self.breeder_table_name} (id, creation_tsz, definition)
         VALUES('{breeder_id}', '{creation_ts}', '{json_string}');
         """
 
@@ -120,7 +144,7 @@ class MetadataDatabaseRepository:
         """Remove breeder metadata"""
         db_config = self._get_db_config()
 
-        query = f"DELETE FROM {self.table_name} WHERE id = '{breeder_id}';"
+        query = f"DELETE FROM {self.breeder_table_name} WHERE id = '{breeder_id}';"
         execute_query(db_config, query)
         logger.info(f"Removed metadata for breeder: {breeder_id}")
 
@@ -129,7 +153,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, creation_tsz, definition FROM {self.table_name} WHERE id = '{breeder_id}';
+        SELECT id, creation_tsz, definition FROM {self.breeder_table_name} WHERE id = '{breeder_id}';
         """
 
         return execute_query(db_config, query, with_result=True)
@@ -139,8 +163,85 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, definition->>'name', creation_tsz FROM {self.table_name};
+        SELECT id, definition->>'name', creation_tsz FROM {self.breeder_table_name};
         """
 
         result = execute_query(db_config, query, with_result=True)
         return result if result else []
+    
+    # Credential management methods
+    
+    def insert_credential(self, credential_id, name, credential_type, description, windmill_variable, store_type='windmill_variable', metadata=None):
+        """Insert credential catalog entry"""
+        db_config = self._get_db_config()
+        metadata_json = json.dumps(metadata) if metadata else 'NULL'
+        description_escaped = description.replace("'", "''") if description else 'NULL'
+        
+        query = f"""
+        INSERT INTO {self.credentials_table_name} 
+        (id, name, credential_type, description, windmill_variable, store_type, metadata)
+        VALUES('{credential_id}', '{name}', '{credential_type}', {description_escaped}, 
+                '{windmill_variable}', '{store_type}', {metadata_json}::jsonb);
+        """
+        
+        execute_query(db_config, query)
+        logger.info(f"Inserted credential catalog entry: {name}")
+    
+    def fetch_credentials_list(self):
+        """Fetch list of all credentials"""
+        db_config = self._get_db_config()
+        
+        query = f"""
+        SELECT id, name, credential_type, description, windmill_variable, created_at, last_used_at 
+        FROM {self.credentials_table_name} 
+        ORDER BY created_at DESC;
+        """
+        
+        result = execute_query(db_config, query, with_result=True)
+        return result if result else []
+    
+    def fetch_credential_by_id(self, credential_id):
+        """Fetch credential by ID"""
+        db_config = self._get_db_config()
+        
+        query = f"""
+        SELECT id, name, credential_type, description, windmill_variable, store_type, metadata, created_at, last_used_at 
+        FROM {self.credentials_table_name} 
+        WHERE id = '{credential_id}';
+        """
+        
+        result = execute_query(db_config, query, with_result=True)
+        return result[0] if result else None
+    
+    def fetch_credential_by_name(self, name):
+        """Fetch credential by name"""
+        db_config = self._get_db_config()
+        
+        query = f"""
+        SELECT id, name, credential_type, description, windmill_variable, store_type, metadata, created_at, last_used_at 
+        FROM {self.credentials_table_name} 
+        WHERE name = '{name}';
+        """
+        
+        result = execute_query(db_config, query, with_result=True)
+        return result[0] if result else None
+    
+    def delete_credential(self, credential_id):
+        """Delete credential from catalog"""
+        db_config = self._get_db_config()
+        
+        query = f"DELETE FROM {self.credentials_table_name} WHERE id = '{credential_id}';"
+        execute_query(db_config, query)
+        logger.info(f"Deleted credential catalog entry: {credential_id}")
+    
+    def update_credential_last_used(self, credential_id):
+        """Update the last_used_at timestamp for a credential"""
+        db_config = self._get_db_config()
+        
+        query = f"""
+        UPDATE {self.credentials_table_name} 
+        SET last_used_at = NOW() 
+        WHERE id = '{credential_id}';
+        """
+        
+        execute_query(db_config, query)
