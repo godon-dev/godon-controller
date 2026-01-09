@@ -5,8 +5,8 @@ import copy
 import logging
 from dateutil.parser import parse
 
-from controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
-from controller.config import BreederConfig, BREEDER_CAPABILITIES
+from f.controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
+from f.controller.config import BreederConfig, BREEDER_CAPABILITIES
 
 logger = logging.getLogger(__name__)
 

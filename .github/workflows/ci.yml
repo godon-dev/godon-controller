@@ -42,11 +42,58 @@ jobs:
           python3 -c "
           import sys
           import os
+          import importlib
+          from unittest.mock import MagicMock
+
           sys.path.insert(0, 'controller')
 
           # Mock wmill before imports (new start_optimization_flow uses it)
-          from unittest.mock import MagicMock
           sys.modules['wmill'] = MagicMock()
+
+          # Create stub modules using types.ModuleType
+          class FakeControllerModule:
+              def __init__(self):
+                  self.__path__ = []
+                  self.__spec__ = None
+                  self.__name__ = 'f.controller'
+
+          fake_f = MagicMock()
+          fake_f.controller = FakeControllerModule()
+          sys.modules['f'] = fake_f
+          sys.modules['f.controller'] = fake_f.controller
+
+          # Pre-populate all f.controller.xxx modules BEFORE any imports
+          for module_name in ['config', 'database', 'breeder_service', 'credential_create',
+                              'credential_get', 'credential_delete', 'credentials_get']:
+              stub = FakeControllerModule()
+              sys.modules[f'f.controller.{module_name}'] = stub
+
+          def populate_stub_module(stub_module, source_module):
+              for attr_name in dir(source_module):
+                  if not attr_name.startswith('_'):
+                      setattr(stub_module, attr_name, getattr(source_module, attr_name))
+
+          # Import controller modules in dependency order - config first, populate immediately
+          import controller.config as config
+          populate_stub_module(sys.modules['f.controller.config'], config)
+
+          import controller.database as database
+          populate_stub_module(sys.modules['f.controller.database'], database)
+
+          import controller.breeder_service as breeder_service
+          populate_stub_module(sys.modules['f.controller.breeder_service'], breeder_service)
+
+          import controller.credential_create as credential_create
+          populate_stub_module(sys.modules['f.controller.credential_create'], credential_create)
+
+          import controller.credential_get as credential_get
+          populate_stub_module(sys.modules['f.controller.credential_get'], credential_get)
+
+          import controller.credential_delete as credential_delete
+          populate_stub_module(sys.modules['f.controller.credential_delete'], credential_delete)
+
+          import controller.credentials_get as credentials_get
+          populate_stub_module(sys.modules['f.controller.credentials_get'], credentials_get)
 
           # Test imports
           from controller.config import DatabaseConfig
@@ -207,11 +254,58 @@ jobs:
           python3 -c "
           import sys
           import os
+          import types
+          from unittest.mock import MagicMock
+
           sys.path.insert(0, 'controller')
 
-          # Mock wmill before imports
-          from unittest.mock import MagicMock
+          # Mock wmill and external dependencies before imports
           sys.modules['wmill'] = MagicMock()
+          sys.modules['database'] = MagicMock()
+
+          # Create stub modules using types.ModuleType
+          def create_stub_module(name):
+              module = types.ModuleType(name)
+              module.__path__ = []
+              module.__spec__ = None
+              module.__name__ = name
+              return module
+
+          # Create f and f.controller
+          fake_f = create_stub_module('f')
+          fake_controller = create_stub_module('f.controller')
+          sys.modules['f'] = fake_f
+          sys.modules['f.controller'] = fake_controller
+
+          # Pre-populate all f.controller.xxx modules BEFORE any imports
+          for module_name in ['config', 'database', 'breeder_service', 'credential_create',
+                              'credential_get', 'credential_delete', 'credentials_get']:
+              stub = create_stub_module(f'f.controller.{module_name}')
+              sys.modules[f'f.controller.{module_name}'] = stub
+
+          def populate_stub_module(stub_module, source_module):
+              for attr_name in dir(source_module):
+                  if not attr_name.startswith('_'):
+                      setattr(stub_module, attr_name, getattr(source_module, attr_name))
+
+          # Import controller modules in dependency order
+          import controller.config as config
+          populate_stub_module(sys.modules['f.controller.config'], config)
+
+          import controller.database as database
+          populate_stub_module(sys.modules['f.controller.database'], database)
+
+          import controller.credential_create as credential_create
+          populate_stub_module(sys.modules['f.controller.credential_create'], credential_create)
+
+          import controller.credential_get as credential_get
+          populate_stub_module(sys.modules['f.controller.credential_get'], credential_get)
+
+          import controller.credential_delete as credential_delete
+          populate_stub_module(sys.modules['f.controller.credential_delete'], credential_delete)
+
+          import controller.credentials_get as credentials_get
+          populate_stub_module(sys.modules['f.controller.credentials_get'], credentials_get)
 
           # Test imports
           from controller.config import DatabaseConfig
