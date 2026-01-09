@@ -1,5 +1,5 @@
-from controller.config import DatabaseConfig, BreederConfig
-from controller.breeder_service import BreederService
+from f.controller.config import DatabaseConfig, BreederConfig
+from f.controller.breeder_service import BreederService
 
 def main(breeder_config=None):
     if not breeder_config or 'breeder' not in breeder_config:

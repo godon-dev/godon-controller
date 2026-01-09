@@ -1,5 +1,5 @@
-from controller.config import DatabaseConfig
-from controller.database import MetadataDatabaseRepository
+from f.controller.config import DatabaseConfig
+from f.controller.database import MetadataDatabaseRepository
 import uuid
 import logging
 
