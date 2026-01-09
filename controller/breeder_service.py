@@ -79,9 +79,9 @@ def start_optimization_flow(flow_id, shard_config, run_id, target_id, breeder_id
     """
     try:
         import wmill
-        
-        breeder_name = shard_config.get('breeder', {}).get('name', 'unknown_breeder')
-        flow_path = f"f/breeder/{breeder_name}/breeder_worker"
+
+        breeder_type = shard_config.get('breeder', {}).get('type', 'unknown_breeder')
+        flow_path = f"f/breeder/{breeder_type}/breeder_worker"
         
         # Pass shard_config directly - worker uses it, no DB fetch needed
         flow_inputs = {
@@ -120,8 +120,8 @@ class BreederService:
         """Create a new breeder instance"""
         try:
             BreederConfig.validate_minimal(breeder_config)
-            
-            breeder_name = breeder_config.get('name', 'unnamed_breeder')
+
+            breeder_instance_name = breeder_config.get('name', 'unnamed_breeder')
             parallel_runs = breeder_config.get('run', {}).get('parallel', 1)
             targets = breeder_config.get('effectuation', {}).get('targets', [])
             targets_count = len(targets)
@@ -150,7 +150,7 @@ class BreederService:
                 for run_id in range(parallel_runs):
                     flow_config = breeder_config.copy()
                     flow_config['creation_ts'] = creation_ts.isoformat()
-                    flow_id = f'{breeder_name}_{target_count}_{run_id}'
+                    flow_id = f'{breeder_instance_name}_{target_count}_{run_id}'
 
                     if not is_cooperative:
                         flow_config = determine_config_shard(

@@ -149,7 +149,7 @@ jobs:
           print('Testing breeder creation (schema + data)...')
           breeder_config = {
               'breeder': {
-                  'name': 'linux_performance'
+                  'type': 'linux_performance'
               },
               'run': {
                   'parallel': 1,
