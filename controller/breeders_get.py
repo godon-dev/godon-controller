@@ -1,5 +1,5 @@
 from controller.config import DatabaseConfig
-from breeder_service import BreederService
+from controller.breeder_service import BreederService
 
 def main(request_data=None):
     service = BreederService(
