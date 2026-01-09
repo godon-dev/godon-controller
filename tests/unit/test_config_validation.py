@@ -13,7 +13,7 @@ class TestTargetTypeValidation:
     def test_valid_ssh_target_accepted(self):
         """Test that valid SSH target configuration passes validation"""
         config = {
-            'breeder': {'name': 'linux_performance'},
+            'breeder': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targets': [
@@ -42,7 +42,7 @@ class TestTargetTypeValidation:
     def test_missing_target_type_fails(self):
         """Test that missing target type field causes validation failure"""
         config = {
-            'breeder': {'name': 'linux_performance'},
+            'breeder': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targets': [
@@ -73,7 +73,7 @@ class TestTargetTypeValidation:
     def test_unsupported_target_type_fails(self):
         """Test that unsupported target type causes validation failure"""
         config = {
-            'breeder': {'name': 'linux_performance'},
+            'breeder': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targets': [
@@ -105,7 +105,7 @@ class TestTargetTypeValidation:
     def test_multiple_targets_mixed_types_fails(self):
         """Test that mixing valid and invalid target types fails appropriately"""
         config = {
-            'breeder': {'name': 'linux_performance'},
+            'breeder': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targets': [
@@ -145,7 +145,7 @@ class TestTargetTypeValidation:
     def test_unknown_breeder_skips_type_validation(self):
         """Test that unknown breeder types don't crash validation"""
         config = {
-            'breeder': {'name': 'future_breeder'},
+            'breeder': {'type': 'future_breeder'},
             'objectives': [{'name': 'metric'}],
             'effectuation': {
                 'targets': [

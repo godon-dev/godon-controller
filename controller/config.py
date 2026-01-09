@@ -56,8 +56,8 @@ class BreederConfig:
         """
         errors = []
 
-        if not breeder_config.get('breeder', {}).get('name'):
-            errors.append("Missing breeder.name")
+        if not breeder_config.get('breeder', {}).get('type'):
+            errors.append("Missing breeder.type")
 
         if not breeder_config.get('objectives') or len(breeder_config.get('objectives', [])) == 0:
             errors.append("Missing or empty objectives array")
@@ -78,19 +78,19 @@ class BreederConfig:
                 )
 
         # Validate target type compatibility
-        breeder_name = breeder_config.get('breeder', {}).get('name')
-        if breeder_name in BREEDER_CAPABILITIES:
-            supported_types = BREEDER_CAPABILITIES[breeder_name]['supported_target_types']
-            
+        breeder_type = breeder_config.get('breeder', {}).get('type')
+        if breeder_type in BREEDER_CAPABILITIES:
+            supported_types = BREEDER_CAPABILITIES[breeder_type]['supported_target_types']
+
             for idx, target in enumerate(breeder_config.get('effectuation', {}).get('targets', [])):
                 target_type = target.get('type')
-                
+
                 if not target_type:
                     errors.append(f"Target {idx}: Missing required 'type' field")
                 elif target_type not in supported_types:
                     errors.append(
                         f"Target {idx} ({target.get('address', 'unknown')}): "
-                        f"Type '{target_type}' not supported by breeder '{breeder_name}'. "
+                        f"Type '{target_type}' not supported by breeder '{breeder_type}'. "
                         f"Supported types: {supported_types}"
                     )
 
