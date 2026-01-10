@@ -44,7 +44,7 @@ class TestCredentialValidation:
     def test_create_credential_missing_name(self):
         """Test that missing name field fails validation"""
         credential_data = {
-            'credential_type': 'ssh_private_key',
+            'credentialType': 'ssh_private_key',
             'description': 'Test credential'
         }
         result = create_credential(request_data=credential_data)
@@ -67,7 +67,7 @@ class TestCredentialValidation:
         """Test that names with spaces fail validation"""
         credential_data = {
             'name': 'test credential',
-            'credential_type': 'ssh_private_key'
+            'credentialType': 'ssh_private_key'
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
@@ -79,7 +79,7 @@ class TestCredentialValidation:
         for invalid_name in invalid_names:
             credential_data = {
                 'name': invalid_name,
-                'credential_type': 'ssh_private_key'
+                'credentialType': 'ssh_private_key'
             }
             result = create_credential(request_data=credential_data)
             assert result['result'] == 'FAILURE'
@@ -96,7 +96,7 @@ class TestCredentialValidation:
             for valid_name in valid_names:
                 credential_data = {
                     'name': valid_name,
-                    'credential_type': 'ssh_private_key'
+                    'credentialType': 'ssh_private_key'
                 }
                 result = create_credential(request_data=credential_data)
                 # Should pass validation and reach database insertion
@@ -107,7 +107,7 @@ class TestCredentialValidation:
         """Test that invalid credential types fail validation"""
         credential_data = {
             'name': 'test_credential',
-            'credential_type': 'invalid_type'
+            'credentialType': 'invalid_type'
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
@@ -124,7 +124,7 @@ class TestCredentialValidation:
             for cred_type in valid_types:
                 credential_data = {
                     'name': f'test_{cred_type}',
-                    'credential_type': cred_type
+                    'credentialType': cred_type
                 }
                 result = create_credential(request_data=credential_data)
                 # Should pass validation
@@ -135,7 +135,7 @@ class TestCredentialValidation:
         """Test that empty name fails validation"""
         credential_data = {
             'name': '',
-            'credential_type': 'ssh_private_key'
+            'credentialType': 'ssh_private_key'
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
@@ -145,7 +145,7 @@ class TestCredentialValidation:
         """Test that None values in required fields fail validation"""
         credential_data = {
             'name': None,
-            'credential_type': None
+            'credentialType': None
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
@@ -164,7 +164,7 @@ class TestCredentialCreation:
             
             credential_data = {
                 'name': 'test_ssh_key',
-                'credential_type': 'ssh_private_key',
+                'credentialType': 'ssh_private_key',
                 'description': 'Test SSH key'
             }
             
@@ -191,7 +191,7 @@ class TestCredentialCreation:
             
             credential_data = {
                 'name': 'test_api_token',
-                'credential_type': 'api_token',
+                'credentialType': 'api_token',
                 'description': 'API token for external service'
             }
             
@@ -209,7 +209,7 @@ class TestCredentialCreation:
             
             credential_data = {
                 'name': 'test_db_conn',
-                'credential_type': 'database_connection'
+                'credentialType': 'database_connection'
             }
             
             result = create_credential(request_data=credential_data)
@@ -227,7 +227,7 @@ class TestCredentialCreation:
             
             credential_data = {
                 'name': 'existing_credential',
-                'credential_type': 'ssh_private_key'
+                'credentialType': 'ssh_private_key'
             }
             
             result = create_credential(request_data=credential_data)
@@ -244,7 +244,7 @@ class TestCredentialCreation:
             
             credential_data = {
                 'name': 'test_uuid_gen',
-                'credential_type': 'api_token'
+                'credentialType': 'api_token'
             }
             
             result_1 = create_credential(request_data=credential_data)
@@ -273,7 +273,7 @@ class TestCredentialCreation:
             for name, expected_var in test_names:
                 credential_data = {
                     'name': name,
-                    'credential_type': 'ssh_private_key'
+                    'credentialType': 'ssh_private_key'
                 }
                 
                 result = create_credential(request_data=credential_data)
@@ -289,7 +289,7 @@ class TestCredentialCreation:
             
             credential_data = {
                 'name': 'test_error',
-                'credential_type': 'api_token'
+                'credentialType': 'api_token'
             }
             
             result = create_credential(request_data=credential_data)

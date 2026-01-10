@@ -13,13 +13,13 @@ def main(request_data=None):
     try:
         # Extract required fields directly from request_data
         name = request_data.get('name')
-        credential_type = request_data.get('credential_type')
+        credential_type = request_data.get('credentialType')  # Accept camelCase from API
         description = request_data.get('description', '')
-        
+
         if not name or not credential_type:
             return {
-                "result": "FAILURE", 
-                "error": "Missing required fields: name, credential_type"
+                "result": "FAILURE",
+                "error": "Missing required fields: name, credentialType"
             }
 
         # Validate name format
@@ -35,7 +35,7 @@ def main(request_data=None):
         if credential_type not in valid_types:
             return {
                 "result": "FAILURE",
-                "error": f"Invalid credential_type. Must be one of: {valid_types}"
+                "error": f"Invalid credentialType. Must be one of: {valid_types}"
             }
 
         # Generate credential ID and Windmill variable path
@@ -69,10 +69,10 @@ def main(request_data=None):
             "credential": {
                 "id": credential_id,
                 "name": name,
-                "credential_type": credential_type,
+                "credentialType": credential_type,
                 "description": description,
-                "windmill_variable": windmill_variable,
-                "created_at": "now"
+                "windmillVariable": windmill_variable,
+                "createdAt": "now"
             }
         }
 

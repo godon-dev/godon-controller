@@ -26,13 +26,13 @@ def main(request_data=None):
             "credential": {
                 "id": str(credential[0]),
                 "name": credential[1],
-                "credential_type": credential[2],
+                "credentialType": credential[2],
                 "description": credential[3],
-                "windmill_variable": credential[4],
-                "store_type": credential[5],
+                "windmillVariable": credential[4],
+                "storeType": credential[5],
                 "metadata": credential[6],
-                "created_at": credential[7].isoformat() if credential[7] else None,
-                "last_used_at": credential[8].isoformat() if credential[8] else None
+                "createdAt": credential[7].isoformat() if credential[7] else None,
+                "lastUsedAt": credential[8].isoformat() if credential[8] else None
             }
         }
         
