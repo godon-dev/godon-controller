@@ -82,24 +82,24 @@ def start_optimization_flow(flow_id, shard_config, run_id, target_id, breeder_id
     """
     try:
         breeder_type = shard_config.get('breeder', {}).get('type', 'unknown_breeder')
-        flow_path = f"f/breeder/{breeder_type}/breeder_worker"
-        
+        script_path = f"f/breeder/{breeder_type}/breeder_worker"
+
         # Pass shard_config directly - worker uses it, no DB fetch needed
-        flow_inputs = {
+        script_inputs = {
             'config': shard_config,
             'breeder_id': breeder_id,
             'run_id': run_id,
             'target_id': target_id
         }
-        
-        logger.info(f"Starting flow {flow_id} at path: {flow_path}")
-        logger.debug(f"Flow inputs: breeder_id={breeder_id}, run_id={run_id}, target_id={target_id}")
+
+        logger.info(f"Starting script {flow_id} at path: {script_path}")
+        logger.debug(f"Script inputs: breeder_id={breeder_id}, run_id={run_id}, target_id={target_id}")
         logger.debug(f"Shard config: {shard_config.get('settings', {}).get('sysctl', {})}")
-        
-        # Launch the breeder worker flow
-        job_id = wmill.run_flow_async(
-            path=flow_path,
-            args=flow_inputs
+
+        # Launch the breeder worker script asynchronously
+        job_id = wmill.run_script_by_path_async(
+            path=script_path,
+            args=script_inputs
         )
         
         logger.info(f"Flow {flow_id} started with job ID: {job_id}")
@@ -123,7 +123,13 @@ class BreederService:
         Args:
             breeder_config: The breeder configuration
             name: Breeder instance name (required)
+
+        Returns:
+            dict with result status and either breeder_id or error details
         """
+        breeder_uuid = None
+        breeder_id = None
+
         try:
             BreederConfig.validate_minimal(breeder_config)
 
@@ -140,6 +146,7 @@ class BreederService:
             __uuid_common_name = f"breeder_{breeder_uuid.replace('-', '_')}"
             breeder_id = f'{__uuid_common_name}'
 
+            # Create database and metadata records
             self.archive_repo.create_database(breeder_id)
 
             self.metadata_repo.create_table()
@@ -149,7 +156,10 @@ class BreederService:
                 meta_state=breeder_config
             )
 
+            # Launch worker scripts with error handling
+            worker_launch_failures = []
             target_count = 0
+
             for target in targets:
                 hash_suffix = hashlib.sha256(str.encode(target.get('address', ''))).hexdigest()[0:6]
 
@@ -167,22 +177,84 @@ class BreederService:
                             parallel_runs_count=parallel_runs
                         )
 
-                    start_optimization_flow(
-                        flow_id=flow_id,
-                        shard_config=flow_config,
-                        run_id=run_id,
-                        target_id=target_count,
-                        breeder_id=breeder_uuid
-                    )
+                    try:
+                        start_optimization_flow(
+                            flow_id=flow_id,
+                            shard_config=flow_config,
+                            run_id=run_id,
+                            target_id=target_count,
+                            breeder_id=breeder_uuid
+                        )
+                    except Exception as e:
+                        # Collect worker launch failures but continue trying others
+                        error_details = {
+                            "flow_id": flow_id,
+                            "target": target_count,
+                            "run": run_id,
+                            "error": str(e),
+                            "error_type": type(e).__name__
+                        }
+                        worker_launch_failures.append(error_details)
+                        logger.error(f"Failed to launch worker {flow_id}: {e}")
 
                 target_count += 1
+
+            # If any workers failed to launch, clean up and return error
+            if worker_launch_failures:
+                logger.error(f"Failed to launch {len(worker_launch_failures)} workers for breeder {breeder_uuid}")
+                # Attempt cleanup
+                try:
+                    self._rollback_breeder_creation(breeder_uuid, breeder_id)
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup after worker launch failures: {cleanup_error}")
+
+                return {
+                    "result": "FAILURE",
+                    "error": f"Failed to launch {len(worker_launch_failures)} worker(s)",
+                    "details": worker_launch_failures,
+                    "breeder_id": breeder_uuid  # Include for debugging
+                }
 
             logger.info(f"Successfully created breeder: {breeder_uuid}")
             return {"result": "SUCCESS", "breeder_id": breeder_uuid}
 
         except Exception as e:
             logger.error(f"Failed to create breeder: {e}")
-            return {"result": "FAILURE", "error": str(e)}
+            # Attempt cleanup if we had created the breeder
+            if breeder_uuid and breeder_id:
+                try:
+                    self._rollback_breeder_creation(breeder_uuid, breeder_id)
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup after breeder creation failure: {cleanup_error}")
+
+            return {
+                "result": "FAILURE",
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+
+    def _rollback_breeder_creation(self, breeder_uuid: str, breeder_id: str):
+        """Rollback breeder creation by cleaning up database records
+
+        Args:
+            breeder_uuid: UUID of the breeder to rollback
+            breeder_id: Internal database identifier
+        """
+        logger.warning(f"Rolling back breeder creation: {breeder_uuid}")
+
+        # Delete metadata record
+        try:
+            self.metadata_repo.remove_breeder_meta(breeder_uuid)
+            logger.info(f"Deleted metadata for breeder: {breeder_uuid}")
+        except Exception as e:
+            logger.error(f"Failed to delete metadata for breeder {breeder_uuid}: {e}")
+
+        # Delete archive database
+        try:
+            self.archive_repo.drop_database(breeder_id)
+            logger.info(f"Deleted archive database for breeder: {breeder_uuid}")
+        except Exception as e:
+            logger.error(f"Failed to delete archive database for breeder {breeder_uuid}: {e}")
 
     def get_breeder(self, breeder_id):
         """Get breeder information"""
