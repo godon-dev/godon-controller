@@ -101,7 +101,7 @@ class TestCredentialValidation:
                 result = create_credential(request_data=credential_data)
                 # Should pass validation and reach database insertion
                 assert result['result'] == 'SUCCESS'
-                assert result['credential']['name'] == valid_name
+                assert result['data']['name'] == valid_name
 
     def test_create_credential_invalid_type(self):
         """Test that invalid credential types fail validation"""
@@ -129,7 +129,7 @@ class TestCredentialValidation:
                 result = create_credential(request_data=credential_data)
                 # Should pass validation
                 assert result['result'] == 'SUCCESS'
-                assert result['credential']['credentialType'] == cred_type
+                assert result['data']['credentialType'] == cred_type
 
     def test_create_credential_empty_name(self):
         """Test that empty name fails validation"""
@@ -169,14 +169,14 @@ class TestCredentialCreation:
             }
             
             result = create_credential(request_data=credential_data)
-            
+
             assert result['result'] == 'SUCCESS'
-            assert 'credential' in result
-            assert result['credential']['name'] == 'test_ssh_key'
-            assert result['credential']['credentialType'] == 'ssh_private_key'
-            assert result['credential']['description'] == 'Test SSH key'
-            assert result['credential']['windmillVariable'] == 'f/vars/test_ssh_key'
-            assert 'id' in result['credential']
+            assert 'data' in result
+            assert result['data']['name'] == 'test_ssh_key'
+            assert result['data']['credentialType'] == 'ssh_private_key'
+            assert result['data']['description'] == 'Test SSH key'
+            assert result['data']['windmillVariable'] == 'f/vars/test_ssh_key'
+            assert 'id' in result['data']
             
             # Verify database operations were called
             mock_repo.create_credentials_table.assert_called_once()
@@ -198,7 +198,7 @@ class TestCredentialCreation:
             result = create_credential(request_data=credential_data)
             
             assert result['result'] == 'SUCCESS'
-            assert result['credential']['description'] == 'API token for external service'
+            assert result['data']['description'] == 'API token for external service'
 
     def test_create_credential_without_description(self):
         """Test credential creation without description (uses default)"""
@@ -215,7 +215,7 @@ class TestCredentialCreation:
             result = create_credential(request_data=credential_data)
             
             assert result['result'] == 'SUCCESS'
-            assert result['credential']['description'] == ''
+            assert result['data']['description'] == ''
 
     def test_create_credential_duplicate_name(self):
         """Test that duplicate credential names are rejected"""
@@ -251,11 +251,11 @@ class TestCredentialCreation:
             result_2 = create_credential(request_data={**credential_data, 'name': 'test_uuid_gen_2'})
             
             # Should generate different UUIDs
-            assert result_1['credential']['id'] != result_2['credential']['id']
-            
+            assert result_1['data']['id'] != result_2['data']['id']
+
             # UUIDs should be valid UUID strings
-            uuid.UUID(result_1['credential']['id'])
-            uuid.UUID(result_2['credential']['id'])
+            uuid.UUID(result_1['data']['id'])
+            uuid.UUID(result_2['data']['id'])
 
     def test_create_credential_windmill_variable_format(self):
         """Test that Windmill variable paths are correctly formatted"""
@@ -277,7 +277,7 @@ class TestCredentialCreation:
                 }
                 
                 result = create_credential(request_data=credential_data)
-                assert result['credential']['windmillVariable'] == expected_var
+                assert result['data']['windmillVariable'] == expected_var
 
     def test_create_credential_database_exception(self):
         """Test handling of unexpected database errors"""
@@ -342,11 +342,11 @@ class TestCredentialRetrieval:
             result = get_credential(request_data={"credentialId": test_id})
             
             assert result['result'] == 'SUCCESS'
-            assert result['credential']['id'] == test_id
-            assert result['credential']['name'] == 'test_ssh_key'
-            assert result['credential']['credentialType'] == 'ssh_private_key'
-            assert result['credential']['description'] == 'Test SSH key'
-            assert result['credential']['windmillVariable'] == 'f/vars/test_ssh_key'
+            assert result['data']['id'] == test_id
+            assert result['data']['name'] == 'test_ssh_key'
+            assert result['data']['credentialType'] == 'ssh_private_key'
+            assert result['data']['description'] == 'Test SSH key'
+            assert result['data']['windmillVariable'] == 'f/vars/test_ssh_key'
 
     def test_get_credential_with_timestamps(self):
         """Test credential retrieval with timestamp fields"""
@@ -374,8 +374,8 @@ class TestCredentialRetrieval:
             result = get_credential(request_data={"credentialId": test_id})
             
             assert result['result'] == 'SUCCESS'
-            assert result['credential']['createdAt'] is not None
-            assert result['credential']['lastUsedAt'] is not None
+            assert result['data']['createdAt'] is not None
+            assert result['data']['lastUsedAt'] is not None
 
 
 class TestCredentialListing:
@@ -390,10 +390,12 @@ class TestCredentialListing:
 
             result = list_credentials(request_data=None)
 
-            # Now returns list directly, not wrapped
-            assert isinstance(result, list)
-            assert result == []
-            assert len(result) == 0
+            # Command adapter passes through wrapped response
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert isinstance(result['data'], list)
+            assert result['data'] == []
+            assert len(result['data']) == 0
 
     def test_list_credentials_multiple(self):
         """Test listing multiple credentials"""
@@ -412,11 +414,13 @@ class TestCredentialListing:
 
             result = list_credentials(request_data=None)
 
-            # Now returns list directly, not wrapped
-            assert isinstance(result, list)
-            assert len(result) == 2
-            assert result[0]['name'] == 'ssh_key'
-            assert result[1]['name'] == 'api_token'
+            # Command adapter passes through wrapped response
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert isinstance(result['data'], list)
+            assert len(result['data']) == 2
+            assert result['data'][0]['name'] == 'ssh_key'
+            assert result['data'][1]['name'] == 'api_token'
 
     def test_list_credentials_with_timestamps(self):
         """Test listing credentials with timestamp fields"""
@@ -434,11 +438,13 @@ class TestCredentialListing:
 
             result = list_credentials(request_data=None)
 
-            # Now returns list directly, not wrapped
-            assert isinstance(result, list)
-            assert len(result) == 1
-            assert result[0]['createdAt'] is not None
-            assert result[0]['lastUsedAt'] is not None
+            # Command adapter passes through wrapped response
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert isinstance(result['data'], list)
+            assert len(result['data']) == 1
+            assert result['data'][0]['createdAt'] is not None
+            assert result['data'][0]['lastUsedAt'] is not None
 
 
 class TestCredentialDeletion:
@@ -484,10 +490,9 @@ class TestCredentialDeletion:
             mock_repo.fetch_credential_by_id.return_value = mock_credential
             
             result = delete_credential(request_data={"credentialId": test_id})
-            
+
             assert result['result'] == 'SUCCESS'
-            assert 'successfully deleted' in result['message'].lower()
-            assert 'test_credential' in result['message']
+            assert result['data'] is None
             mock_repo.delete_credential.assert_called_once_with(test_id)
 
     def test_delete_credential_verification(self):

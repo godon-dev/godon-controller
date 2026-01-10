@@ -66,7 +66,7 @@ def main(request_data=None):
 
         return {
             "result": "SUCCESS",
-            "credential": {
+            "data": {
                 "id": credential_id,
                 "name": name,
                 "credentialType": credential_type,

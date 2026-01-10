@@ -23,10 +23,10 @@ def main(request_data=None):
         
         # Delete from database catalog
         meta_db.delete_credential(credential_id)
-        
+
         return {
             "result": "SUCCESS",
-            "message": f"Credential '{credential[1]}' (ID: {credential_id}) successfully deleted"
+            "data": None
         }
         
     except Exception as e:
