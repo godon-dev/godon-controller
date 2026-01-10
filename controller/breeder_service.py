@@ -8,6 +8,9 @@ from dateutil.parser import parse
 from f.controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
 from f.controller.config import BreederConfig, BREEDER_CAPABILITIES
 
+# Import wmill at top level so Windmill can detect it for dependency resolution
+import wmill
+
 logger = logging.getLogger(__name__)
 
 def determine_config_shard(run_id, target_id, targets_count, config, parallel_runs_count):
@@ -61,25 +64,23 @@ def determine_config_shard(run_id, target_id, targets_count, config, parallel_ru
 
 def start_optimization_flow(flow_id, shard_config, run_id, target_id, breeder_id):
     """Start breeder worker optimization flow in Windmill
-    
+
     Launches a breeder worker flow with its sharded configuration.
     The full breeder config is stored in meta DB; workers receive their
     specific shard (either full config for cooperative mode, or sharded
     parameter ranges for non-cooperative mode).
-    
+
     Args:
         flow_id: Identifier for this flow instance
         shard_config: Worker-specific configuration (full or sharded)
         run_id: Parallel run identifier for this worker
         target_id: Target identifier for this worker
         breeder_id: UUID of the breeder
-    
+
     Returns:
         tuple: (flow_id, job_id) - Flow identifier and Windmill job ID
     """
     try:
-        import wmill
-
         breeder_type = shard_config.get('breeder', {}).get('type', 'unknown_breeder')
         flow_path = f"f/breeder/{breeder_type}/breeder_worker"
         
