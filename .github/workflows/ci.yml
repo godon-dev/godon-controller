@@ -256,6 +256,13 @@ jobs:
           assert result['result'] == 'FAILURE', 'Should not find deleted breeder'
           print('✓ Verified deletion')
 
+          # Test 6.5: Test getting completely non-existent breeder
+          print('Testing non-existent breeder retrieval...')
+          fake_id = '00000000-0000-4000-8000-000000000000'
+          result = get_breeder(request_data=dict(breeder_id=fake_id))
+          assert result['result'] == 'FAILURE', f'Should not find non-existent breeder, got: {result}'
+          print('✓ Non-existent breeder properly rejected')
+
           # Test 7: Verify list updated (tests list after deletion)
           print('Testing breeder listing after deletion...')
           result = list_breeders(request_data=None)
