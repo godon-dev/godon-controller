@@ -4,8 +4,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def main(credential_id=None):
+def main(request_data=None):
     """Delete a credential by ID"""
+    credential_id = request_data.get('credential_id') if request_data else None
     if not credential_id:
         return {"result": "FAILURE", "error": "Missing credential_id parameter"}
 

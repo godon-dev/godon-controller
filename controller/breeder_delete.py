@@ -1,7 +1,8 @@
 from f.controller.config import DatabaseConfig
 from f.controller.breeder_service import BreederService
 
-def main(breeder_id=None):
+def main(request_data=None):
+    breeder_id = request_data.get('breeder_id') if request_data else None
     if not breeder_id:
         return {"result": "FAILURE", "error": "Missing breeder_id"}
 
