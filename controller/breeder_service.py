@@ -82,24 +82,24 @@ def start_optimization_flow(flow_id, shard_config, run_id, target_id, breeder_id
     """
     try:
         breeder_type = shard_config.get('breeder', {}).get('type', 'unknown_breeder')
-        flow_path = f"f/breeder/{breeder_type}/breeder_worker"
-        
+        script_path = f"f/breeder/{breeder_type}/breeder_worker"
+
         # Pass shard_config directly - worker uses it, no DB fetch needed
-        flow_inputs = {
+        script_inputs = {
             'config': shard_config,
             'breeder_id': breeder_id,
             'run_id': run_id,
             'target_id': target_id
         }
-        
-        logger.info(f"Starting flow {flow_id} at path: {flow_path}")
-        logger.debug(f"Flow inputs: breeder_id={breeder_id}, run_id={run_id}, target_id={target_id}")
+
+        logger.info(f"Starting script {flow_id} at path: {script_path}")
+        logger.debug(f"Script inputs: breeder_id={breeder_id}, run_id={run_id}, target_id={target_id}")
         logger.debug(f"Shard config: {shard_config.get('settings', {}).get('sysctl', {})}")
-        
-        # Launch the breeder worker flow
-        job_id = wmill.run_flow_async(
-            path=flow_path,
-            args=flow_inputs
+
+        # Launch the breeder worker script asynchronously
+        job_id = wmill.run_script_by_path_async(
+            path=script_path,
+            args=script_inputs
         )
         
         logger.info(f"Flow {flow_id} started with job ID: {job_id}")
