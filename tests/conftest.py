@@ -29,6 +29,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # Mock external dependencies before imports
 sys.modules['database'] = MagicMock()
 
+# Mock wmill module (only available inside Windmill)
+sys.modules['wmill'] = MagicMock()
+
 # Create stub modules using types.ModuleType
 def create_stub_module(name):
     module = types.ModuleType(name)
