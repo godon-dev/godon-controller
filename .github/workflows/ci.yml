@@ -377,10 +377,10 @@ jobs:
 
           # Test 2: Get credential (tests data retrieval)
           print('Testing credential retrieval...')
-          result = get_credential(request_data=dict(credential_id=credential_id_1))
+          result = get_credential(request_data=dict(credentialId=credential_id_1))
           assert result['result'] == 'SUCCESS', f'Get failed: {result}'
           assert result['credential']['name'] == 'test_ssh_key'
-          assert result['credential']['credential_type'] == 'ssh_private_key'
+          assert result['credential']['credentialType'] == 'ssh_private_key'
           print('✓ Retrieved credential data')
 
           # Test 3: Create second credential with different type
@@ -416,13 +416,13 @@ jobs:
 
           # Test 6: Delete credential (tests deletion logic)
           print('Testing credential deletion...')
-          result = delete_credential(request_data=dict(credential_id=credential_id_1))
+          result = delete_credential(request_data=dict(credentialId=credential_id_1))
           assert result['result'] == 'SUCCESS', f'Delete failed: {result}'
           print('✓ Deleted credential')
 
           # Test 7: Verify deletion (tests get after delete)
           print('Testing deleted credential retrieval...')
-          result = get_credential(request_data=dict(credential_id=credential_id_1))
+          result = get_credential(request_data=dict(credentialId=credential_id_1))
           assert result['result'] == 'FAILURE', 'Should not find deleted credential'
           assert 'not found' in result['error'].lower()
           print('✓ Verified deletion')
@@ -455,7 +455,7 @@ jobs:
           }
           result = create_credential(request_data=credential_data_invalid)
           assert result['result'] == 'FAILURE', 'Should fail with invalid type'
-          assert 'invalid credential_type' in result['error'].lower()
+          assert 'invalid credentialtype' in result['error'].lower()
           print('✓ Invalid credential type validation works')
 
           # Test 11: Test validation - invalid name format
@@ -484,22 +484,22 @@ jobs:
           # Test 13: Test get non-existent credential
           print('Testing non-existent credential retrieval...')
           fake_id = '00000000-0000-0000-0000-000000000000'
-          result = get_credential(request_data=dict(credential_id=fake_id))
+          result = get_credential(request_data=dict(credentialId=fake_id))
           assert result['result'] == 'FAILURE', 'Should fail with non-existent ID'
           assert 'not found' in result['error'].lower()
           print('✓ Non-existent credential retrieval works')
 
           # Test 14: Test delete non-existent credential
           print('Testing non-existent credential deletion...')
-          result = delete_credential(request_data=dict(credential_id=fake_id))
+          result = delete_credential(request_data=dict(credentialId=fake_id))
           assert result['result'] == 'FAILURE', 'Should fail with non-existent ID'
           assert 'not found' in result['error'].lower()
           print('✓ Non-existent credential deletion works')
 
           # Cleanup remaining credentials
           print('Cleaning up test credentials...')
-          delete_credential(request_data=dict(credential_id=credential_id_2))
-          delete_credential(request_data=dict(credential_id=credential_id_3))
+          delete_credential(request_data=dict(credentialId=credential_id_2))
+          delete_credential(request_data=dict(credentialId=credential_id_3))
           print('✓ Cleaned up test credentials')
 
           print('')
