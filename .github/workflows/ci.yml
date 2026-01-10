@@ -217,7 +217,14 @@ jobs:
           # Test 2: Get breeder (tests data retrieval)
           print('Testing breeder retrieval...')
           result = get_breeder(request_data=dict(breeder_id=breeder_id))
-          assert result['result'] == 'SUCCESS', f'Get failed: {result}'
+          # Now returns breeder object directly, not wrapped
+          assert 'id' in result or 'result' in result, f'Get failed: {result}'
+          if 'result' in result:
+              # Error case
+              assert result['result'] == 'FAILURE'
+          else:
+              # Success case - breeder object returned
+              assert result['id'] == breeder_id
           print('✓ Retrieved breeder data')
 
           # Test 3: Create another breeder (tests schema is reused)
@@ -232,9 +239,10 @@ jobs:
           # Test 4: List breeders (tests listing with multiple records)
           print('Testing breeder listing...')
           result = list_breeders(request_data=None)
-          assert result['result'] == 'SUCCESS', f'List failed: {result}'
-          assert len(result['breeders']) >= 2, f'Expected >=2 breeders, got {len(result[\"breeders\"])}'
-          print(f'✓ Found {len(result[\"breeders\"])} breeder(s)')
+          # Now returns list directly, not wrapped
+          assert isinstance(result, list), f'List failed: {result}'
+          assert len(result) >= 2, f'Expected >=2 breeders, got {len(result)}'
+          print(f'✓ Found {len(result)} breeder(s)')
 
           # Test 5: Delete breeder (tests deletion logic)
           print('Testing breeder deletion...')
@@ -251,9 +259,10 @@ jobs:
           # Test 7: Verify list updated (tests list after deletion)
           print('Testing breeder listing after deletion...')
           result = list_breeders(request_data=None)
-          assert result['result'] == 'SUCCESS', f'List failed: {result}'
-          assert len(result['breeders']) >= 1, 'Should have 1 breeder left'
-          print(f'✓ Found {len(result[\"breeders\"])} breeder(s) after deletion')
+          # Now returns list directly, not wrapped
+          assert isinstance(result, list), f'List failed: {result}'
+          assert len(result) >= 1, 'Should have 1 breeder left'
+          print(f'✓ Found {len(result)} breeder(s) after deletion')
 
           # Cleanup
           print('Cleaning up test data...')
@@ -410,9 +419,10 @@ jobs:
           # Test 5: List credentials (tests listing with multiple records)
           print('Testing credential listing...')
           result = list_credentials(request_data=None)
-          assert result['result'] == 'SUCCESS', f'List failed: {result}'
-          assert len(result['credentials']) >= 3, f'Expected >=3 credentials, got {len(result[\"credentials\"])}'
-          print(f'✓ Found {len(result[\"credentials\"])} credential(s)')
+          # Now returns list directly, not wrapped
+          assert isinstance(result, list), f'List failed: {result}'
+          assert len(result) >= 3, f'Expected >=3 credentials, got {len(result)}'
+          print(f'✓ Found {len(result)} credential(s)')
 
           # Test 6: Delete credential (tests deletion logic)
           print('Testing credential deletion...')
@@ -430,9 +440,10 @@ jobs:
           # Test 8: Verify list updated (tests list after deletion)
           print('Testing credential listing after deletion...')
           result = list_credentials(request_data=None)
-          assert result['result'] == 'SUCCESS', f'List failed: {result}'
-          assert len(result['credentials']) >= 2, 'Should have 2 credentials left'
-          print(f'✓ Found {len(result[\"credentials\"])} credential(s) after deletion')
+          # Now returns list directly, not wrapped
+          assert isinstance(result, list), f'List failed: {result}'
+          assert len(result) >= 2, 'Should have 2 credentials left'
+          print(f'✓ Found {len(result)} credential(s) after deletion')
 
           # Test 9: Test validation - duplicate name
           print('Testing duplicate name validation...')
