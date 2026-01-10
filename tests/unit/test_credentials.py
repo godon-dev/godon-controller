@@ -37,9 +37,9 @@ class TestCredentialValidation:
 
     def test_create_credential_missing_data(self):
         """Test that missing credential data returns appropriate error"""
-        result = create_credential(credential_data=None)
+        result = create_credential(request_data=None)
         assert result['result'] == 'FAILURE'
-        assert 'Missing credential data' in result['error']
+        assert 'Missing request data' in result['error']
 
     def test_create_credential_missing_name(self):
         """Test that missing name field fails validation"""
@@ -47,7 +47,7 @@ class TestCredentialValidation:
             'credential_type': 'ssh_private_key',
             'description': 'Test credential'
         }
-        result = create_credential(credential_data)
+        result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
         assert 'Missing required fields' in result['error']
         assert 'name' in result['error']
@@ -58,7 +58,7 @@ class TestCredentialValidation:
             'name': 'test_credential',
             'description': 'Test credential'
         }
-        result = create_credential(credential_data)
+        result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
         assert 'Missing required fields' in result['error']
         assert 'credential_type' in result['error']
@@ -69,7 +69,7 @@ class TestCredentialValidation:
             'name': 'test credential',
             'credential_type': 'ssh_private_key'
         }
-        result = create_credential(credential_data)
+        result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
         assert 'Invalid name format' in result['error']
 
@@ -81,7 +81,7 @@ class TestCredentialValidation:
                 'name': invalid_name,
                 'credential_type': 'ssh_private_key'
             }
-            result = create_credential(credential_data)
+            result = create_credential(request_data=credential_data)
             assert result['result'] == 'FAILURE'
             assert 'Invalid name format' in result['error']
 
@@ -98,7 +98,7 @@ class TestCredentialValidation:
                     'name': valid_name,
                     'credential_type': 'ssh_private_key'
                 }
-                result = create_credential(credential_data)
+                result = create_credential(request_data=credential_data)
                 # Should pass validation and reach database insertion
                 assert result['result'] == 'SUCCESS'
                 assert result['credential']['name'] == valid_name
@@ -109,7 +109,7 @@ class TestCredentialValidation:
             'name': 'test_credential',
             'credential_type': 'invalid_type'
         }
-        result = create_credential(credential_data)
+        result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
         assert 'Invalid credential_type' in result['error']
 
@@ -126,7 +126,7 @@ class TestCredentialValidation:
                     'name': f'test_{cred_type}',
                     'credential_type': cred_type
                 }
-                result = create_credential(credential_data)
+                result = create_credential(request_data=credential_data)
                 # Should pass validation
                 assert result['result'] == 'SUCCESS'
                 assert result['credential']['credential_type'] == cred_type
@@ -137,7 +137,7 @@ class TestCredentialValidation:
             'name': '',
             'credential_type': 'ssh_private_key'
         }
-        result = create_credential(credential_data)
+        result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
         # Empty strings are falsy, so it should trigger missing required fields
 
@@ -147,7 +147,7 @@ class TestCredentialValidation:
             'name': None,
             'credential_type': None
         }
-        result = create_credential(credential_data)
+        result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
         assert 'Missing required fields' in result['error']
 
@@ -168,7 +168,7 @@ class TestCredentialCreation:
                 'description': 'Test SSH key'
             }
             
-            result = create_credential(credential_data)
+            result = create_credential(request_data=credential_data)
             
             assert result['result'] == 'SUCCESS'
             assert 'credential' in result
@@ -195,7 +195,7 @@ class TestCredentialCreation:
                 'description': 'API token for external service'
             }
             
-            result = create_credential(credential_data)
+            result = create_credential(request_data=credential_data)
             
             assert result['result'] == 'SUCCESS'
             assert result['credential']['description'] == 'API token for external service'
@@ -212,7 +212,7 @@ class TestCredentialCreation:
                 'credential_type': 'database_connection'
             }
             
-            result = create_credential(credential_data)
+            result = create_credential(request_data=credential_data)
             
             assert result['result'] == 'SUCCESS'
             assert result['credential']['description'] == ''
@@ -230,7 +230,7 @@ class TestCredentialCreation:
                 'credential_type': 'ssh_private_key'
             }
             
-            result = create_credential(credential_data)
+            result = create_credential(request_data=credential_data)
             
             assert result['result'] == 'FAILURE'
             assert 'already exists' in result['error'].lower()
@@ -247,8 +247,8 @@ class TestCredentialCreation:
                 'credential_type': 'api_token'
             }
             
-            result_1 = create_credential(credential_data)
-            result_2 = create_credential({**credential_data, 'name': 'test_uuid_gen_2'})
+            result_1 = create_credential(request_data=credential_data)
+            result_2 = create_credential(request_data={**credential_data, 'name': 'test_uuid_gen_2'})
             
             # Should generate different UUIDs
             assert result_1['credential']['id'] != result_2['credential']['id']
@@ -276,7 +276,7 @@ class TestCredentialCreation:
                     'credential_type': 'ssh_private_key'
                 }
                 
-                result = create_credential(credential_data)
+                result = create_credential(request_data=credential_data)
                 assert result['credential']['windmill_variable'] == expected_var
 
     def test_create_credential_database_exception(self):
@@ -292,7 +292,7 @@ class TestCredentialCreation:
                 'credential_type': 'api_token'
             }
             
-            result = create_credential(credential_data)
+            result = create_credential(request_data=credential_data)
             assert result['result'] == 'FAILURE'
 
 
@@ -301,7 +301,7 @@ class TestCredentialRetrieval:
 
     def test_get_credential_missing_id(self):
         """Test that missing credential_id parameter fails"""
-        result = get_credential(credential_id=None)
+        result = get_credential(request_data=None)
         assert result['result'] == 'FAILURE'
         assert 'Missing credential_id' in result['error']
 
@@ -313,7 +313,7 @@ class TestCredentialRetrieval:
             mock_repo.fetch_credential_by_id.return_value = None
             
             fake_id = str(uuid.uuid4())
-            result = get_credential(fake_id)
+            result = get_credential(request_data={"credential_id": fake_id})
             
             assert result['result'] == 'FAILURE'
             assert 'not found' in result['error'].lower()
@@ -339,7 +339,7 @@ class TestCredentialRetrieval:
             )
             mock_repo.fetch_credential_by_id.return_value = mock_credential
             
-            result = get_credential(test_id)
+            result = get_credential(request_data={"credential_id": test_id})
             
             assert result['result'] == 'SUCCESS'
             assert result['credential']['id'] == test_id
@@ -371,7 +371,7 @@ class TestCredentialRetrieval:
             )
             mock_repo.fetch_credential_by_id.return_value = mock_credential
             
-            result = get_credential(test_id)
+            result = get_credential(request_data={"credential_id": test_id})
             
             assert result['result'] == 'SUCCESS'
             assert result['credential']['created_at'] is not None
@@ -388,7 +388,7 @@ class TestCredentialListing:
             mock_repo_class.return_value = mock_repo
             mock_repo.fetch_credentials_list.return_value = []
             
-            result = list_credentials()
+            result = list_credentials(request_data=None)
             
             assert result['result'] == 'SUCCESS'
             assert result['credentials'] == []
@@ -409,7 +409,7 @@ class TestCredentialListing:
             ]
             mock_repo.fetch_credentials_list.return_value = mock_credentials
             
-            result = list_credentials()
+            result = list_credentials(request_data=None)
             
             assert result['result'] == 'SUCCESS'
             assert len(result['credentials']) == 2
@@ -430,7 +430,7 @@ class TestCredentialListing:
             ]
             mock_repo.fetch_credentials_list.return_value = mock_credentials
             
-            result = list_credentials()
+            result = list_credentials(request_data=None)
             
             assert result['result'] == 'SUCCESS'
             assert len(result['credentials']) == 1
@@ -443,7 +443,7 @@ class TestCredentialDeletion:
 
     def test_delete_credential_missing_id(self):
         """Test that missing credential_id parameter fails"""
-        result = delete_credential(credential_id=None)
+        result = delete_credential(request_data=None)
         assert result['result'] == 'FAILURE'
         assert 'Missing credential_id' in result['error']
 
@@ -455,7 +455,7 @@ class TestCredentialDeletion:
             mock_repo.fetch_credential_by_id.return_value = None
             
             fake_id = str(uuid.uuid4())
-            result = delete_credential(fake_id)
+            result = delete_credential(request_data={"credential_id": fake_id})
             
             assert result['result'] == 'FAILURE'
             assert 'not found' in result['error'].lower()
@@ -480,7 +480,7 @@ class TestCredentialDeletion:
             )
             mock_repo.fetch_credential_by_id.return_value = mock_credential
             
-            result = delete_credential(test_id)
+            result = delete_credential(request_data={"credential_id": test_id})
             
             assert result['result'] == 'SUCCESS'
             assert 'successfully deleted' in result['message'].lower()
@@ -507,7 +507,7 @@ class TestCredentialDeletion:
             )
             mock_repo.fetch_credential_by_id.return_value = mock_credential
             
-            result = delete_credential(test_id)
+            result = delete_credential(request_data={"credential_id": test_id})
             
             # Should first check existence, then delete
             mock_repo.fetch_credential_by_id.assert_called_once_with(test_id)
@@ -524,7 +524,7 @@ class TestCredentialErrorHandling:
             mock_repo_class.return_value = mock_repo
             mock_repo.fetch_credential_by_id.side_effect = Exception('Database error')
             
-            result = get_credential(str(uuid.uuid4()))
+            result = get_credential(request_data={"credential_id": str(uuid.uuid4())})
             assert result['result'] == 'FAILURE'
 
     def test_list_credentials_database_error(self):
@@ -534,7 +534,7 @@ class TestCredentialErrorHandling:
             mock_repo_class.return_value = mock_repo
             mock_repo.fetch_credentials_list.side_effect = Exception('Database error')
             
-            result = list_credentials()
+            result = list_credentials(request_data=None)
             assert result['result'] == 'FAILURE'
 
     def test_delete_credential_database_error(self):
@@ -548,5 +548,5 @@ class TestCredentialErrorHandling:
             mock_repo.fetch_credential_by_id.return_value = mock_credential
             mock_repo.delete_credential.side_effect = Exception('Database error')
             
-            result = delete_credential(test_id)
+            result = delete_credential(request_data={"credential_id": test_id})
             assert result['result'] == 'FAILURE'

@@ -5,16 +5,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def main(credential_data=None):
+def main(request_data=None):
     """Create a new credential catalog entry"""
-    if not credential_data:
-        return {"result": "FAILURE", "error": "Missing credential data"}
+    if not request_data:
+        return {"result": "FAILURE", "error": "Missing request data"}
 
     try:
-        # Extract required fields
-        name = credential_data.get('name')
-        credential_type = credential_data.get('credential_type')
-        description = credential_data.get('description', '')
+        # Extract required fields directly from request_data
+        name = request_data.get('name')
+        credential_type = request_data.get('credential_type')
+        description = request_data.get('description', '')
         
         if not name or not credential_type:
             return {

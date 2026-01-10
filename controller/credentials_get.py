@@ -4,7 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def main():
+def main(request_data=None):
     """Get list of all credentials"""
     try:
         meta_db = MetadataDatabaseRepository(DatabaseConfig.META_DB)
