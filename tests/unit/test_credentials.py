@@ -387,19 +387,20 @@ class TestCredentialListing:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
             mock_repo.fetch_credentials_list.return_value = []
-            
+
             result = list_credentials(request_data=None)
-            
-            assert result['result'] == 'SUCCESS'
-            assert result['credentials'] == []
-            assert len(result['credentials']) == 0
+
+            # Now returns list directly, not wrapped
+            assert isinstance(result, list)
+            assert result == []
+            assert len(result) == 0
 
     def test_list_credentials_multiple(self):
         """Test listing multiple credentials"""
         with patch('controller.credentials_get.MetadataDatabaseRepository') as mock_repo_class:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
-            
+
             # Mock database response with multiple credentials
             id1 = str(uuid.uuid4())
             id2 = str(uuid.uuid4())
@@ -408,34 +409,36 @@ class TestCredentialListing:
                 (id2, 'api_token', 'api_token', 'API', 'f/vars/api_token', None, None)
             ]
             mock_repo.fetch_credentials_list.return_value = mock_credentials
-            
+
             result = list_credentials(request_data=None)
-            
-            assert result['result'] == 'SUCCESS'
-            assert len(result['credentials']) == 2
-            assert result['credentials'][0]['name'] == 'ssh_key'
-            assert result['credentials'][1]['name'] == 'api_token'
+
+            # Now returns list directly, not wrapped
+            assert isinstance(result, list)
+            assert len(result) == 2
+            assert result[0]['name'] == 'ssh_key'
+            assert result[1]['name'] == 'api_token'
 
     def test_list_credentials_with_timestamps(self):
         """Test listing credentials with timestamp fields"""
         from datetime import datetime
-        
+
         with patch('controller.credentials_get.MetadataDatabaseRepository') as mock_repo_class:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
-            
+
             now = datetime.now()
             mock_credentials = [
                 (str(uuid.uuid4()), 'test_cred', 'api_token', 'Test', 'f/vars/test', now, now)
             ]
             mock_repo.fetch_credentials_list.return_value = mock_credentials
-            
+
             result = list_credentials(request_data=None)
-            
-            assert result['result'] == 'SUCCESS'
-            assert len(result['credentials']) == 1
-            assert result['credentials'][0]['createdAt'] is not None
-            assert result['credentials'][0]['lastUsedAt'] is not None
+
+            # Now returns list directly, not wrapped
+            assert isinstance(result, list)
+            assert len(result) == 1
+            assert result[0]['createdAt'] is not None
+            assert result[0]['lastUsedAt'] is not None
 
 
 class TestCredentialDeletion:
