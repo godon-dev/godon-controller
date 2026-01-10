@@ -178,7 +178,7 @@ jobs:
               }
           }
 
-          result = service.create_breeder(breeder_config)
+          result = service.create_breeder(breeder_config, 'test-breeder')
           assert result['result'] == 'SUCCESS', f'Create failed: {result}'
           breeder_id = result['breeder_id']
           print(f'✓ Created breeder with schema + data: {breeder_id}')
@@ -208,7 +208,7 @@ jobs:
           print('Testing second breeder creation...')
           breeder_config_2 = breeder_config.copy()
           breeder_config_2['breeder']['name'] = 'linux_performance'
-          result = service.create_breeder(breeder_config_2)
+          result = service.create_breeder(breeder_config_2, 'test-breeder-2')
           assert result['result'] == 'SUCCESS', f'Create 2 failed: {result}'
           breeder_id_2 = result['breeder_id']
           print(f'✓ Created second breeder: {breeder_id_2}')
