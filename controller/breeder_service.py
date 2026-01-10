@@ -116,12 +116,17 @@ class BreederService:
         self.archive_repo = ArchiveDatabaseRepository(archive_db_config)
         self.metadata_repo = MetadataDatabaseRepository(meta_db_config)
 
-    def create_breeder(self, breeder_config):
-        """Create a new breeder instance"""
+    def create_breeder(self, breeder_config, name):
+        """Create a new breeder instance
+
+        Args:
+            breeder_config: The breeder configuration
+            name: Breeder instance name (required)
+        """
         try:
             BreederConfig.validate_minimal(breeder_config)
 
-            breeder_instance_name = breeder_config.get('name', 'unnamed_breeder')
+            breeder_instance_name = name
             parallel_runs = breeder_config.get('run', {}).get('parallel', 1)
             targets = breeder_config.get('effectuation', {}).get('targets', [])
             targets_count = len(targets)
