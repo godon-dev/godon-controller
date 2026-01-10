@@ -17,11 +17,11 @@ def main(request_data=None):
                 {
                     "id": str(cred[0]),
                     "name": cred[1],
-                    "credential_type": cred[2],
+                    "credentialType": cred[2],
                     "description": cred[3],
-                    "windmill_variable": cred[4],
-                    "created_at": cred[5].isoformat() if cred[5] else None,
-                    "last_used_at": cred[6].isoformat() if cred[6] else None
+                    "windmillVariable": cred[4],
+                    "createdAt": cred[5].isoformat() if cred[5] else None,
+                    "lastUsedAt": cred[6].isoformat() if cred[6] else None
                 }
                 for cred in credentials
             ]

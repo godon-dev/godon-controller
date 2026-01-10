@@ -6,9 +6,9 @@ logger = logging.getLogger(__name__)
 
 def main(request_data=None):
     """Delete a credential by ID"""
-    credential_id = request_data.get('credential_id') if request_data else None
+    credential_id = request_data.get('credentialId') if request_data else None
     if not credential_id:
-        return {"result": "FAILURE", "error": "Missing credential_id parameter"}
+        return {"result": "FAILURE", "error": "Missing credentialId parameter"}
 
     try:
         meta_db = MetadataDatabaseRepository(DatabaseConfig.META_DB)

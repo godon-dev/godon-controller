@@ -6,9 +6,9 @@ logger = logging.getLogger(__name__)
 
 def main(request_data=None):
     """Get a specific credential by ID"""
-    credential_id = request_data.get('credential_id') if request_data else None
+    credential_id = request_data.get('credentialId') if request_data else None
     if not credential_id:
-        return {"result": "FAILURE", "error": "Missing credential_id parameter"}
+        return {"result": "FAILURE", "error": "Missing credentialId parameter"}
 
     try:
         meta_db = MetadataDatabaseRepository(DatabaseConfig.META_DB)
@@ -26,13 +26,13 @@ def main(request_data=None):
             "credential": {
                 "id": str(credential[0]),
                 "name": credential[1],
-                "credential_type": credential[2],
+                "credentialType": credential[2],
                 "description": credential[3],
-                "windmill_variable": credential[4],
-                "store_type": credential[5],
+                "windmillVariable": credential[4],
+                "storeType": credential[5],
                 "metadata": credential[6],
-                "created_at": credential[7].isoformat() if credential[7] else None,
-                "last_used_at": credential[8].isoformat() if credential[8] else None
+                "createdAt": credential[7].isoformat() if credential[7] else None,
+                "lastUsedAt": credential[8].isoformat() if credential[8] else None
             }
         }
         

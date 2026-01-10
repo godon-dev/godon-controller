@@ -365,7 +365,7 @@ jobs:
           print('Testing credential creation (table + data)...')
           credential_data_1 = {
               'name': 'test_ssh_key',
-              'credential_type': 'ssh_private_key',
+              'credentialType': 'ssh_private_key',
               'description': 'Test SSH key credential'
           }
 
@@ -377,17 +377,17 @@ jobs:
 
           # Test 2: Get credential (tests data retrieval)
           print('Testing credential retrieval...')
-          result = get_credential(request_data=dict(credential_id=credential_id_1))
+          result = get_credential(request_data=dict(credentialId=credential_id_1))
           assert result['result'] == 'SUCCESS', f'Get failed: {result}'
           assert result['credential']['name'] == 'test_ssh_key'
-          assert result['credential']['credential_type'] == 'ssh_private_key'
+          assert result['credential']['credentialType'] == 'ssh_private_key'
           print('✓ Retrieved credential data')
 
           # Test 3: Create second credential with different type
           print('Testing second credential creation...')
           credential_data_2 = {
               'name': 'test_api_token',
-              'credential_type': 'api_token',
+              'credentialType': 'api_token',
               'description': 'Test API token credential'
           }
           result = create_credential(request_data=credential_data_2)
@@ -399,7 +399,7 @@ jobs:
           print('Testing third credential creation...')
           credential_data_3 = {
               'name': 'test_db_connection',
-              'credential_type': 'database_connection',
+              'credentialType': 'database_connection',
               'description': 'Test database connection credential'
           }
           result = create_credential(request_data=credential_data_3)
@@ -416,13 +416,13 @@ jobs:
 
           # Test 6: Delete credential (tests deletion logic)
           print('Testing credential deletion...')
-          result = delete_credential(request_data=dict(credential_id=credential_id_1))
+          result = delete_credential(request_data=dict(credentialId=credential_id_1))
           assert result['result'] == 'SUCCESS', f'Delete failed: {result}'
           print('✓ Deleted credential')
 
           # Test 7: Verify deletion (tests get after delete)
           print('Testing deleted credential retrieval...')
-          result = get_credential(request_data=dict(credential_id=credential_id_1))
+          result = get_credential(request_data=dict(credentialId=credential_id_1))
           assert result['result'] == 'FAILURE', 'Should not find deleted credential'
           assert 'not found' in result['error'].lower()
           print('✓ Verified deletion')
@@ -438,7 +438,7 @@ jobs:
           print('Testing duplicate name validation...')
           credential_data_duplicate = {
               'name': 'test_api_token',  # Already exists
-              'credential_type': 'api_token',
+              'credentialType': 'api_token',
               'description': 'Duplicate name test'
           }
           result = create_credential(request_data=credential_data_duplicate)
@@ -450,19 +450,19 @@ jobs:
           print('Testing invalid credential type validation...')
           credential_data_invalid = {
               'name': 'test_invalid',
-              'credential_type': 'invalid_type',
+              'credentialType': 'invalid_type',
               'description': 'Invalid type test'
           }
           result = create_credential(request_data=credential_data_invalid)
           assert result['result'] == 'FAILURE', 'Should fail with invalid type'
-          assert 'invalid credential_type' in result['error'].lower()
+          assert 'invalid credentialtype' in result['error'].lower()
           print('✓ Invalid credential type validation works')
 
           # Test 11: Test validation - invalid name format
           print('Testing invalid name format validation...')
           credential_data_bad_name = {
               'name': 'test invalid name!',  # Contains spaces and special chars
-              'credential_type': 'api_token',
+              'credentialType': 'api_token',
               'description': 'Invalid name format test'
           }
           result = create_credential(request_data=credential_data_bad_name)
@@ -484,22 +484,22 @@ jobs:
           # Test 13: Test get non-existent credential
           print('Testing non-existent credential retrieval...')
           fake_id = '00000000-0000-0000-0000-000000000000'
-          result = get_credential(request_data=dict(credential_id=fake_id))
+          result = get_credential(request_data=dict(credentialId=fake_id))
           assert result['result'] == 'FAILURE', 'Should fail with non-existent ID'
           assert 'not found' in result['error'].lower()
           print('✓ Non-existent credential retrieval works')
 
           # Test 14: Test delete non-existent credential
           print('Testing non-existent credential deletion...')
-          result = delete_credential(request_data=dict(credential_id=fake_id))
+          result = delete_credential(request_data=dict(credentialId=fake_id))
           assert result['result'] == 'FAILURE', 'Should fail with non-existent ID'
           assert 'not found' in result['error'].lower()
           print('✓ Non-existent credential deletion works')
 
           # Cleanup remaining credentials
           print('Cleaning up test credentials...')
-          delete_credential(request_data=dict(credential_id=credential_id_2))
-          delete_credential(request_data=dict(credential_id=credential_id_3))
+          delete_credential(request_data=dict(credentialId=credential_id_2))
+          delete_credential(request_data=dict(credentialId=credential_id_3))
           print('✓ Cleaned up test credentials')
 
           print('')
