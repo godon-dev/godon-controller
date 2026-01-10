@@ -96,6 +96,7 @@ class MetadataDatabaseRepository:
         CREATE TABLE IF NOT EXISTS {self.breeder_table_name}
         (
         id uuid PRIMARY KEY,
+        name VARCHAR(255) NOT NULL DEFAULT '',
         creation_tsz TIMESTAMPTZ,
         definition jsonb NOT NULL
         );
@@ -127,14 +128,15 @@ class MetadataDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Ensured credentials table exists: {self.credentials_table_name}")
 
-    def insert_breeder_meta(self, breeder_id, creation_ts, meta_state):
+    def insert_breeder_meta(self, breeder_id, name, creation_ts, meta_state):
         """Insert breeder metadata"""
         db_config = self._get_db_config()
         json_string = json.dumps(meta_state).replace("'", "''")
+        name_escaped = name.replace("'", "''")
 
         query = f"""
-        INSERT INTO {self.breeder_table_name} (id, creation_tsz, definition)
-        VALUES('{breeder_id}', '{creation_ts}', '{json_string}');
+        INSERT INTO {self.breeder_table_name} (id, name, creation_tsz, definition)
+        VALUES('{breeder_id}', '{name_escaped}', '{creation_ts}', '{json_string}');
         """
 
         execute_query(db_config, query)
@@ -153,7 +155,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, creation_tsz, definition FROM {self.breeder_table_name} WHERE id = '{breeder_id}';
+        SELECT id, name, creation_tsz, definition FROM {self.breeder_table_name} WHERE id = '{breeder_id}';
         """
 
         return execute_query(db_config, query, with_result=True)
@@ -163,7 +165,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, definition->>'name', creation_tsz FROM {self.breeder_table_name};
+        SELECT id, name, creation_tsz FROM {self.breeder_table_name};
         """
 
         result = execute_query(db_config, query, with_result=True)

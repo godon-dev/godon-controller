@@ -152,6 +152,7 @@ class BreederService:
             self.metadata_repo.create_table()
             self.metadata_repo.insert_breeder_meta(
                 breeder_id=breeder_uuid,
+                name=breeder_instance_name,
                 creation_ts=creation_ts,
                 meta_state=breeder_config
             )
@@ -216,7 +217,12 @@ class BreederService:
                 }
 
             logger.info(f"Successfully created breeder: {breeder_uuid}")
-            return {"result": "SUCCESS", "breeder_id": breeder_uuid}
+            return {
+                "id": breeder_uuid,
+                "name": breeder_instance_name,
+                "status": "active",
+                "createdAt": creation_ts.isoformat()
+            }
 
         except Exception as e:
             logger.error(f"Failed to create breeder: {e}")
@@ -265,9 +271,12 @@ class BreederService:
             breeder_meta_data_row = self.metadata_repo.fetch_meta_data(breeder_id)
 
             if breeder_meta_data_row and len(breeder_meta_data_row) > 0:
+                # Row structure: [id, name, creation_ts, definition]
                 breeder_data = json.dumps({
-                    "creation_timestamp": breeder_meta_data_row[0][1].isoformat(),
-                    "breeder_definition": breeder_meta_data_row[0][2]
+                    "id": breeder_meta_data_row[0][0],
+                    "name": breeder_meta_data_row[0][1],
+                    "creation_timestamp": breeder_meta_data_row[0][2].isoformat(),
+                    "breeder_definition": breeder_meta_data_row[0][3]
                 })
                 result = "SUCCESS"
             else:
@@ -307,14 +316,25 @@ class BreederService:
     def list_breeders(self):
         """List all breeders"""
         try:
+            import dateutil.parser
+
             self.metadata_repo.create_table()
             breeder_meta_data_list = self.metadata_repo.fetch_breeders_list()
 
             if breeder_meta_data_list:
-                configured_breeders = [
-                    (row[0], row[1], parse(str(row[2])).isoformat())
-                    for row in breeder_meta_data_list
-                ]
+                configured_breeders = []
+                for row in breeder_meta_data_list:
+                    breeder_id = row[0]
+                    name = row[1]
+                    creation_ts = row[2]
+
+                    # Format creation timestamp
+                    if isinstance(creation_ts, str):
+                        created_at = dateutil.parser.parse(creation_ts).isoformat()
+                    else:
+                        created_at = creation_ts.isoformat()
+
+                    configured_breeders.append((breeder_id, name, created_at))
             else:
                 configured_breeders = []
 
