@@ -7,20 +7,4 @@ def main(request_data=None):
         meta_db_config=DatabaseConfig.META_DB
     )
 
-    result = service.list_breeders()
-
-    # If service call failed, return error as-is
-    if result.get('result') == 'FAILURE':
-        return result
-
-    # Convert tuples to breeder summary objects
-    breeders = []
-    for breeder_id, name, created_at in result.get('breeders', []):
-        breeders.append({
-            'id': breeder_id,
-            'name': name,
-            'status': 'active',
-            'createdAt': created_at
-        })
-
-    return breeders
+    return service.list_breeders()

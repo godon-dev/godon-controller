@@ -23,7 +23,7 @@ def main(request_data=None):
         
         return {
             "result": "SUCCESS",
-            "credential": {
+            "data": {
                 "id": str(credential[0]),
                 "name": credential[1],
                 "credentialType": credential[2],

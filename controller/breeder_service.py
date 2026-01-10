@@ -152,6 +152,7 @@ class BreederService:
             self.metadata_repo.create_table()
             self.metadata_repo.insert_breeder_meta(
                 breeder_id=breeder_uuid,
+                name=breeder_instance_name,
                 creation_ts=creation_ts,
                 meta_state=breeder_config
             )
@@ -199,7 +200,7 @@ class BreederService:
 
                 target_count += 1
 
-            # If any workers failed to launch, clean up and return error
+            # If any workers failed to launch, clean up and raise error
             if worker_launch_failures:
                 logger.error(f"Failed to launch {len(worker_launch_failures)} workers for breeder {breeder_uuid}")
                 # Attempt cleanup
@@ -210,13 +211,19 @@ class BreederService:
 
                 return {
                     "result": "FAILURE",
-                    "error": f"Failed to launch {len(worker_launch_failures)} worker(s)",
-                    "details": worker_launch_failures,
-                    "breeder_id": breeder_uuid  # Include for debugging
+                    "error": f"Failed to launch {len(worker_launch_failures)} worker(s)"
                 }
 
             logger.info(f"Successfully created breeder: {breeder_uuid}")
-            return {"result": "SUCCESS", "breeder_id": breeder_uuid}
+            return {
+                "result": "SUCCESS",
+                "data": {
+                    "id": breeder_uuid,
+                    "name": breeder_instance_name,
+                    "status": "active",
+                    "createdAt": creation_ts.isoformat()
+                }
+            }
 
         except Exception as e:
             logger.error(f"Failed to create breeder: {e}")
@@ -229,8 +236,7 @@ class BreederService:
 
             return {
                 "result": "FAILURE",
-                "error": str(e),
-                "error_type": type(e).__name__
+                "error": str(e)
             }
 
     def _rollback_breeder_creation(self, breeder_uuid: str, breeder_id: str):
@@ -264,26 +270,26 @@ class BreederService:
             self.metadata_repo.create_table()
             breeder_meta_data_row = self.metadata_repo.fetch_meta_data(breeder_id)
 
-            if breeder_meta_data_row and len(breeder_meta_data_row) > 0:
-                breeder_data = json.dumps({
-                    "creation_timestamp": breeder_meta_data_row[0][1].isoformat(),
-                    "breeder_definition": breeder_meta_data_row[0][2]
-                })
-                result = "SUCCESS"
-            else:
-                breeder_data = json.dumps({})
-                result = "FAILURE"
+            if not breeder_meta_data_row or len(breeder_meta_data_row) == 0:
+                return {
+                    "result": "FAILURE",
+                    "error": "Breeder not found"
+                }
 
+            # Row structure: [id, name, creation_ts, definition]
             return {
-                "result": result,
-                "breeder_data": breeder_data
+                "result": "SUCCESS",
+                "data": {
+                    "id": breeder_meta_data_row[0][0],
+                    "name": breeder_meta_data_row[0][1],
+                    "status": "active",
+                    "createdAt": breeder_meta_data_row[0][2].isoformat(),
+                    "config": breeder_meta_data_row[0][3]
+                }
             }
-
         except Exception as e:
-            logger.error(f"Failed to get breeder {breeder_id}: {e}")
             return {
                 "result": "FAILURE",
-                "breeder_data": json.dumps({}),
                 "error": str(e)
             }
 
@@ -298,8 +304,7 @@ class BreederService:
             self.metadata_repo.remove_breeder_meta(breeder_id)
 
             logger.info(f"Successfully deleted breeder: {breeder_id}")
-            return {"result": "SUCCESS"}
-
+            return {"result": "SUCCESS", "data": None}
         except Exception as e:
             logger.error(f"Failed to delete breeder {breeder_id}: {e}")
             return {"result": "FAILURE", "error": str(e)}
@@ -307,26 +312,37 @@ class BreederService:
     def list_breeders(self):
         """List all breeders"""
         try:
+            import dateutil.parser
+
             self.metadata_repo.create_table()
             breeder_meta_data_list = self.metadata_repo.fetch_breeders_list()
 
-            if breeder_meta_data_list:
-                configured_breeders = [
-                    (row[0], row[1], parse(str(row[2])).isoformat())
-                    for row in breeder_meta_data_list
-                ]
-            else:
-                configured_breeders = []
+            if not breeder_meta_data_list:
+                return {
+                    "result": "SUCCESS",
+                    "data": []
+                }
+
+            configured_breeders = []
+            for row in breeder_meta_data_list:
+                breeder_id = row[0]
+                name = row[1]
+                creation_ts = row[2]
+
+                # Format creation timestamp
+                if isinstance(creation_ts, str):
+                    created_at = dateutil.parser.parse(creation_ts).isoformat()
+                else:
+                    created_at = creation_ts.isoformat()
+
+                configured_breeders.append((breeder_id, name, created_at))
 
             return {
                 "result": "SUCCESS",
-                "breeders": configured_breeders
+                "data": configured_breeders
             }
-
         except Exception as e:
-            logger.error(f"Failed to list breeders: {e}")
             return {
                 "result": "FAILURE",
-                "breeders": [],
                 "error": str(e)
             }

@@ -196,7 +196,7 @@ jobs:
 
           result = create_breeder(request_data=breeder_config)
           assert result['result'] == 'SUCCESS', f'Create failed: {result}'
-          breeder_id = result['breeder_id']
+          breeder_id = result['data']['id']
           print(f'✓ Created breeder with schema + data: {breeder_id}')
 
           # Test 1.5: Verify archive database was created
@@ -217,14 +217,9 @@ jobs:
           # Test 2: Get breeder (tests data retrieval)
           print('Testing breeder retrieval...')
           result = get_breeder(request_data=dict(breeder_id=breeder_id))
-          # Now returns breeder object directly, not wrapped
-          assert 'id' in result or 'result' in result, f'Get failed: {result}'
-          if 'result' in result:
-              # Error case
-              assert result['result'] == 'FAILURE'
-          else:
-              # Success case - breeder object returned
-              assert result['id'] == breeder_id
+          # Command adapter returns wrapped response
+          assert result['result'] == 'SUCCESS', f'Get failed: {result}'
+          assert result['data']['id'] == breeder_id
           print('✓ Retrieved breeder data')
 
           # Test 3: Create another breeder (tests schema is reused)
@@ -233,16 +228,18 @@ jobs:
           breeder_config_2['name'] = 'test-breeder-2'
           result = create_breeder(request_data=breeder_config_2)
           assert result['result'] == 'SUCCESS', f'Create 2 failed: {result}'
-          breeder_id_2 = result['breeder_id']
+          breeder_id_2 = result['data']['id']
           print(f'✓ Created second breeder: {breeder_id_2}')
 
           # Test 4: List breeders (tests listing with multiple records)
           print('Testing breeder listing...')
           result = list_breeders(request_data=None)
-          # Now returns list directly, not wrapped
-          assert isinstance(result, list), f'List failed: {result}'
-          assert len(result) >= 2, f'Expected >=2 breeders, got {len(result)}'
-          print(f'✓ Found {len(result)} breeder(s)')
+          # Command adapter returns wrapped response
+          assert result['result'] == 'SUCCESS', f'List failed: {result}'
+          assert isinstance(result['data'], list), f'List data is not a list: {result}'
+          breeders_list = result['data']
+          assert len(breeders_list) >= 2, f'Expected >=2 breeders, got {len(breeders_list)}'
+          print(f'✓ Found {len(breeders_list)} breeder(s)')
 
           # Test 5: Delete breeder (tests deletion logic)
           print('Testing breeder deletion...')
@@ -266,10 +263,12 @@ jobs:
           # Test 7: Verify list updated (tests list after deletion)
           print('Testing breeder listing after deletion...')
           result = list_breeders(request_data=None)
-          # Now returns list directly, not wrapped
-          assert isinstance(result, list), f'List failed: {result}'
-          assert len(result) >= 1, 'Should have 1 breeder left'
-          print(f'✓ Found {len(result)} breeder(s) after deletion')
+          # Command adapter returns wrapped response
+          assert result['result'] == 'SUCCESS', f'List failed: {result}'
+          assert isinstance(result['data'], list), f'List data is not a list: {result}'
+          breeders_list = result['data']
+          assert len(breeders_list) >= 1, 'Should have 1 breeder left'
+          print(f'✓ Found {len(breeders_list)} breeder(s) after deletion')
 
           # Cleanup
           print('Cleaning up test data...')
@@ -388,15 +387,15 @@ jobs:
           # Pass the credential data directly as request_data (flattened)
           result = create_credential(request_data=credential_data_1)
           assert result['result'] == 'SUCCESS', f'Create failed: {result}'
-          credential_id_1 = result['credential']['id']
+          credential_id_1 = result['data']['id']
           print(f'✓ Created credential: {credential_id_1}')
 
           # Test 2: Get credential (tests data retrieval)
           print('Testing credential retrieval...')
           result = get_credential(request_data=dict(credentialId=credential_id_1))
           assert result['result'] == 'SUCCESS', f'Get failed: {result}'
-          assert result['credential']['name'] == 'test_ssh_key'
-          assert result['credential']['credentialType'] == 'ssh_private_key'
+          assert result['data']['name'] == 'test_ssh_key'
+          assert result['data']['credentialType'] == 'ssh_private_key'
           print('✓ Retrieved credential data')
 
           # Test 3: Create second credential with different type
@@ -408,7 +407,7 @@ jobs:
           }
           result = create_credential(request_data=credential_data_2)
           assert result['result'] == 'SUCCESS', f'Create 2 failed: {result}'
-          credential_id_2 = result['credential']['id']
+          credential_id_2 = result['data']['id']
           print(f'✓ Created second credential: {credential_id_2}')
 
           # Test 4: Create third credential with yet another type
@@ -420,16 +419,18 @@ jobs:
           }
           result = create_credential(request_data=credential_data_3)
           assert result['result'] == 'SUCCESS', f'Create 3 failed: {result}'
-          credential_id_3 = result['credential']['id']
+          credential_id_3 = result['data']['id']
           print(f'✓ Created third credential: {credential_id_3}')
 
           # Test 5: List credentials (tests listing with multiple records)
           print('Testing credential listing...')
           result = list_credentials(request_data=None)
-          # Now returns list directly, not wrapped
-          assert isinstance(result, list), f'List failed: {result}'
-          assert len(result) >= 3, f'Expected >=3 credentials, got {len(result)}'
-          print(f'✓ Found {len(result)} credential(s)')
+          # Command adapter returns wrapped response
+          assert result['result'] == 'SUCCESS', f'List failed: {result}'
+          creds_list = result['data']
+          assert isinstance(creds_list, list), f'List data is not a list: {result}'
+          assert len(creds_list) >= 3, f'Expected >=3 credentials, got {len(creds_list)}'
+          print(f'✓ Found {len(creds_list)} credential(s)')
 
           # Test 6: Delete credential (tests deletion logic)
           print('Testing credential deletion...')
@@ -447,10 +448,12 @@ jobs:
           # Test 8: Verify list updated (tests list after deletion)
           print('Testing credential listing after deletion...')
           result = list_credentials(request_data=None)
-          # Now returns list directly, not wrapped
-          assert isinstance(result, list), f'List failed: {result}'
-          assert len(result) >= 2, 'Should have 2 credentials left'
-          print(f'✓ Found {len(result)} credential(s) after deletion')
+          # Command adapter returns wrapped response
+          assert result['result'] == 'SUCCESS', f'List failed: {result}'
+          creds_list = result['data']
+          assert isinstance(creds_list, list), f'List data is not a list: {result}'
+          assert len(creds_list) >= 2, 'Should have 2 credentials left'
+          print(f'✓ Found {len(creds_list)} credential(s) after deletion')
 
           # Test 9: Test validation - duplicate name
           print('Testing duplicate name validation...')

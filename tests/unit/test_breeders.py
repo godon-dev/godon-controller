@@ -64,21 +64,26 @@ class TestBreederRetrieval:
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            # Service returns wrapped response
+            # Service returns wrapped response with data field
             mock_service.get_breeder.return_value = {
                 "result": "SUCCESS",
-                "breeder_data": '{"creation_timestamp": "2024-01-01T00:00:00Z", "breeder_definition": {"name": "test-breeder", "type": "linux_performance"}}'
+                "data": {
+                    "id": test_id,
+                    "name": "test-breeder",
+                    "status": "active",
+                    "createdAt": "2024-01-01T00:00:00Z",
+                    "config": {"type": "linux_performance"}
+                }
             }
 
             result = get_breeder(request_data={"breeder_id": test_id})
 
-            # Should return unwrapped breeder object
-            assert 'id' in result
-            assert result['id'] == test_id
-            assert result['name'] == 'test-breeder'
-            assert result['status'] == 'active'
-            assert 'createdAt' in result
-            assert 'config' in result
+            # Command adapter passes through wrapped response
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert result['data']['id'] == test_id
+            assert result['data']['name'] == 'test-breeder'
+            assert result['data']['status'] == 'active'
 
 
 class TestBreederListing:
@@ -91,14 +96,15 @@ class TestBreederListing:
             mock_service_class.return_value = mock_service
             mock_service.list_breeders.return_value = {
                 "result": "SUCCESS",
-                "breeders": []
+                "data": []
             }
 
             result = list_breeders(request_data=None)
 
-            # Should return list directly, not wrapped
-            assert isinstance(result, list)
-            assert result == []
+            # Command adapter passes through wrapped response
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert result['data'] == []
 
     def test_list_breeders_multiple(self):
         """Test listing multiple breeders"""
@@ -111,10 +117,10 @@ class TestBreederListing:
             from datetime import datetime
             now = datetime.now()
 
-            # Service returns wrapped response with tuples
+            # Service returns wrapped response with data field
             mock_service.list_breeders.return_value = {
                 "result": "SUCCESS",
-                "breeders": [
+                "data": [
                     (id1, "breeder1", now.isoformat()),
                     (id2, "breeder2", now.isoformat())
                 ]
@@ -122,14 +128,16 @@ class TestBreederListing:
 
             result = list_breeders(request_data=None)
 
-            # Should return list of breeder objects directly
-            assert isinstance(result, list)
-            assert len(result) == 2
-            assert result[0]['id'] == id1
-            assert result[0]['name'] == 'breeder1'
-            assert result[0]['status'] == 'active'
-            assert result[1]['id'] == id2
-            assert result[1]['name'] == 'breeder2'
+            # Command adapter passes through wrapped response
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert isinstance(result['data'], list)
+            assert len(result['data']) == 2
+            # Service returns tuples: (id, name, createdAt)
+            assert result['data'][0][0] == id1
+            assert result['data'][0][1] == 'breeder1'
+            assert result['data'][1][0] == id2
+            assert result['data'][1][1] == 'breeder2'
 
     def test_list_breeders_service_failure(self):
         """Test listing when service fails"""
@@ -204,21 +212,25 @@ class TestBreederResponseFormats:
             test_id = str(uuid.uuid4())
             mock_service.get_breeder.return_value = {
                 "result": "SUCCESS",
-                "breeder_data": '{"creation_timestamp": "2024-01-01T00:00:00Z", "breeder_definition": {"name": "test-breeder", "type": "linux_performance"}}'
+                "data": {
+                    "id": test_id,
+                    "name": "test-breeder",
+                    "status": "active",
+                    "createdAt": "2024-01-01T00:00:00Z",
+                    "config": {"type": "linux_performance"}
+                }
             }
 
             result = get_breeder(request_data={"breeder_id": test_id})
 
-            # Verify expected fields exist
-            assert 'id' in result
-            assert 'name' in result
-            assert 'status' in result
-            assert 'createdAt' in result
-            assert 'config' in result
-
-            # Verify no wrapper fields
-            assert 'result' not in result
-            assert 'breeder_data' not in result
+            # Command adapter passes through wrapped response
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert 'id' in result['data']
+            assert 'name' in result['data']
+            assert 'status' in result['data']
+            assert 'createdAt' in result['data']
+            assert 'config' in result['data']
 
     def test_list_breeders_response_structure(self):
         """Test that list_breeders returns correct structure"""
@@ -230,18 +242,15 @@ class TestBreederResponseFormats:
 
             mock_service.list_breeders.return_value = {
                 "result": "SUCCESS",
-                "breeders": [(str(uuid.uuid4()), "test", now.isoformat())]
+                "data": [(str(uuid.uuid4()), "test", now.isoformat())]
             }
 
             result = list_breeders(request_data=None)
 
-            # Should be a list, not wrapped dict
-            assert isinstance(result, list)
-            assert 'result' not in result
-
-            # Each item should have expected fields
-            if len(result) > 0:
-                assert 'id' in result[0]
-                assert 'name' in result[0]
-                assert 'status' in result[0]
-                assert 'createdAt' in result[0]
+            # Command adapter passes through wrapped response
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert isinstance(result['data'], list)
+            if len(result['data']) > 0:
+                # Each item is a tuple (id, name, createdAt)
+                assert len(result['data'][0]) == 3
