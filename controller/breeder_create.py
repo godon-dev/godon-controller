@@ -19,8 +19,6 @@ def main(request_data=None):
     if 'breeder' not in breeder_config:
         return {"result": "FAILURE", "error": "Missing breeder configuration"}
 
-    breeder_config = BreederConfig.extract_breeder_config(breeder_config)
-
     service = BreederService(
         archive_db_config=DatabaseConfig.ARCHIVE_DB,
         meta_db_config=DatabaseConfig.META_DB

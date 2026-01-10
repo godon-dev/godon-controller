@@ -10,15 +10,11 @@ def main(request_data=None):
     if not request_data:
         return {"result": "FAILURE", "error": "Missing request data"}
 
-    credential_data = request_data.get('credential_data')
-    if not credential_data:
-        return {"result": "FAILURE", "error": "Missing credential_data"}
-
     try:
-        # Extract required fields
-        name = credential_data.get('name')
-        credential_type = credential_data.get('credential_type')
-        description = credential_data.get('description', '')
+        # Extract required fields directly from request_data
+        name = request_data.get('name')
+        credential_type = request_data.get('credential_type')
+        description = request_data.get('description', '')
         
         if not name or not credential_type:
             return {
