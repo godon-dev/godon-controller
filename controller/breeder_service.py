@@ -296,11 +296,21 @@ class BreederService:
     def delete_breeder(self, breeder_id):
         """Delete a breeder instance"""
         try:
+            # Check if breeder exists first
+            self.metadata_repo.create_table()
+            breeder_meta_data_row = self.metadata_repo.fetch_meta_data(breeder_id)
+
+            if not breeder_meta_data_row or len(breeder_meta_data_row) == 0:
+                logger.warning(f"Breeder with ID '{breeder_id}' not found")
+                return {
+                    "result": "FAILURE",
+                    "error": f"Breeder with ID '{breeder_id}' not found"
+                }
+
             __uuid_common_name = f"_{breeder_id.replace('-', '_')}"
 
             self.archive_repo.drop_database(__uuid_common_name)
 
-            self.metadata_repo.create_table()
             self.metadata_repo.remove_breeder_meta(breeder_id)
 
             logger.info(f"Successfully deleted breeder: {breeder_id}")
