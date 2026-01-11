@@ -12,7 +12,8 @@ def main(request_data=None):
 
     try:
         meta_db = MetadataDatabaseRepository(DatabaseConfig.META_DB)
-        
+        meta_db.create_credentials_table()
+
         credential = meta_db.fetch_credential_by_id(credential_id)
         
         if not credential:

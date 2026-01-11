@@ -335,7 +335,12 @@ class BreederService:
                 else:
                     created_at = creation_ts.isoformat()
 
-                configured_breeders.append((breeder_id, name, created_at))
+                configured_breeders.append({
+                    "id": breeder_id,
+                    "name": name,
+                    "status": "active",
+                    "createdAt": created_at
+                })
 
             return {
                 "result": "SUCCESS",
