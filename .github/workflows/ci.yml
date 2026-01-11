@@ -381,7 +381,8 @@ jobs:
           credential_data_1 = {
               'name': 'test_ssh_key',
               'credentialType': 'ssh_private_key',
-              'description': 'Test SSH key credential'
+              'description': 'Test SSH key credential',
+              'content': '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA2Z2H7V...'
           }
 
           # Pass the credential data directly as request_data (flattened)
@@ -403,7 +404,8 @@ jobs:
           credential_data_2 = {
               'name': 'test_api_token',
               'credentialType': 'api_token',
-              'description': 'Test API token credential'
+              'description': 'Test API token credential',
+              'content': 'test_api_token_content_abc123'
           }
           result = create_credential(request_data=credential_data_2)
           assert result['result'] == 'SUCCESS', f'Create 2 failed: {result}'
@@ -415,7 +417,8 @@ jobs:
           credential_data_3 = {
               'name': 'test_db_connection',
               'credentialType': 'database_connection',
-              'description': 'Test database connection credential'
+              'description': 'Test database connection credential',
+              'content': 'postgresql://user:pass@localhost:5432/dbname'
           }
           result = create_credential(request_data=credential_data_3)
           assert result['result'] == 'SUCCESS', f'Create 3 failed: {result}'
@@ -460,7 +463,8 @@ jobs:
           credential_data_duplicate = {
               'name': 'test_api_token',  # Already exists
               'credentialType': 'api_token',
-              'description': 'Duplicate name test'
+              'description': 'Duplicate name test',
+              'content': 'duplicate_test_content'
           }
           result = create_credential(request_data=credential_data_duplicate)
           assert result['result'] == 'FAILURE', 'Should fail with duplicate name'
@@ -472,7 +476,8 @@ jobs:
           credential_data_invalid = {
               'name': 'test_invalid',
               'credentialType': 'invalid_type',
-              'description': 'Invalid type test'
+              'description': 'Invalid type test',
+              'content': 'test_content'
           }
           result = create_credential(request_data=credential_data_invalid)
           assert result['result'] == 'FAILURE', 'Should fail with invalid type'
@@ -484,7 +489,8 @@ jobs:
           credential_data_bad_name = {
               'name': 'test invalid name!',  # Contains spaces and special chars
               'credentialType': 'api_token',
-              'description': 'Invalid name format test'
+              'description': 'Invalid name format test',
+              'content': 'test_content'
           }
           result = create_credential(request_data=credential_data_bad_name)
           assert result['result'] == 'FAILURE', 'Should fail with invalid name format'
@@ -495,11 +501,11 @@ jobs:
           print('Testing missing required fields validation...')
           credential_data_missing = {
               'name': 'test_missing'
-              # Missing credential_type
+              # Missing credential_type and content
           }
           result = create_credential(request_data=credential_data_missing)
           assert result['result'] == 'FAILURE', 'Should fail with missing fields'
-          assert 'missing required fields' in result['error'].lower()
+          assert 'missing required field' in result['error'].lower()
           print('✓ Missing required fields validation works')
 
           # Test 13: Test get non-existent credential

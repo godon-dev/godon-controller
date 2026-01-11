@@ -14,20 +14,40 @@ def main(request_data=None):
         # Extract required fields directly from request_data
         name = request_data.get('name')
         credential_type = request_data.get('credentialType')  # Accept camelCase from API
+        content = request_data.get('content')
         description = request_data.get('description', '')
 
-        if not name or not credential_type:
+        # Validate required fields
+        if name is None:
             return {
                 "result": "FAILURE",
-                "error": "Missing required fields: name, credentialType"
+                "error": "Missing required field: name"
             }
 
-        # Validate name format
-        import re
-        if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+        if name.strip() == "":
             return {
                 "result": "FAILURE",
-                "error": "Invalid name format. Use only alphanumeric, hyphens, and underscores"
+                "error": "Invalid name: name cannot be empty"
+            }
+
+        if credential_type is None:
+            return {
+                "result": "FAILURE",
+                "error": "Missing required field: credentialType"
+            }
+
+        if content is None or content.strip() == "":
+            return {
+                "result": "FAILURE",
+                "error": "Missing required field: content (cannot be empty)"
+            }
+
+        # Validate name format (must be 1+ characters, alphanumeric/hyphen/underscore only)
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]{1,}$', name):
+            return {
+                "result": "FAILURE",
+                "error": f"Invalid name format: '{name}'. Use only alphanumeric characters, hyphens, and underscores (1-255 characters)"
             }
 
         # Validate credential type
@@ -35,7 +55,7 @@ def main(request_data=None):
         if credential_type not in valid_types:
             return {
                 "result": "FAILURE",
-                "error": f"Invalid credentialType. Must be one of: {valid_types}"
+                "error": f"Invalid credentialType: '{credential_type}'. Must be one of: {valid_types}"
             }
 
         # Generate credential ID and Windmill variable path
@@ -57,12 +77,19 @@ def main(request_data=None):
                 metadata={}
             )
         except Exception as e:
-            if "duplicate key" in str(e).lower():
+            error_str = str(e).lower()
+            if "duplicate key" in error_str or "unique constraint" in error_str:
                 return {
                     "result": "FAILURE",
                     "error": f"Credential with name '{name}' already exists"
                 }
-            raise
+            else:
+                # Log the full error for debugging but return a clean error to client
+                logger.error(f"Database error creating credential: {e}", exc_info=True)
+                return {
+                    "result": "FAILURE",
+                    "error": f"Failed to create credential: {str(e)}"
+                }
 
         return {
             "result": "SUCCESS",

@@ -45,29 +45,30 @@ class TestCredentialValidation:
         """Test that missing name field fails validation"""
         credential_data = {
             'credentialType': 'ssh_private_key',
-            'description': 'Test credential'
+            'description': 'Test credential',
+            'content': 'test_content'
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
-        assert 'Missing required fields' in result['error']
-        assert 'name' in result['error']
+        assert 'Missing required field: name' in result['error']
 
     def test_create_credential_missing_type(self):
         """Test that missing credential_type field fails validation"""
         credential_data = {
             'name': 'test_credential',
-            'description': 'Test credential'
+            'description': 'Test credential',
+            'content': 'test_content'
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
-        assert 'Missing required fields' in result['error']
-        assert 'credentialType' in result['error']
+        assert 'Missing required field: credentialType' in result['error']
 
     def test_create_credential_invalid_name_spaces(self):
         """Test that names with spaces fail validation"""
         credential_data = {
             'name': 'test credential',
-            'credentialType': 'ssh_private_key'
+            'credentialType': 'ssh_private_key',
+            'content': 'test_content'
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
@@ -79,7 +80,8 @@ class TestCredentialValidation:
         for invalid_name in invalid_names:
             credential_data = {
                 'name': invalid_name,
-                'credentialType': 'ssh_private_key'
+                'credentialType': 'ssh_private_key',
+                'content': 'test_content'
             }
             result = create_credential(request_data=credential_data)
             assert result['result'] == 'FAILURE'
@@ -91,12 +93,13 @@ class TestCredentialValidation:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
             mock_repo.insert_credential.return_value = None
-            
+
             valid_names = ['test_credential', 'test-credential', 'test123', 'Test_Credential-123']
             for valid_name in valid_names:
                 credential_data = {
                     'name': valid_name,
-                    'credentialType': 'ssh_private_key'
+                    'credentialType': 'ssh_private_key',
+                    'content': 'test_content'
                 }
                 result = create_credential(request_data=credential_data)
                 # Should pass validation and reach database insertion
@@ -107,7 +110,8 @@ class TestCredentialValidation:
         """Test that invalid credential types fail validation"""
         credential_data = {
             'name': 'test_credential',
-            'credentialType': 'invalid_type'
+            'credentialType': 'invalid_type',
+            'content': 'test_content'
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
@@ -119,12 +123,13 @@ class TestCredentialValidation:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
             mock_repo.insert_credential.return_value = None
-            
+
             valid_types = ['ssh_private_key', 'api_token', 'database_connection', 'http_basic_auth']
             for cred_type in valid_types:
                 credential_data = {
                     'name': f'test_{cred_type}',
-                    'credentialType': cred_type
+                    'credentialType': cred_type,
+                    'content': 'test_content'
                 }
                 result = create_credential(request_data=credential_data)
                 # Should pass validation
@@ -135,21 +140,23 @@ class TestCredentialValidation:
         """Test that empty name fails validation"""
         credential_data = {
             'name': '',
-            'credentialType': 'ssh_private_key'
+            'credentialType': 'ssh_private_key',
+            'content': 'test_content'
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
-        # Empty strings are falsy, so it should trigger missing required fields
+        assert 'cannot be empty' in result['error']
 
     def test_create_credential_none_fields(self):
         """Test that None values in required fields fail validation"""
         credential_data = {
             'name': None,
-            'credentialType': None
+            'credentialType': None,
+            'content': None
         }
         result = create_credential(request_data=credential_data)
         assert result['result'] == 'FAILURE'
-        assert 'Missing required fields' in result['error']
+        assert 'Missing required field: name' in result['error']
 
 
 class TestCredentialCreation:
@@ -161,13 +168,14 @@ class TestCredentialCreation:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
             mock_repo.insert_credential.return_value = None
-            
+
             credential_data = {
                 'name': 'test_ssh_key',
                 'credentialType': 'ssh_private_key',
-                'description': 'Test SSH key'
+                'description': 'Test SSH key',
+                'content': '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA2Z2H7V...'
             }
-            
+
             result = create_credential(request_data=credential_data)
 
             assert result['result'] == 'SUCCESS'
@@ -177,7 +185,7 @@ class TestCredentialCreation:
             assert result['data']['description'] == 'Test SSH key'
             assert result['data']['windmillVariable'] == 'f/vars/test_ssh_key'
             assert 'id' in result['data']
-            
+
             # Verify database operations were called
             mock_repo.create_credentials_table.assert_called_once()
             mock_repo.insert_credential.assert_called_once()
@@ -188,15 +196,16 @@ class TestCredentialCreation:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
             mock_repo.insert_credential.return_value = None
-            
+
             credential_data = {
                 'name': 'test_api_token',
                 'credentialType': 'api_token',
-                'description': 'API token for external service'
+                'description': 'API token for external service',
+                'content': 'test_token_content'
             }
-            
+
             result = create_credential(request_data=credential_data)
-            
+
             assert result['result'] == 'SUCCESS'
             assert result['data']['description'] == 'API token for external service'
 
@@ -206,14 +215,15 @@ class TestCredentialCreation:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
             mock_repo.insert_credential.return_value = None
-            
+
             credential_data = {
                 'name': 'test_db_conn',
-                'credentialType': 'database_connection'
+                'credentialType': 'database_connection',
+                'content': 'test_db_content'
             }
-            
+
             result = create_credential(request_data=credential_data)
-            
+
             assert result['result'] == 'SUCCESS'
             assert result['data']['description'] == ''
 
@@ -224,14 +234,15 @@ class TestCredentialCreation:
             mock_repo_class.return_value = mock_repo
             # Simulate duplicate key error
             mock_repo.insert_credential.side_effect = Exception('duplicate key violation')
-            
+
             credential_data = {
                 'name': 'existing_credential',
-                'credentialType': 'ssh_private_key'
+                'credentialType': 'ssh_private_key',
+                'content': 'test_content'
             }
-            
+
             result = create_credential(request_data=credential_data)
-            
+
             assert result['result'] == 'FAILURE'
             assert 'already exists' in result['error'].lower()
 
@@ -241,15 +252,16 @@ class TestCredentialCreation:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
             mock_repo.insert_credential.return_value = None
-            
+
             credential_data = {
                 'name': 'test_uuid_gen',
-                'credentialType': 'api_token'
+                'credentialType': 'api_token',
+                'content': 'test_content'
             }
-            
+
             result_1 = create_credential(request_data=credential_data)
-            result_2 = create_credential(request_data={**credential_data, 'name': 'test_uuid_gen_2'})
-            
+            result_2 = create_credential(request_data={**credential_data, 'name': 'test_uuid_gen_2', 'content': 'test_content2'})
+
             # Should generate different UUIDs
             assert result_1['data']['id'] != result_2['data']['id']
 
@@ -263,19 +275,20 @@ class TestCredentialCreation:
             mock_repo = Mock()
             mock_repo_class.return_value = mock_repo
             mock_repo.insert_credential.return_value = None
-            
+
             test_names = [
                 ('my_ssh_key', 'f/vars/my_ssh_key'),
                 ('api-token-123', 'f/vars/api-token-123'),
                 ('test_Credential', 'f/vars/test_Credential')
             ]
-            
+
             for name, expected_var in test_names:
                 credential_data = {
                     'name': name,
-                    'credentialType': 'ssh_private_key'
+                    'credentialType': 'ssh_private_key',
+                    'content': 'test_content'
                 }
-                
+
                 result = create_credential(request_data=credential_data)
                 assert result['data']['windmillVariable'] == expected_var
 
