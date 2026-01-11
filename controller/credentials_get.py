@@ -8,6 +8,7 @@ def main(request_data=None):
     """Get list of all credentials"""
     try:
         meta_db = MetadataDatabaseRepository(DatabaseConfig.META_DB)
+        meta_db.create_credentials_table()
 
         credentials = meta_db.fetch_credentials_list()
 
