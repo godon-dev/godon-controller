@@ -48,7 +48,13 @@ jobs:
           sys.path.insert(0, 'controller')
 
           # Mock wmill before imports (new start_optimization_flow uses it)
-          sys.modules['wmill'] = MagicMock()
+          mock_wmill = MagicMock()
+          # Configure run_script_by_path to return successful preflight result
+          mock_wmill.run_script_by_path.return_value = {
+              'result': 'SUCCESS',
+              'data': {'message': 'Preflight validation passed'}
+          }
+          sys.modules['wmill'] = mock_wmill
 
           # Create stub modules using types.ModuleType
           class FakeControllerModule:
@@ -163,31 +169,32 @@ jobs:
           breeder_config = {
               'name': 'test-breeder',
               'config': {
+                  'meta': {
+                      'configVersion': '0.3'
+                  },
                   'breeder': {
                       'type': 'linux_performance'
                   },
                   'run': {
                       'parallel': 1,
-                      'completion_criteria': {
-                          'iterations': dict(min=10, max=100)
+                      'completion': {
+                          'iterations': {'min': 10, 'max': 100}
                       }
                   },
                   'effectuation': {
                       'targets': [{
                           'type': 'ssh',
                           'address': 'test.local',
-                          'connection': {
-                              'username': 'test_user',
-                              'private_key': '/path/to/key'
-                          }
+                          'username': 'test_user',
+                          'credentialName': 'test-ssh-key'
                       }]
                   },
-                  'cooperation': dict(active=False),
-                  'objectives': [{'name': 'test_metric', 'direction': 'minimize'}],
+                  'cooperation': {'active': False},
+                  'objectives': [{'name': 'test_metric', 'goal': 'MINIMIZE'}],
                   'settings': {
                       'sysctl': {
-                          'vm_swappiness': {
-                              'constraints': dict(upper=100, lower=0)
+                          'vm.swappiness': {
+                              'constraints': [{'step': 1, 'lower': 0, 'upper': 100}]
                           }
                       }
                   }
