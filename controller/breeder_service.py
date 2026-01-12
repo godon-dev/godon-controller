@@ -15,51 +15,88 @@ logger = logging.getLogger(__name__)
 
 def determine_config_shard(run_id, target_id, targets_count, config, parallel_runs_count):
     """Determine configuration shard for parallel runs using hash-based assignment with overlap
-    
+
     Uses hash-based deterministic assignment to distribute parameter space across workers,
     with 10% overlap between shards to avoid boundary blind spots.
+
+    v0.3 updates:
+    - Support multiple settings categories (sysctl, sysfs, cpufreq, ethtool)
+    - Support list of constraints (multiple disjoint ranges)
+    - Only shard integer ranges (not categorical values)
     """
     config_result = copy.deepcopy(config)
-    settings_space = config_result.get('settings', {}).get('sysctl', {})
 
-    for setting_key, setting_value in settings_space.items():
-        if not isinstance(setting_value, dict):
+    # Support multiple settings categories
+    supported_categories = ['sysctl', 'sysfs', 'cpufreq', 'ethtool']
+    settings = config_result.get('settings', {})
+
+    for category in supported_categories:
+        if category not in settings:
             continue
 
-        constraints = setting_value.get('constraints', {})
-        upper = constraints.get('upper')
-        lower = constraints.get('lower')
+        settings_space = settings[category]
 
-        if upper is None or lower is None:
-            continue
+        for setting_key, setting_value in settings_space.items():
+            if not isinstance(setting_value, dict):
+                continue
 
-        # Hash-based worker assignment for even distribution
-        worker_id = f"{run_id}_{target_id}_{setting_key}"
-        worker_hash = int(hashlib.sha256(worker_id.encode()).hexdigest(), 16)
-        
-        total_shards = targets_count * parallel_runs_count
-        shard_index = worker_hash % total_shards
-        
-        # Calculate shard boundaries
-        delta = abs(upper - lower)
-        shard_size = delta / total_shards
-        
-        # Add overlap to avoid boundary blind spots
-        overlap_percent = 0.10
-        overlap = int(shard_size * overlap_percent)
-        
-        # Calculate shard boundaries with overlap
-        new_lower = int(lower + shard_size * shard_index)
-        new_upper = int(lower + shard_size * (shard_index + 1))
-        
-        # Respect original boundaries
-        new_lower = max(lower, new_lower - overlap)
-        new_upper = min(upper, new_upper + overlap)
-        
-        setting_value['constraints']['lower'] = new_lower
-        setting_value['constraints']['upper'] = new_upper
+            # constraints is now a list, not a dict
+            constraints_list = setting_value.get('constraints', [])
 
-    config_result['settings']['sysctl'] = settings_space
+            if not isinstance(constraints_list, list):
+                # Skip invalid constraint structures (validation will catch them)
+                continue
+
+            if len(constraints_list) == 0:
+                continue
+
+            # Check if first constraint is categorical (has 'values')
+            # Categorical parameters are not shardable
+            first_constraint = constraints_list[0]
+            if 'values' in first_constraint:
+                # Categorical parameter - skip sharding
+                continue
+
+            # Shard each integer range constraint
+            for constraint_idx, constraint in enumerate(constraints_list):
+                # Only shard integer ranges (has step, lower, upper)
+                if 'step' not in constraint or 'lower' not in constraint or 'upper' not in constraint:
+                    continue
+
+                lower = constraint['lower']
+                upper = constraint['upper']
+                step = constraint['step']
+
+                if not isinstance(lower, (int, float)) or not isinstance(upper, (int, float)):
+                    continue
+
+                # Hash-based worker assignment for even distribution
+                worker_id = f"{run_id}_{target_id}_{category}_{setting_key}_{constraint_idx}"
+                worker_hash = int(hashlib.sha256(worker_id.encode()).hexdigest(), 16)
+
+                total_shards = targets_count * parallel_runs_count
+                shard_index = worker_hash % total_shards
+
+                # Calculate shard boundaries
+                delta = abs(upper - lower)
+                shard_size = delta / total_shards
+
+                # Add overlap to avoid boundary blind spots
+                overlap_percent = 0.10
+                overlap = int(shard_size * overlap_percent)
+
+                # Calculate shard boundaries with overlap
+                new_lower = lower + shard_size * shard_index
+                new_upper = lower + shard_size * (shard_index + 1)
+
+                # Respect original boundaries
+                new_lower = max(lower, new_lower - overlap)
+                new_upper = min(upper, new_upper + overlap)
+
+                # Update the constraint in place
+                constraint['lower'] = new_lower
+                constraint['upper'] = new_upper
+
     return config_result
 
 def start_optimization_flow(flow_id, shard_config, run_id, target_id, breeder_id):
@@ -134,10 +171,38 @@ class BreederService:
             BreederConfig.validate_minimal(breeder_config)
 
             breeder_instance_name = name
+            breeder_type = breeder_config.get('breeder', {}).get('type', 'unknown_breeder')
             parallel_runs = breeder_config.get('run', {}).get('parallel', 1)
             targets = breeder_config.get('effectuation', {}).get('targets', [])
             targets_count = len(targets)
             is_cooperative = breeder_config.get('cooperation', {}).get('active', False)
+
+            # Call breeder preflight check synchronously before launching workers
+            # This validates that the breeder supports all parameters in the config
+            # (semantic validation that controller can't do)
+            logger.info(f"Running preflight check for breeder type: {breeder_type}")
+            preflight_script_path = f"f/breeder/{breeder_type}/preflight"
+
+            try:
+                preflight_result = wmill.run_script_by_path(
+                    path=preflight_script_path,
+                    args={'config': breeder_config}
+                )
+
+                if preflight_result.get('result') != 'SUCCESS':
+                    error_msg = preflight_result.get('error', 'Unknown preflight error')
+                    logger.error(f"Preflight validation failed: {error_msg}")
+                    return {
+                        "result": "FAILURE",
+                        "error": f"Preflight validation failed: {error_msg}"
+                    }
+
+                logger.info("Preflight validation passed")
+
+            except Exception as e:
+                # If preflight script doesn't exist or fails, log warning but continue
+                # (for backwards compatibility with breeders that don't have preflight yet)
+                logger.warning(f"Preflight check failed or not found: {e}. Continuing with worker launch.")
 
             breeder_uuid = str(uuid.uuid4())
             breeder_config['uuid'] = breeder_uuid

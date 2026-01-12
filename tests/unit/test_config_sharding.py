@@ -77,10 +77,10 @@ class TestConfigSharding:
             'settings': {
                 'sysctl': {
                     'net_ipv4_tcp_rmem': {
-                        'constraints': {'lower': 4096, 'upper': 4194304}
+                        'constraints': [{'step': 1, 'lower': 4096, 'upper': 4194304}]
                     },
                     'vm_swappiness': {
-                        'constraints': {'lower': 1, 'upper': 100}
+                        'constraints': [{'step': 1, 'lower': 1, 'upper': 100}]
                     }
                 }
             }
@@ -98,8 +98,8 @@ class TestConfigSharding:
         swappiness = shard['settings']['sysctl']['vm_swappiness']['constraints']
 
         # Each parameter should be individually constrained
-        assert 4096 <= tcp_rmem['lower'] <= tcp_rmem['upper'] <= 4194304
-        assert 1 <= swappiness['lower'] <= swappiness['upper'] <= 100
+        assert 4096 <= tcp_rmem[0]['lower'] <= tcp_rmem[0]['upper'] <= 4194304
+        assert 1 <= swappiness[0]['lower'] <= swappiness[0]['upper'] <= 100
 
     def test_sharding_with_overlap(self):
         """Test that shards include overlap buffer in their ranges"""
@@ -107,7 +107,7 @@ class TestConfigSharding:
             'settings': {
                 'sysctl': {
                     'test_param': {
-                        'constraints': {'lower': 0, 'upper': 1000}
+                        'constraints': [{'step': 1, 'lower': 0, 'upper': 1000}]
                     }
                 }
             }
@@ -130,7 +130,7 @@ class TestConfigSharding:
         shard_size = delta / total_shards  # ~333.33
         
         # With 10% overlap, shard should be larger than base shard_size
-        shard_range = param['upper'] - param['lower']
+        shard_range = param[0]['upper'] - param[0]['lower']
         expected_min_range = int(shard_size * 0.9)  # At minimum 90% of shard_size
         
         # Shard range should be close to shard_size + overlap (on both ends)
@@ -139,8 +139,8 @@ class TestConfigSharding:
             f"Shard range {shard_range} should be at least {expected_min_range}"
         
         # Shard should still be within original bounds
-        assert param['lower'] >= 0, "Lower bound should not be below original"
-        assert param['upper'] <= 1000, "Upper bound should not exceed original"
+        assert param[0]['lower'] >= 0, "Lower bound should not be below original"
+        assert param[0]['upper'] <= 1000, "Upper bound should not exceed original"
 
     def test_deterministic_sharding(self):
         """Test that same worker always gets same shard"""
@@ -148,7 +148,7 @@ class TestConfigSharding:
             'settings': {
                 'sysctl': {
                     'test_param': {
-                        'constraints': {'lower': 0, 'upper': 1000}
+                        'constraints': [{'step': 1, 'lower': 0, 'upper': 1000}]
                     }
                 }
             }
@@ -174,8 +174,8 @@ class TestConfigSharding:
         param_1 = shard_1['settings']['sysctl']['test_param']['constraints']
         param_2 = shard_2['settings']['sysctl']['test_param']['constraints']
 
-        assert param_1['lower'] == param_2['lower'], "Same worker should get same shard"
-        assert param_1['upper'] == param_2['upper'], "Same worker should get same shard"
+        assert param_1[0]['lower'] == param_2[0]['lower'], "Same worker should get same shard"
+        assert param_1[0]['upper'] == param_2[0]['upper'], "Same worker should get same shard"
 
     def test_different_workers_get_different_shards(self):
         """Test that different workers get different shards"""
@@ -183,7 +183,7 @@ class TestConfigSharding:
             'settings': {
                 'sysctl': {
                     'test_param': {
-                        'constraints': {'lower': 0, 'upper': 10000}
+                        'constraints': [{'step': 100, 'lower': 0, 'upper': 10000}]
                     }
                 }
             }
@@ -199,7 +199,9 @@ class TestConfigSharding:
                 config=config,
                 parallel_runs_count=4
             )
-            shards.append(shard['settings']['sysctl']['test_param']['constraints'])
+            # Get first (and only) constraint from list
+            constraint_list = shard['settings']['sysctl']['test_param']['constraints']
+            shards.append(constraint_list[0])
 
         # Check that we have diversity in shard assignments
         # (not all same, and distributed across the range)
@@ -216,7 +218,7 @@ class TestConfigSharding:
             'settings': {
                 'sysctl': {
                     'test_param': {
-                        'constraints': {'lower': 0, 'upper': 1000}
+                        'constraints': [{'step': 1, 'lower': 0, 'upper': 1000}]
                     }
                 }
             }
@@ -237,7 +239,7 @@ class TestConfigSharding:
 
         # All shards should be within bounds
         for shard in shards:
-            assert 0 <= shard['lower'] <= shard['upper'] <= 1000
+            assert 0 <= shard[0]['lower'] <= shard[0]['upper'] <= 1000
 
     def test_sharding_preserves_config_structure(self):
         """Test that sharding preserves original config structure"""
@@ -245,10 +247,10 @@ class TestConfigSharding:
             'settings': {
                 'sysctl': {
                     'net_ipv4_tcp_rmem': {
-                        'constraints': {'lower': 4096, 'upper': 4194304}
+                        'constraints': [{'step': 1, 'lower': 4096, 'upper': 4194304}]
                     },
                     'vm_swappiness': {
-                        'constraints': {'lower': 1, 'upper': 100}
+                        'constraints': [{'step': 1, 'lower': 1, 'upper': 100}]
                     }
                 }
             },
@@ -280,7 +282,7 @@ class TestConfigSharding:
             'settings': {
                 'sysctl': {
                     'small_param': {
-                        'constraints': {'lower': 10, 'upper': 20}
+                        'constraints': [{'step': 1, 'lower': 10, 'upper': 20}]
                     }
                 }
             }
@@ -297,9 +299,9 @@ class TestConfigSharding:
         param = shard['settings']['sysctl']['small_param']['constraints']
 
         # Even with many workers, should respect bounds
-        assert param['lower'] >= 10, "Should not go below original lower"
-        assert param['upper'] <= 20, "Should not exceed original upper"
-        assert param['lower'] <= param['upper'], "Lower should not exceed upper"
+        assert param[0]['lower'] >= 10, "Should not go below original lower"
+        assert param[0]['upper'] <= 20, "Should not exceed original upper"
+        assert param[0]['lower'] <= param[0]['upper'], "Lower should not exceed upper"
 
     def test_sharding_with_zero_lower(self):
         """Test sharding with zero as lower bound"""
@@ -307,7 +309,7 @@ class TestConfigSharding:
             'settings': {
                 'sysctl': {
                     'zero_param': {
-                        'constraints': {'lower': 0, 'upper': 100}
+                        'constraints': [{'step': 1, 'lower': 0, 'upper': 100}]
                     }
                 }
             }
@@ -322,5 +324,5 @@ class TestConfigSharding:
         )
 
         param = shard['settings']['sysctl']['zero_param']['constraints']
-        assert param['lower'] >= 0, "Should handle zero lower bound correctly"
-        assert param['upper'] <= 100, "Should respect upper bound"
+        assert param[0]['lower'] >= 0, "Should handle zero lower bound correctly"
+        assert param[0]['upper'] <= 100, "Should respect upper bound"
