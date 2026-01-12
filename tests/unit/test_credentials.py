@@ -190,6 +190,32 @@ class TestCredentialCreation:
             mock_repo.create_credentials_table.assert_called_once()
             mock_repo.insert_credential.assert_called_once()
 
+    def test_create_credential_without_content(self):
+        """Test successful credential creation without content field (content stored in Windmill)"""
+        with patch('controller.credential_create.MetadataDatabaseRepository') as mock_repo_class:
+            mock_repo = Mock()
+            mock_repo_class.return_value = mock_repo
+            mock_repo.insert_credential.return_value = None
+
+            credential_data = {
+                'name': 'test_ssh_key_no_content',
+                'credentialType': 'ssh_private_key',
+                'description': 'Test SSH key without content field'
+            }
+
+            result = create_credential(request_data=credential_data)
+
+            assert result['result'] == 'SUCCESS'
+            assert 'data' in result
+            assert result['data']['name'] == 'test_ssh_key_no_content'
+            assert result['data']['credentialType'] == 'ssh_private_key'
+            assert result['data']['windmillVariable'] == 'f/vars/test_ssh_key_no_content'
+            assert 'id' in result['data']
+
+            # Verify database operations were called
+            mock_repo.create_credentials_table.assert_called_once()
+            mock_repo.insert_credential.assert_called_once()
+
     def test_create_credential_with_description(self):
         """Test credential creation with description"""
         with patch('controller.credential_create.MetadataDatabaseRepository') as mock_repo_class:

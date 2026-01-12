@@ -508,7 +508,19 @@ jobs:
           assert 'missing required field' in result['error'].lower()
           print('✓ Missing required fields validation works')
 
-          # Test 13: Test get non-existent credential
+          # Test 13: Test credential creation without content field (godon-api use case)
+          print('Testing credential creation without content (godon-api use case)...')
+          credential_data_no_content = {
+              'name': 'test_no_content',
+              'credentialType': 'api_token',
+              'description': 'Test credential without content field'
+          }
+          result = create_credential(request_data=credential_data_no_content)
+          assert result['result'] == 'SUCCESS', f'Create without content failed: {result}'
+          credential_id_no_content = result['data']['id']
+          print(f'✓ Created credential without content: {credential_id_no_content}')
+
+          # Test 14: Test get non-existent credential
           print('Testing non-existent credential retrieval...')
           fake_id = '00000000-0000-0000-0000-000000000000'
           result = get_credential(request_data=dict(credentialId=fake_id))
@@ -516,7 +528,7 @@ jobs:
           assert 'not found' in result['error'].lower()
           print('✓ Non-existent credential retrieval works')
 
-          # Test 14: Test delete non-existent credential
+          # Test 15: Test delete non-existent credential
           print('Testing non-existent credential deletion...')
           result = delete_credential(request_data=dict(credentialId=fake_id))
           assert result['result'] == 'FAILURE', 'Should fail with non-existent ID'
@@ -527,6 +539,7 @@ jobs:
           print('Cleaning up test credentials...')
           delete_credential(request_data=dict(credentialId=credential_id_2))
           delete_credential(request_data=dict(credentialId=credential_id_3))
+          delete_credential(request_data=dict(credentialId=credential_id_no_content))
           print('✓ Cleaned up test credentials')
 
           print('')

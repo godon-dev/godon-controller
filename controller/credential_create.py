@@ -36,11 +36,9 @@ def main(request_data=None):
                 "error": "Missing required field: credentialType"
             }
 
-        if content is None or content.strip() == "":
-            return {
-                "result": "FAILURE",
-                "error": "Missing required field: content (cannot be empty)"
-            }
+        # Note: content is optional when called from godon-api (already stored in Windmill variable)
+        # The godon-api handler stores content in Windmill before calling this controller script
+        # so we don't validate it here
 
         # Validate name format (must be 1+ characters, alphanumeric/hyphen/underscore only)
         import re
