@@ -35,11 +35,11 @@ class BreederConfig:
         return request_data.get('breeder', {})
 
     @staticmethod
-    def validate_constraints_v03(constraints_list, param_name):
+    def validate_constraints_v03(constraints, param_name):
         """Validate constraint structure (list of ranges or values)
 
         Args:
-            constraints_list: List of constraint objects
+            constraints: List of constraint objects OR dict with 'values' key (for categorical)
             param_name: Parameter name (for error messages)
 
         Returns:
@@ -48,19 +48,33 @@ class BreederConfig:
         Raises:
             ValueError: If constraint structure is invalid
         """
-        if not isinstance(constraints_list, list):
+        # Pragmatic approach: Accept both dict and list formats
+        # - Dict with 'values' → categorical, normalize to list
+        # - List → validate each item
+        # This allows simple config for categorical while supporting multiple ranges for numeric
+        if isinstance(constraints, dict):
+            if 'values' in constraints:
+                # Simple dict format for categorical: {values: [...]}
+                # Normalize to list format for uniform processing
+                constraints = [constraints]
+            else:
+                raise ValueError(
+                    f"Parameter '{param_name}': constraints dict must have 'values' key for categorical parameters"
+                )
+
+        if not isinstance(constraints, list):
             raise ValueError(
-                f"Parameter '{param_name}': constraints must be a list, got {type(constraints_list).__name__}"
+                f"Parameter '{param_name}': constraints must be a list or dict with 'values', got {type(constraints).__name__}"
             )
 
-        if len(constraints_list) == 0:
+        if len(constraints) == 0:
             raise ValueError(
                 f"Parameter '{param_name}': constraints list cannot be empty"
             )
 
         # Determine constraint type from first constraint
         # All constraints in list should be same type (int ranges OR categorical values)
-        first_constraint = constraints_list[0]
+        first_constraint = constraints[0]
 
         if not isinstance(first_constraint, dict):
             raise ValueError(
@@ -94,7 +108,7 @@ class BreederConfig:
         # Check if integer range (has 'step', 'lower', 'upper')
         elif 'step' in first_constraint or 'lower' in first_constraint or 'upper' in first_constraint:
             # Validate integer range constraints
-            for i, constraint in enumerate(constraints_list):
+            for i, constraint in enumerate(constraints):
                 if not isinstance(constraint, dict):
                     raise ValueError(
                         f"Parameter '{param_name}': constraint {i}: must be a dict, got {type(constraint).__name__}"
@@ -368,8 +382,18 @@ class BreederConfig:
                         )
 
     @staticmethod
-    def validate_minimal(breeder_config):
+    def validate_minimal(breeder_config, strict_mode=True):
         """Minimal validation to catch catastrophic config errors early
+
+        Args:
+            breeder_config: Breeder configuration dict
+            strict_mode: If True (default), reject unknown parameters.
+                       If False, allow unknown parameters with warnings.
+                       Can be overridden by meta.strict_validation in config.
+
+        Returns:
+            True if validation passes
+            Raises ValueError if validation fails
 
         MAKESHIFT IMPLEMENTATION - DO NOT RELY ON THIS FOR PRODUCTION VALIDATION
 
@@ -398,11 +422,16 @@ class BreederConfig:
         - Target field validation
         - Objective and guardrail reconnaissance validation
         - Run completion criteria validation
+        - Strict/permissive mode for unknown parameters
         """
         errors = []
+        warnings = []
 
-        # Check ConfigVersion
+        # Determine strict mode: CLI param > meta config > default (true)
         meta_section = breeder_config.get('meta', {})
+        if 'strict_validation' in meta_section:
+            strict_mode = meta_section['strict_validation']
+        # else: use the strict_mode parameter passed in (default: true)
         config_version = meta_section.get('configVersion', '0.2')
         if config_version != '0.3':
             errors.append(
@@ -464,6 +493,34 @@ class BreederConfig:
                             f"settings.{category}.{param_name}: must be a dict, got {type(param_config).__name__}"
                         )
                         continue
+
+                    # Special case: ethtool interfaces are containers, not parameters
+                    # Skip constraints check for interface names (e.g., eth0)
+                    if category == 'ethtool':
+                        # param_config contains nested ethtool params (tso, gro, rx_ring, tx_ring)
+                        # Validate those instead of the interface itself
+                        for ethtool_param, ethtool_config in param_config.items():
+                            if not isinstance(ethtool_config, dict):
+                                errors.append(
+                                    f"settings.ethtool.{param_name}.{ethtool_param}: must be a dict, got {type(ethtool_config).__name__}"
+                                )
+                                continue
+
+                            if 'constraints' not in ethtool_config:
+                                errors.append(
+                                    f"settings.ethtool.{param_name}.{ethtool_param}: missing 'constraints' field"
+                                )
+                                continue
+
+                            try:
+                                # Validate constraint structure (list of ranges or values)
+                                constraint_type = BreederConfig.validate_constraints_v03(
+                                    ethtool_config['constraints'],
+                                    f"ethtool.{param_name}.{ethtool_param}"
+                                )
+                            except ValueError as e:
+                                errors.append(str(e))
+                        continue  # Skip the generic constraints validation for ethtool
 
                     if 'constraints' not in param_config:
                         errors.append(
@@ -675,4 +732,9 @@ class BreederConfig:
             error_msg += "\n".join(f"  [{i+1}/{error_count}] {err}" for i, err in enumerate(errors))
             raise ValueError(error_msg)
 
-        return True
+        # Return success with warnings if any
+        result = {"success": True}
+        if warnings:
+            result["warnings"] = warnings
+
+        return result

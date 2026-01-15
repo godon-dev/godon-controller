@@ -36,7 +36,7 @@ class TestTargetTypeValidation:
         }
 
         result = BreederConfig.validate_minimal(config)
-        assert result is True
+        assert result["success"] is True
 
     def test_missing_target_type_fails(self):
         """Test that missing target type field causes validation failure"""
@@ -159,7 +159,7 @@ class TestTargetTypeValidation:
 
         # Should pass since 'future_breeder' not in BREEDER_CAPABILITIES
         result = BreederConfig.validate_minimal(config)
-        assert result is True
+        assert result["success"] is True
 
 
 class TestConfigVersionValidation:
@@ -218,7 +218,7 @@ class TestConfigVersionValidation:
         }
 
         result = BreederConfig.validate_minimal(config)
-        assert result is True
+        assert result["success"] is True
 
 
 class TestV03ConstraintValidation:
@@ -251,7 +251,7 @@ class TestV03ConstraintValidation:
         }
 
         result = BreederConfig.validate_minimal(config)
-        assert result is True
+        assert result["success"] is True
 
     def test_v03_categorical_constraint_passes(self):
         """Test that valid v0.3 categorical constraint passes"""
@@ -279,10 +279,10 @@ class TestV03ConstraintValidation:
         }
 
         result = BreederConfig.validate_minimal(config)
-        assert result is True
+        assert result["success"] is True
 
     def test_constraints_not_list_fails(self):
-        """Test that non-list constraints fail validation"""
+        """Test that dict constraints without 'values' key fail validation"""
         config = {
             'meta': {'configVersion': '0.3'},
             'breeder': {'type': 'linux_performance'},
@@ -298,7 +298,7 @@ class TestV03ConstraintValidation:
             'settings': {
                 'sysctl': {
                     'vm.swappiness': {
-                        'constraints': {'lower': 0, 'upper': 100}  # Dict, not list
+                        'constraints': {'lower': 0, 'upper': 100}  # Dict without 'values' key
                     }
                 }
             }
@@ -308,7 +308,7 @@ class TestV03ConstraintValidation:
             BreederConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
-        assert "constraints must be a list" in error_msg
+        assert "constraints dict must have 'values' key" in error_msg
 
     def test_constraint_lower_greater_than_upper_fails(self):
         """Test that lower >= upper fails validation"""
@@ -821,7 +821,7 @@ class TestGuardrailsValidation:
         }
 
         result = BreederConfig.validate_minimal(config)
-        assert result is True
+        assert result["success"] is True
 
     def test_guardrail_missing_hard_limit_fails(self):
         """Test that missing hard_limit fails validation"""
@@ -902,7 +902,7 @@ class TestRollbackStrategiesValidation:
         }
 
         result = BreederConfig.validate_minimal(config)
-        assert result is True
+        assert result["success"] is True
 
     def test_undefined_strategy_reference_fails(self):
         """Test that referencing undefined rollback strategy fails validation"""
