@@ -239,7 +239,7 @@ class BreederService:
                             run_id=run_id,
                             target_id=target_count,
                             targets_count=targets_count,
-                            config=breeder_config,
+                            config=flow_config,
                             parallel_runs_count=parallel_runs
                         )
 
