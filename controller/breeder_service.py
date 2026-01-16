@@ -205,7 +205,7 @@ class BreederService:
                 logger.warning(f"Preflight check failed or not found: {e}. Continuing with worker launch.")
 
             breeder_uuid = str(uuid.uuid4())
-            breeder_config['uuid'] = breeder_uuid
+            breeder_config['breeder']['uuid'] = breeder_uuid
             creation_ts = datetime.datetime.now()
 
             __uuid_common_name = f"breeder_{breeder_uuid.replace('-', '_')}"
