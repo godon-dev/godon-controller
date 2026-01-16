@@ -57,13 +57,20 @@ class ArchiveDatabaseRepository:
         self.base_config = base_config.copy()
 
     def create_database(self, breeder_id):
-        """Create a new database for a breeder"""
+        """Create a new database for a breeder with schema-based type separation"""
         db_config = self.base_config.copy()
         db_config['database'] = "archive_db"
 
+        # Create database
         query = f"CREATE DATABASE {breeder_id};"
         execute_ddl_query(db_config, query)
         logger.info(f"Created archive database: {breeder_id}")
+
+        # Create breeder schema for optimization trials (future: analysis, metrics schemas)
+        db_config['database'] = breeder_id
+        query = f"CREATE SCHEMA IF NOT EXISTS breeder;"
+        execute_ddl_query(db_config, query)
+        logger.info(f"Created breeder schema in database {breeder_id}")
 
     def drop_database(self, breeder_id):
         """Drop a breeder database"""

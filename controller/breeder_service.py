@@ -208,11 +208,12 @@ class BreederService:
             breeder_config['breeder']['uuid'] = breeder_uuid
             creation_ts = datetime.datetime.now()
 
-            __uuid_common_name = f"breeder_{breeder_uuid.replace('-', '_')}"
-            breeder_id = f'{__uuid_common_name}'
+            # Use UUID directly (with dashes replaced for PostgreSQL compatibility)
+            # Schema-based separation: breeder, analysis, metrics schemas within same database
+            breeder_db_name = breeder_uuid.replace('-', '_')
 
-            # Create database and metadata records
-            self.archive_repo.create_database(breeder_id)
+            # Create database with schemas for type separation
+            self.archive_repo.create_database(breeder_db_name)
 
             self.metadata_repo.create_table()
             self.metadata_repo.insert_breeder_meta(
@@ -270,7 +271,7 @@ class BreederService:
                 logger.error(f"Failed to launch {len(worker_launch_failures)} workers for breeder {breeder_uuid}")
                 # Attempt cleanup
                 try:
-                    self._rollback_breeder_creation(breeder_uuid, breeder_id)
+                    self._rollback_breeder_creation(breeder_uuid, breeder_db_name)
                 except Exception as cleanup_error:
                     logger.error(f"Failed to cleanup after worker launch failures: {cleanup_error}")
 
@@ -293,9 +294,9 @@ class BreederService:
         except Exception as e:
             logger.error(f"Failed to create breeder: {e}")
             # Attempt cleanup if we had created the breeder
-            if breeder_uuid and breeder_id:
+            if breeder_uuid and breeder_db_name:
                 try:
-                    self._rollback_breeder_creation(breeder_uuid, breeder_id)
+                    self._rollback_breeder_creation(breeder_uuid, breeder_db_name)
                 except Exception as cleanup_error:
                     logger.error(f"Failed to cleanup after breeder creation failure: {cleanup_error}")
 
@@ -304,12 +305,12 @@ class BreederService:
                 "error": str(e)
             }
 
-    def _rollback_breeder_creation(self, breeder_uuid: str, breeder_id: str):
+    def _rollback_breeder_creation(self, breeder_uuid: str, breeder_db_name: str):
         """Rollback breeder creation by cleaning up database records
 
         Args:
             breeder_uuid: UUID of the breeder to rollback
-            breeder_id: Internal database identifier
+            breeder_db_name: Database name (UUID with dashes replaced by underscores)
         """
         logger.warning(f"Rolling back breeder creation: {breeder_uuid}")
 
@@ -372,9 +373,9 @@ class BreederService:
                     "error": f"Breeder with ID '{breeder_id}' not found"
                 }
 
-            __uuid_common_name = f"_{breeder_id.replace('-', '_')}"
-
-            self.archive_repo.drop_database(__uuid_common_name)
+            # Use UUID directly (with dashes replaced for PostgreSQL compatibility)
+            breeder_db_name = breeder_id.replace('-', '_')
+            self.archive_repo.drop_database(breeder_db_name)
 
             self.metadata_repo.remove_breeder_meta(breeder_id)
 
