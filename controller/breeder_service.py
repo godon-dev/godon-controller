@@ -372,7 +372,7 @@ class BreederService:
                     "error": f"Breeder with ID '{breeder_id}' not found"
                 }
 
-            __uuid_common_name = f"_{breeder_id.replace('-', '_')}"
+            __uuid_common_name = f"breeder_{breeder_id.replace('-', '_')}"
 
             self.archive_repo.drop_database(__uuid_common_name)
 
