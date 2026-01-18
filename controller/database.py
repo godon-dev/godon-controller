@@ -74,6 +74,16 @@ class ArchiveDatabaseRepository:
         execute_ddl_query(db_config, query)
         logger.info(f"Dropped archive database: {breeder_id}")
 
+    def get_connection_url(self, breeder_id):
+        """Get PostgreSQL connection URL for a breeder database"""
+        return (
+            f"postgresql://{self.base_config['user']}:"
+            f"{self.base_config['password']}@"
+            f"{self.base_config['host']}:"
+            f"{self.base_config['port']}/"
+            f"{breeder_id}"
+        )
+
 class MetadataDatabaseRepository:
     """Repository for metadata database operations"""
 

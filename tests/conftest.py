@@ -32,6 +32,10 @@ sys.modules['database'] = MagicMock()
 # Mock wmill module (only available inside Windmill)
 sys.modules['wmill'] = MagicMock()
 
+# Mock optuna.storages module (only needed in production, not tests)
+sys.modules['optuna'] = MagicMock()
+sys.modules['optuna.storages'] = MagicMock()
+
 # Create stub modules using types.ModuleType
 def create_stub_module(name):
     module = types.ModuleType(name)

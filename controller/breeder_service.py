@@ -11,6 +11,9 @@ from f.controller.config import BreederConfig, BREEDER_CAPABILITIES
 # Import wmill at top level so Windmill can detect it for dependency resolution
 import wmill
 
+# Import optuna for schema initialization
+import optuna.storages
+
 logger = logging.getLogger(__name__)
 
 def determine_config_shard(run_id, target_id, targets_count, config, parallel_runs_count):
@@ -214,6 +217,18 @@ class BreederService:
 
             # Create database and metadata records
             self.archive_repo.create_database(breeder_id)
+
+            # Initialize Optuna schema to prevent race conditions during worker startup
+            # Multiple workers starting simultaneously would otherwise conflict trying to create tables
+            try:
+                db_url = self.archive_repo.get_connection_url(breeder_id)
+                storage = optuna.storages.RDBStorage(url=db_url)
+                logger.info(f"Initialized Optuna schema for breeder {breeder_uuid}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Optuna schema for breeder {breeder_uuid}: {e}")
+                # Clean up database if schema initialization fails
+                self.archive_repo.drop_database(breeder_id)
+                raise
 
             self.metadata_repo.create_table()
             self.metadata_repo.insert_breeder_meta(
