@@ -56,6 +56,10 @@ jobs:
           }
           sys.modules['wmill'] = mock_wmill
 
+          # Mock optuna.storages before imports (schema initialization uses it)
+          sys.modules['optuna'] = MagicMock()
+          sys.modules['optuna.storages'] = MagicMock()
+
           # Create stub modules using types.ModuleType
           class FakeControllerModule:
               def __init__(self):
@@ -299,6 +303,10 @@ jobs:
 
           # Mock wmill before imports (new start_optimization_flow uses it)
           sys.modules['wmill'] = MagicMock()
+
+          # Mock optuna.storages before imports (schema initialization uses it)
+          sys.modules['optuna'] = MagicMock()
+          sys.modules['optuna.storages'] = MagicMock()
 
           # Create stub modules using FakeControllerModule class (like breeder tests)
           class FakeControllerModule:
