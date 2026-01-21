@@ -13,15 +13,15 @@ BREEDER_CAPABILITIES = {
 
 class DatabaseConfig:
     ARCHIVE_DB = dict(
-        user="yugabyte",
-        password="yugabyte", 
-        host="yb-tservers.godon.svc.cluster.local",
-        port=os.environ.get('YB_TSERVER_SERVICE_SERVICE_PORT_TCP_YSQL_PORT')
+        user=os.environ.get('GODON_ARCHIVE_DB_USER'),
+        password=os.environ.get('GODON_ARCHIVE_DB_PASSWORD'),
+        host=os.environ.get('GODON_ARCHIVE_DB_SERVICE_HOST'),
+        port=os.environ.get('GODON_ARCHIVE_DB_SERVICE_PORT')
     )
 
     META_DB = dict(
-        user="meta_data",
-        password="meta_data",
+        user=os.environ.get('GODON_METADATA_DB_SERVICE_USER', 'meta_data'),
+        password=os.environ.get('GODON_METADATA_DB_SERVICE_PASSWORD', 'meta_data'),
         host=os.environ.get('GODON_METADATA_DB_SERVICE_HOST'),
         port=os.environ.get('GODON_METADATA_DB_SERVICE_PORT')
     )
