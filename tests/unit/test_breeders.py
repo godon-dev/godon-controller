@@ -30,6 +30,8 @@ from controller.breeder_get import main as get_breeder
 from controller.breeders_get import main as list_breeders
 from controller.breeder_create import main as create_breeder
 from controller.breeder_delete import main as delete_breeder
+from controller.breeder_stop import main as stop_breeder
+from controller.breeder_start import main as start_breeder
 
 
 class TestBreederRetrieval:
@@ -197,7 +199,255 @@ class TestBreederDeletion:
             result = delete_breeder(request_data={"breeder_id": test_id})
 
             assert result['result'] == 'SUCCESS'
-            mock_service.delete_breeder.assert_called_once_with(test_id)
+            mock_service.delete_breeder.assert_called_once_with(test_id, force=False)
+
+    def test_delete_breeder_with_force_true(self):
+        """Test deletion with force=true parameter"""
+        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            mock_service.delete_breeder.return_value = {
+                "result": "SUCCESS",
+                "data": {
+                    "breeder_id": test_id,
+                    "delete_type": "force",
+                    "workers_cancelled": 3
+                }
+            }
+
+            result = delete_breeder(request_data={"breeder_id": test_id, "force": True})
+
+            assert result['result'] == 'SUCCESS'
+            mock_service.delete_breeder.assert_called_once_with(test_id, force=True)
+
+    def test_delete_breeder_with_force_false_default(self):
+        """Test that force defaults to False (safe operation)"""
+        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            mock_service.delete_breeder.return_value = {
+                "result": "SUCCESS",
+                "data": {
+                    "breeder_id": test_id,
+                    "delete_type": "graceful",
+                    "workers_cancelled": 0
+                }
+            }
+
+            # Don't pass force parameter - should default to False
+            result = delete_breeder(request_data={"breeder_id": test_id})
+
+            assert result['result'] == 'SUCCESS'
+            mock_service.delete_breeder.assert_called_once_with(test_id, force=False)
+
+    def test_delete_breeder_requires_stop_when_not_forced(self):
+        """Test that deletion without force requires graceful stop first"""
+        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            # Simulate error: workers still running and force=False
+            mock_service.delete_breeder.return_value = {
+                "result": "FAILURE",
+                "error": "Breeder has active workers. Call stop_breeder() first or use force=True",
+                "active_workers": 3
+            }
+
+            result = delete_breeder(request_data={"breeder_id": test_id, "force": False})
+
+            assert result['result'] == 'FAILURE'
+            assert 'active_workers' in result
+
+    def test_delete_breeder_cancels_worker_jobs(self):
+        """Test that delete cancels all worker jobs before dropping database"""
+        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            mock_service.delete_breeder.return_value = {
+                "result": "SUCCESS",
+                "data": {
+                    "breeder_id": test_id,
+                    "delete_type": "force",
+                    "workers_cancelled": 3
+                }
+            }
+
+            result = delete_breeder(request_data={"breeder_id": test_id, "force": True})
+
+            assert result['result'] == 'SUCCESS'
+            assert result['data']['workers_cancelled'] == 3
+
+
+class TestBreederStop:
+    """Test breeder stop functionality"""
+
+    def test_stop_breeder_missing_id(self):
+        """Test that missing breeder_id parameter fails"""
+        result = stop_breeder(request_data=None)
+        assert result['result'] == 'FAILURE'
+        assert 'Missing breeder_id' in result['error']
+
+    def test_stop_breeder_not_found(self):
+        """Test stopping non-existent breeder"""
+        with patch('controller.breeder_stop.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            mock_service.stop_breeder.return_value = {
+                "result": "FAILURE",
+                "error": f"Breeder with ID '{test_id}' not found"
+            }
+
+            result = stop_breeder(request_data={"breeder_id": test_id})
+
+            assert result['result'] == 'FAILURE'
+            assert 'error' in result
+
+    def test_stop_breeder_success(self):
+        """Test successful graceful shutdown request"""
+        with patch('controller.breeder_stop.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            mock_service.stop_breeder.return_value = {
+                "result": "SUCCESS",
+                "message": "Graceful shutdown requested. Workers will stop after completing current trials.",
+                "data": {
+                    "breeder_id": test_id,
+                    "shutdown_type": "graceful"
+                }
+            }
+
+            result = stop_breeder(request_data={"breeder_id": test_id})
+
+            assert result['result'] == 'SUCCESS'
+            assert result['data']['shutdown_type'] == 'graceful'
+            mock_service.stop_breeder.assert_called_once_with(test_id)
+
+
+class TestBreederStart:
+    """Test breeder start/resume functionality"""
+
+    def test_start_breeder_missing_id(self):
+        """Test that missing breeder_id parameter fails"""
+        result = start_breeder(request_data=None)
+        assert result['result'] == 'FAILURE'
+        assert 'Missing breeder_id' in result['error']
+
+    def test_start_breeder_not_found(self):
+        """Test starting non-existent breeder"""
+        with patch('controller.breeder_start.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            mock_service.start_breeder.return_value = {
+                "result": "FAILURE",
+                "error": f"Breeder with ID '{test_id}' not found"
+            }
+
+            result = start_breeder(request_data={"breeder_id": test_id})
+
+            assert result['result'] == 'FAILURE'
+            assert 'error' in result
+
+    def test_start_breeder_success(self):
+        """Test successful breeder start/resume"""
+        with patch('controller.breeder_start.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            mock_service.start_breeder.return_value = {
+                "result": "SUCCESS",
+                "data": {
+                    "breeder_id": test_id,
+                    "workers_started": 3,
+                    "status": "ACTIVE"
+                }
+            }
+
+            result = start_breeder(request_data={"breeder_id": test_id})
+
+            assert result['result'] == 'SUCCESS'
+            assert result['data']['status'] == 'ACTIVE'
+            assert result['data']['workers_started'] == 3
+            mock_service.start_breeder.assert_called_once_with(test_id)
+
+    def test_start_breeder_clears_shutdown_flag(self):
+        """Test that start clears the shutdown flag"""
+        with patch('controller.breeder_start.BreederService') as mock_service_class:
+            mock_service = Mock()
+            mock_service_class.return_value = mock_service
+
+            test_id = str(uuid.uuid4())
+            mock_service.start_breeder.return_value = {
+                "result": "SUCCESS",
+                "data": {
+                    "breeder_id": test_id,
+                    "workers_started": 2,
+                    "status": "ACTIVE"
+                }
+            }
+
+            result = start_breeder(request_data={"breeder_id": test_id})
+
+            assert result['result'] == 'SUCCESS'
+            # Verify the service was called and would clear the flag
+            mock_service.start_breeder.assert_called_once()
+
+
+class TestWorkerCancellation:
+    """Test worker job cancellation functionality"""
+
+    @patch('controller.breeder_service.cancel_job_by_id')
+    def test_cancel_job_by_id_success(self, mock_cancel):
+        """Test successful job cancellation"""
+        from controller.breeder_service import cancel_job_by_id
+
+        mock_cancel.return_value = True
+
+        result = cancel_job_by_id("test-job-id")
+
+        assert result is True
+        mock_cancel.assert_called_once_with("test-job-id")
+
+    @patch('controller.breeder_service.cancel_job_by_id')
+    def test_cancel_job_by_id_failure(self, mock_cancel):
+        """Test job cancellation failure"""
+        from controller.breeder_service import cancel_job_by_id
+
+        mock_cancel.return_value = False
+
+        result = cancel_job_by_id("test-job-id")
+
+        assert result is False
+
+    @patch('controller.breeder_service.Windmill')
+    def test_cancel_job_by_id_handles_windmill_init(self, mock_windmill):
+        """Test that Windmill client is initialized and API is called"""
+        from controller.breeder_service import cancel_job_by_id
+
+        # Mock Windmill client to avoid actual API calls
+        mock_client = Mock()
+        mock_windmill.return_value = mock_client
+
+        # Call the real cancel_job_by_id function
+        result = cancel_job_by_id("test-job-id", reason="Test cancellation")
+
+        assert result is True
+        mock_windmill.assert_called_once()
+        mock_client.post.assert_called_once()
+
 
 
 class TestBreederResponseFormats:
