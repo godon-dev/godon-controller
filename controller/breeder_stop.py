@@ -6,14 +6,9 @@ def main(request_data=None):
     if not breeder_id:
         return {"result": "FAILURE", "error": "Missing breeder_id"}
 
-    # Force deletion: cancel workers immediately
-    # Default to False (safe - requires graceful stop first)
-    force = request_data.get('force', False) if request_data else False
-
     service = BreederService(
         archive_db_config=DatabaseConfig.ARCHIVE_DB,
         meta_db_config=DatabaseConfig.META_DB
     )
 
-    return service.delete_breeder(breeder_id, force=force)
-
+    return service.stop_breeder(breeder_id)

@@ -56,6 +56,56 @@ class ArchiveDatabaseRepository:
     def __init__(self, base_config):
         self.base_config = base_config.copy()
 
+    def create_breeder_state_table(self, breeder_id):
+        """Create the breeder state table for shutdown signaling"""
+        db_config = self.base_config.copy()
+        db_config['database'] = breeder_id
+
+        query = """
+        CREATE TABLE IF NOT EXISTS breeder_state (
+            id SERIAL PRIMARY KEY,
+            shutdown_requested BOOLEAN DEFAULT FALSE,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        INSERT INTO breeder_state (shutdown_requested) VALUES (FALSE)
+        ON CONFLICT DO NOTHING;
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Created breeder state table for: {breeder_id}")
+
+    def set_shutdown_requested(self, breeder_id, value=True):
+        """Set or clear the shutdown requested flag in the breeder's archive database
+
+        Args:
+            breeder_id: The breeder database name
+            value: True to set shutdown flag, False to clear it
+        """
+        db_config = self.base_config.copy()
+        db_config['database'] = breeder_id
+
+        query = f"""
+        UPDATE breeder_state SET shutdown_requested = {str(value).upper()}, updated_at = NOW();
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Set shutdown_requested={value} in archive DB for breeder: {breeder_id}")
+
+    def get_shutdown_requested(self, breeder_id):
+        """Check if shutdown has been requested for a breeder"""
+        db_config = self.base_config.copy()
+        db_config['database'] = breeder_id
+
+        query = """
+        SELECT shutdown_requested FROM breeder_state;
+        """
+
+        result = execute_query(db_config, query, with_result=True)
+        if result and len(result) > 0:
+            return result[0][0]
+        return False
+
     def create_database(self, breeder_id):
         """Create a new database for a breeder"""
         db_config = self.base_config.copy()
@@ -151,6 +201,20 @@ class MetadataDatabaseRepository:
 
         execute_query(db_config, query)
         logger.info(f"Inserted metadata for breeder: {breeder_id}")
+
+    def update_breeder_meta(self, breeder_id, meta_state):
+        """Update breeder metadata (e.g., to add job IDs)"""
+        db_config = self._get_db_config()
+        json_string = json.dumps(meta_state).replace("'", "''")
+
+        query = f"""
+        UPDATE {self.breeder_table_name}
+        SET definition = '{json_string}'
+        WHERE id = '{breeder_id}';
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Updated metadata for breeder: {breeder_id}")
 
     def remove_breeder_meta(self, breeder_id):
         """Remove breeder metadata"""

@@ -3,18 +3,48 @@ import hashlib
 import datetime
 import copy
 import logging
+import os
 from dateutil.parser import parse
 
 from f.controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
-from f.controller.config import BreederConfig, BREEDER_CAPABILITIES
+from f.controller.config import BreederConfig, BREEDER_CAPABILITIES, DatabaseConfig
 
 # Import wmill at top level so Windmill can detect it for dependency resolution
 import wmill
+from wmill import Windmill
 
 # Import optuna for schema initialization
 import optuna.storages
 
 logger = logging.getLogger(__name__)
+
+def cancel_job_by_id(job_id: str, reason: str = None) -> bool:
+    """Cancel a Windmill job by its ID
+
+    Args:
+        job_id: The UUID of the job to cancel
+        reason: Optional reason for cancellation
+
+    Returns:
+        True if cancellation succeeded, False otherwise
+    """
+    try:
+        # Initialize Windmill client using environment variables
+        client = Windmill()
+
+        # Call the cancel endpoint
+        payload = {"reason": reason} if reason else {}
+        client.post(
+            f"/w/{client.workspace}/jobs_u/queue/cancel/{job_id}",
+            json=payload
+        )
+
+        logger.info(f"Successfully canceled Windmill job {job_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to cancel Windmill job {job_id}: {e}")
+        return False
 
 def determine_config_shard(run_id, target_id, targets_count, config, parallel_runs_count):
     """Determine configuration shard for parallel runs using hash-based assignment with overlap
@@ -218,6 +248,9 @@ class BreederService:
             # Create database and metadata records
             self.archive_repo.create_database(breeder_id)
 
+            # Create breeder state table for shutdown signaling in the archive DB
+            self.archive_repo.create_breeder_state_table(breeder_id)
+
             # Initialize Optuna schema to prevent race conditions during worker startup
             # Multiple workers starting simultaneously would otherwise conflict trying to create tables
             try:
@@ -241,6 +274,7 @@ class BreederService:
             # Launch worker scripts with error handling
             worker_launch_failures = []
             target_count = 0
+            worker_job_ids = []  # Track all worker job IDs for later cancellation
 
             for target in targets:
                 hash_suffix = hashlib.sha256(str.encode(target.get('address', ''))).hexdigest()[0:6]
@@ -260,13 +294,15 @@ class BreederService:
                         )
 
                     try:
-                        start_optimization_flow(
+                        _, job_id = start_optimization_flow(
                             flow_id=flow_id,
                             shard_config=flow_config,
                             run_id=run_id,
                             target_id=target_count,
                             breeder_id=breeder_uuid
                         )
+                        # Collect job ID for this worker
+                        worker_job_ids.append(job_id)
                     except Exception as e:
                         # Collect worker launch failures but continue trying others
                         error_details = {
@@ -280,6 +316,15 @@ class BreederService:
                         logger.error(f"Failed to launch worker {flow_id}: {e}")
 
                 target_count += 1
+
+            # Store job IDs in breeder metadata for cleanup on deletion
+            if worker_job_ids:
+                breeder_config['worker_job_ids'] = worker_job_ids
+                self.metadata_repo.update_breeder_meta(
+                    breeder_id=breeder_uuid,
+                    meta_state=breeder_config
+                )
+                logger.info(f"Stored {len(worker_job_ids)} worker job IDs for breeder {breeder_uuid}")
 
             # If any workers failed to launch, clean up and raise error
             if worker_launch_failures:
@@ -374,8 +419,169 @@ class BreederService:
                 "error": str(e)
             }
 
-    def delete_breeder(self, breeder_id):
-        """Delete a breeder instance"""
+    def start_breeder(self, breeder_id):
+        """Start or resume a stopped breeder
+
+        Clears the shutdown flag and relaunches all worker jobs.
+
+        Args:
+            breeder_id: UUID of the breeder to start
+
+        Returns:
+            Success/failure response with details
+        """
+        try:
+            # Check if breeder exists
+            self.metadata_repo.create_table()
+            breeder_meta_data_row = self.metadata_repo.fetch_meta_data(breeder_id)
+
+            if not breeder_meta_data_row or len(breeder_meta_data_row) == 0:
+                logger.warning(f"Breeder with ID '{breeder_id}' not found")
+                return {
+                    "result": "FAILURE",
+                    "error": f"Breeder with ID '{breeder_id}' not found"
+                }
+
+            # Extract metadata
+            breeder_config = breeder_meta_data_row[0][3]
+            breeder_instance_name = breeder_meta_data_row[0][1]
+            breeder_type = breeder_config.get('breeder', {}).get('type', 'unknown_breeder')
+            parallel_runs = breeder_config.get('run', {}).get('parallel', 1)
+            targets = breeder_config.get('effectuation', {}).get('targets', [])
+            targets_count = len(targets)
+            is_cooperative = breeder_config.get('cooperation', {}).get('active', False)
+
+            __uuid_common_name = f"breeder_{breeder_id.replace('-', '_')}"
+
+            # Clear the shutdown flag in archive DB
+            self.archive_repo.set_shutdown_requested(__uuid_common_name, value=False)
+
+            # Relaunch workers using the same logic as create_breeder
+            worker_launch_failures = []
+            target_count = 0
+            worker_job_ids = []
+
+            for target in targets:
+                for run_id in range(parallel_runs):
+                    flow_config = breeder_config.copy()
+                    flow_id = f'{breeder_instance_name}_{target_count}_{run_id}'
+
+                    if not is_cooperative:
+                        flow_config = determine_config_shard(
+                            run_id=run_id,
+                            target_id=target_count,
+                            targets_count=targets_count,
+                            config=flow_config,
+                            parallel_runs_count=parallel_runs
+                        )
+
+                    try:
+                        _, job_id = start_optimization_flow(
+                            flow_id=flow_id,
+                            shard_config=flow_config,
+                            run_id=run_id,
+                            target_id=target_count,
+                            breeder_id=breeder_id
+                        )
+                        worker_job_ids.append(job_id)
+                    except Exception as e:
+                        error_details = {
+                            "flow_id": flow_id,
+                            "target": target_count,
+                            "run": run_id,
+                            "error": str(e),
+                            "error_type": type(e).__name__
+                        }
+                        worker_launch_failures.append(error_details)
+                        logger.error(f"Failed to launch worker {flow_id}: {e}")
+
+                target_count += 1
+
+            # Update worker job IDs in metadata
+            if worker_job_ids:
+                breeder_config['worker_job_ids'] = worker_job_ids
+                self.metadata_repo.update_breeder_meta(
+                    breeder_id=breeder_id,
+                    meta_state=breeder_config
+                )
+
+            # Handle any launch failures
+            if worker_launch_failures:
+                logger.error(f"Failed to launch {len(worker_launch_failures)} workers for breeder {breeder_id}")
+                return {
+                    "result": "PARTIAL_SUCCESS",
+                    "error": f"Failed to launch {len(worker_launch_failures)} worker(s)",
+                    "workers_started": len(worker_job_ids),
+                    "workers_failed": len(worker_launch_failures)
+                }
+
+            logger.info(f"Successfully started/resumed breeder: {breeder_id}")
+            return {
+                "result": "SUCCESS",
+                "data": {
+                    "breeder_id": breeder_id,
+                    "workers_started": len(worker_job_ids),
+                    "status": "ACTIVE"
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to start breeder {breeder_id}: {e}")
+            return {"result": "FAILURE", "error": str(e)}
+
+    def stop_breeder(self, breeder_id):
+        """Request graceful shutdown of a breeder's workers
+
+        Sets a flag in the breeder's archive database that workers check
+        to gracefully stop after completing their current trial.
+
+        This is a quick async operation - returns immediately.
+        Workers will stop on their own timeline (check every trial).
+
+        Monitor via Prometheus metrics for actual worker termination.
+        """
+        try:
+            # Check if breeder exists
+            self.metadata_repo.create_table()
+            breeder_meta_data_row = self.metadata_repo.fetch_meta_data(breeder_id)
+
+            if not breeder_meta_data_row or len(breeder_meta_data_row) == 0:
+                logger.warning(f"Breeder with ID '{breeder_id}' not found")
+                return {
+                    "result": "FAILURE",
+                    "error": f"Breeder with ID '{breeder_id}' not found"
+                }
+
+            # Get the actual database name (breeder_id is UUID, need DB name)
+            __uuid_common_name = f"breeder_{breeder_id.replace('-', '_')}"
+
+            # Set the shutdown flag in the breeder's archive DB
+            self.archive_repo.set_shutdown_requested(__uuid_common_name)
+
+            logger.info(f"Graceful shutdown requested for breeder: {breeder_id}")
+            return {
+                "result": "SUCCESS",
+                "message": "Graceful shutdown requested. Workers will stop after completing current trials.",
+                "data": {
+                    "breeder_id": breeder_id,
+                    "shutdown_type": "graceful",
+                    "note": "Monitor metrics for worker termination"
+                }
+            }
+        except Exception as e:
+            logger.error(f"Failed to request shutdown for breeder {breeder_id}: {e}")
+            return {"result": "FAILURE", "error": str(e)}
+
+    def delete_breeder(self, breeder_id, force=False):
+        """Delete a breeder instance
+
+        Args:
+            breeder_id: UUID of the breeder to delete
+            force: If True, cancel workers immediately (for smoke test/cleanup)
+                   If False, check if shutdown flag is set first
+
+        For now: force=True for smoke test, force=False reserved for future graceful shutdown
+        """
         try:
             # Check if breeder exists first
             self.metadata_repo.create_table()
@@ -388,14 +594,57 @@ class BreederService:
                     "error": f"Breeder with ID '{breeder_id}' not found"
                 }
 
+            # Extract worker job IDs from metadata (4th column is definition/JSONB)
+            breeder_config = breeder_meta_data_row[0][3]
+            worker_job_ids = breeder_config.get('worker_job_ids', [])
+
             __uuid_common_name = f"breeder_{breeder_id.replace('-', '_')}"
 
+            # Cancel all running worker jobs before dropping database
+            if worker_job_ids:
+                if not force:
+                    # Future: Check if graceful shutdown was requested
+                    shutdown_requested = self.archive_repo.get_shutdown_requested(__uuid_common_name)
+                    if not shutdown_requested:
+                        return {
+                            "result": "FAILURE",
+                            "error": "Breeder has active workers. Use force=True to cancel immediately",
+                            "active_workers": len(worker_job_ids),
+                            "note": "Future: call stop_breeder() for graceful shutdown first"
+                        }
+                    logger.info(f"Shutdown flag set, proceeding with delete for breeder {breeder_id}")
+
+                # Cancel workers (forced or graceful-shutdown-complete)
+                logger.info(f"Cancelling {len(worker_job_ids)} worker jobs for breeder {breeder_id}")
+                canceled_count = 0
+                failed_count = 0
+
+                for job_id in worker_job_ids:
+                    if cancel_job_by_id(job_id, reason=f"Deleting breeder {breeder_id}"):
+                        canceled_count += 1
+                    else:
+                        failed_count += 1
+                        logger.warning(f"Failed to cancel worker job {job_id}")
+
+                logger.info(f"Cancelled {canceled_count}/{len(worker_job_ids)} worker jobs")
+                if failed_count > 0:
+                    logger.warning(f"{failed_count} worker jobs could not be cancelled")
+
+            # Drop the archive database
             self.archive_repo.drop_database(__uuid_common_name)
 
+            # Remove metadata
             self.metadata_repo.remove_breeder_meta(breeder_id)
 
             logger.info(f"Successfully deleted breeder: {breeder_id}")
-            return {"result": "SUCCESS", "data": None}
+            return {
+                "result": "SUCCESS",
+                "data": {
+                    "breeder_id": breeder_id,
+                    "delete_type": "force" if force else "graceful",
+                    "workers_cancelled": len(worker_job_ids)
+                }
+            }
         except Exception as e:
             logger.error(f"Failed to delete breeder {breeder_id}: {e}")
             return {"result": "FAILURE", "error": str(e)}
