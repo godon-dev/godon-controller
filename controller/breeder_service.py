@@ -191,25 +191,34 @@ class BreederService:
     def _normalize_constraints(self, config):
         """Normalize constraint formats in config for breeder workers
 
-        Converts dict format {"values": [...]} to list format [{"values": [...]}]
-        to ensure workers receive consistent constraint structure.
+        Recursively converts dict format {"values": [...]} to list format [{"values": [...]}]
+        to ensure workers receive consistent constraint structure. Handles arbitrary nesting
+        (e.g., ethtool -> interface -> param -> constraints).
 
         Args:
             config: Breeder configuration dict (modified in place)
         """
-        settings = config.get('settings', {})
-        for category_name, category_settings in settings.items():
-            if not isinstance(category_settings, dict):
-                continue
+        def normalize_dict(obj):
+            """Recursively normalize constraint dicts to list format"""
+            if isinstance(obj, dict):
+                # Check if this is a constraints dict that needs normalization
+                if 'values' in obj and len(obj) == 1:
+                    # This is a simple constraints dict: {"values": [...]}
+                    return [obj]  # Wrap in list
 
-            for param_name, param_config in category_settings.items():
-                if not isinstance(param_config, dict):
-                    continue
+                # Recursively process all values in the dict
+                for key, value in obj.items():
+                    obj[key] = normalize_dict(value)
+                return obj
+            elif isinstance(obj, list):
+                # Process lists (though constraints shouldn't be nested in lists)
+                return [normalize_dict(item) for item in obj]
+            else:
+                return obj
 
-                constraints = param_config.get('constraints')
-                if constraints and isinstance(constraints, dict) and 'values' in constraints:
-                    # Normalize dict to list format (same logic as ConfigValidator.validate_constraints_v03)
-                    param_config['constraints'] = [constraints]
+        # Normalize only the settings section
+        if 'settings' in config:
+            config['settings'] = normalize_dict(config['settings'])
 
     def create_breeder(self, breeder_config, name):
         """Create a new breeder instance
