@@ -188,6 +188,29 @@ class BreederService:
         self.archive_repo = ArchiveDatabaseRepository(archive_db_config)
         self.metadata_repo = MetadataDatabaseRepository(meta_db_config)
 
+    def _normalize_constraints(self, config):
+        """Normalize constraint formats in config for breeder workers
+
+        Converts dict format {"values": [...]} to list format [{"values": [...]}]
+        to ensure workers receive consistent constraint structure.
+
+        Args:
+            config: Breeder configuration dict (modified in place)
+        """
+        settings = config.get('settings', {})
+        for category_name, category_settings in settings.items():
+            if not isinstance(category_settings, dict):
+                continue
+
+            for param_name, param_config in category_settings.items():
+                if not isinstance(param_config, dict):
+                    continue
+
+                constraints = param_config.get('constraints')
+                if constraints and isinstance(constraints, dict) and 'values' in constraints:
+                    # Normalize dict to list format (same logic as ConfigValidator.validate_constraints_v03)
+                    param_config['constraints'] = [constraints]
+
     def create_breeder(self, breeder_config, name):
         """Create a new breeder instance
 
@@ -237,6 +260,11 @@ class BreederService:
                 # If preflight script doesn't exist or fails, log warning but continue
                 # (for backwards compatibility with breeders that don't have preflight yet)
                 logger.warning(f"Preflight check failed or not found: {e}. Continuing with worker launch.")
+
+            # Normalize constraint formats for workers
+            # Convert dict format {"values": [...]} to list format [{"values": [...]}]
+            # This ensures breeder_workers receive consistent constraint structure
+            self._normalize_constraints(breeder_config)
 
             breeder_uuid = str(uuid.uuid4())
             breeder_config['breeder']['uuid'] = breeder_uuid
