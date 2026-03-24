@@ -1,0 +1,10 @@
+name: shared
+target: controller/shared
+workspace: godon
+
+scripts:
+  - pattern: "*.py"
+    settings:
+      summary: "Shared utilities for godon-controller"
+      description: "Common modules including OTel logging, helpers"
+      tag: "default"
