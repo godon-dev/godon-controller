@@ -72,8 +72,13 @@ jobs:
 
           fake_f = MagicMock()
           fake_f.controller = FakeControllerModule()
+          fake_f.shared = MagicMock()
+          fake_f.shared.otel_logging = MagicMock()
+          fake_f.shared.otel_logging.get_logger = lambda name: MagicMock()
           sys.modules['f'] = fake_f
           sys.modules['f.controller'] = fake_f.controller
+          sys.modules['f.shared'] = fake_f.shared
+          sys.modules['f.shared.otel_logging'] = fake_f.shared.otel_logging
 
           # Pre-populate all f.controller.xxx modules BEFORE any imports
           for module_name in ['config', 'database', 'breeder_service', 'breeder_create',
@@ -382,8 +387,13 @@ jobs:
 
           fake_f = MagicMock()
           fake_f.controller = FakeControllerModule()
+          fake_f.shared = MagicMock()
+          fake_f.shared.otel_logging = MagicMock()
+          fake_f.shared.otel_logging.get_logger = lambda name: MagicMock()
           sys.modules['f'] = fake_f
           sys.modules['f.controller'] = fake_f.controller
+          sys.modules['f.shared'] = fake_f.shared
+          sys.modules['f.shared.otel_logging'] = fake_f.shared.otel_logging
 
           # Pre-populate all f.controller.xxx modules BEFORE any imports
           for module_name in ['config', 'database', 'breeder_service', 'breeder_create',
