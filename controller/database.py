@@ -1,9 +1,10 @@
 import psycopg2
-import logging
 import json
 from contextlib import contextmanager
 
-logger = logging.getLogger(__name__)
+from f.shared.otel_logging import get_logger
+
+logger = get_logger(__name__)
 
 @contextmanager
 def get_db_connection(db_config):

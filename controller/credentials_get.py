@@ -1,8 +1,8 @@
 from f.controller.config import DatabaseConfig
 from f.controller.database import MetadataDatabaseRepository
-import logging
+from f.shared.otel_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def main(request_data=None):
     """Get list of all credentials"""

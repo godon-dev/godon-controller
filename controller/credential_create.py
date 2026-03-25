@@ -1,9 +1,9 @@
 from f.controller.config import DatabaseConfig
 from f.controller.database import MetadataDatabaseRepository
+from f.shared.otel_logging import get_logger
 import uuid
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def main(request_data=None):
     """Create a new credential catalog entry"""
