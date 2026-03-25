@@ -2,21 +2,19 @@ import uuid
 import hashlib
 import datetime
 import copy
-import logging
 import os
 from dateutil.parser import parse
 
 from f.controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
 from f.controller.config import BreederConfig, BREEDER_CAPABILITIES, DatabaseConfig
+from f.shared.otel_logging import get_logger
 
-# Import wmill at top level so Windmill can detect it for dependency resolution
 import wmill
 from wmill import Windmill
 
-# Import optuna for schema initialization
 import optuna.storages
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def cancel_job_by_id(job_id: str, reason: str = None) -> bool:
     """Cancel a Windmill job by its ID

@@ -23,20 +23,15 @@ import os
 import types
 from unittest.mock import MagicMock
 
-# Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-# Mock external dependencies before imports
 sys.modules['database'] = MagicMock()
 
-# Mock wmill module (only available inside Windmill)
 sys.modules['wmill'] = MagicMock()
 
-# Mock optuna.storages module (only needed in production, not tests)
 sys.modules['optuna'] = MagicMock()
 sys.modules['optuna.storages'] = MagicMock()
 
-# Create stub modules using types.ModuleType
 def create_stub_module(name):
     module = types.ModuleType(name)
     module.__path__ = []
@@ -44,11 +39,16 @@ def create_stub_module(name):
     module.__name__ = name
     return module
 
-# Create f and f.controller
 fake_f = create_stub_module('f')
 fake_controller = create_stub_module('f.controller')
+fake_shared = create_stub_module('f.shared')
 sys.modules['f'] = fake_f
 sys.modules['f.controller'] = fake_controller
+sys.modules['f.shared'] = fake_shared
+
+fake_otel = create_stub_module('f.shared.otel_logging')
+fake_otel.get_logger = lambda name: MagicMock()
+sys.modules['f.shared.otel_logging'] = fake_otel
 
 # Pre-populate all f.controller.xxx modules BEFORE any imports
 for module_name in ['config', 'database', 'breeder_service', 'credential_create',
