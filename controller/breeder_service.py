@@ -7,7 +7,7 @@ from dateutil.parser import parse
 
 from f.controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
 from f.controller.config import BreederConfig, BREEDER_CAPABILITIES, DatabaseConfig
-from f.shared.otel_logging import get_logger
+from f.controller.shared.otel_logging import get_logger
 
 import wmill
 from wmill import Windmill

@@ -2,7 +2,7 @@ import psycopg2
 import json
 from contextlib import contextmanager
 
-from f.shared.otel_logging import get_logger
+from f.controller.shared.otel_logging import get_logger
 
 logger = get_logger(__name__)
 

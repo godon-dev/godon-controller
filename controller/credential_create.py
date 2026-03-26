@@ -1,6 +1,6 @@
 from f.controller.config import DatabaseConfig
 from f.controller.database import MetadataDatabaseRepository
-from f.shared.otel_logging import get_logger
+from f.controller.shared.otel_logging import get_logger
 import uuid
 
 logger = get_logger(__name__)
