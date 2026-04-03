@@ -80,12 +80,20 @@ jobs:
           sys.modules['f.shared'] = fake_f.shared
           sys.modules['f.shared.otel_logging'] = fake_f.shared.otel_logging
 
+          fake_controller_shared = FakeControllerModule()
+          fake_controller_otel = MagicMock()
+          fake_controller_otel.get_logger = lambda name: MagicMock()
+          fake_controller_shared.otel_logging = fake_controller_otel
+          sys.modules['f.controller.shared'] = fake_controller_shared
+          sys.modules['f.controller.shared.otel_logging'] = fake_controller_otel
+
           # Pre-populate all f.controller.xxx modules BEFORE any imports
           for module_name in ['config', 'database', 'breeder_service', 'breeder_create',
                               'breeder_get', 'breeder_delete', 'breeders_get',
                               'breeder_stop', 'breeder_start',
                               'credential_create', 'credential_get', 'credential_delete',
-                              'credentials_get']:
+                              'credentials_get',
+                              'target_create', 'target_get', 'targets_get', 'target_delete']:
               stub = FakeControllerModule()
               sys.modules[f'f.controller.{module_name}'] = stub
 
@@ -134,6 +142,18 @@ jobs:
           import controller.credentials_get as credentials_get
           populate_stub_module(sys.modules['f.controller.credentials_get'], credentials_get)
 
+          import controller.target_create as target_create
+          populate_stub_module(sys.modules['f.controller.target_create'], target_create)
+
+          import controller.target_get as target_get
+          populate_stub_module(sys.modules['f.controller.target_get'], target_get)
+
+          import controller.targets_get as targets_get
+          populate_stub_module(sys.modules['f.controller.targets_get'], targets_get)
+
+          import controller.target_delete as target_delete
+          populate_stub_module(sys.modules['f.controller.target_delete'], target_delete)
+
           # Test imports
           from controller.config import DatabaseConfig
           from controller.breeder_service import BreederService
@@ -144,6 +164,8 @@ jobs:
           from controller.breeders_get import main as list_breeders
           from controller.breeder_stop import main as stop_breeder
           from controller.breeder_start import main as start_breeder
+          from controller.target_create import main as create_target
+          from controller.target_get import main as get_target
 
           # Setup test config - use the actual database names
           # Meta DB connection
@@ -185,6 +207,18 @@ jobs:
           execute_ddl_query(admin_config, 'CREATE DATABASE archive_db;')
           print('✓ Created archive_db')
 
+          # Create a target first (breeder configs now require targetRefs)
+          print('Creating test target for breeder config...')
+          target_result = create_target(request_data={
+              'name': 'test-target',
+              'targetType': 'ssh',
+              'address': 'test.local',
+              'username': 'test_user'
+          })
+          assert target_result['result'] == 'SUCCESS', f'Target create failed: {target_result}'
+          test_target_id = target_result['data']['id']
+          print(f'✓ Created test target: {test_target_id}')
+
           # Test 1: Create breeder (tests schema creation + data insertion)
           print('Testing breeder creation (schema + data)...')
           breeder_config = {
@@ -203,12 +237,7 @@ jobs:
                       }
                   },
                   'effectuation': {
-                      'targets': [{
-                          'type': 'ssh',
-                          'address': 'test.local',
-                          'username': 'test_user',
-                          'credentialName': 'test-ssh-key'
-                      }]
+                      'targetRefs': [test_target_id]
                   },
                   'cooperation': {'active': False},
                   'objectives': [{'name': 'test_metric', 'goal': 'MINIMIZE'}],
@@ -395,12 +424,20 @@ jobs:
           sys.modules['f.shared'] = fake_f.shared
           sys.modules['f.shared.otel_logging'] = fake_f.shared.otel_logging
 
+          fake_controller_shared = FakeControllerModule()
+          fake_controller_otel = MagicMock()
+          fake_controller_otel.get_logger = lambda name: MagicMock()
+          fake_controller_shared.otel_logging = fake_controller_otel
+          sys.modules['f.controller.shared'] = fake_controller_shared
+          sys.modules['f.controller.shared.otel_logging'] = fake_controller_otel
+
           # Pre-populate all f.controller.xxx modules BEFORE any imports
           for module_name in ['config', 'database', 'breeder_service', 'breeder_create',
                               'breeder_get', 'breeder_delete', 'breeders_get',
                               'breeder_stop', 'breeder_start',
                               'credential_create', 'credential_get', 'credential_delete',
-                              'credentials_get']:
+                              'credentials_get',
+                              'target_create', 'target_get', 'targets_get', 'target_delete']:
               stub = FakeControllerModule()
               sys.modules[f'f.controller.{module_name}'] = stub
 
@@ -449,6 +486,18 @@ jobs:
 
           import controller.credentials_get as credentials_get
           populate_stub_module(sys.modules['f.controller.credentials_get'], credentials_get)
+
+          import controller.target_create as target_create
+          populate_stub_module(sys.modules['f.controller.target_create'], target_create)
+
+          import controller.target_get as target_get
+          populate_stub_module(sys.modules['f.controller.target_get'], target_get)
+
+          import controller.targets_get as targets_get
+          populate_stub_module(sys.modules['f.controller.targets_get'], targets_get)
+
+          import controller.target_delete as target_delete
+          populate_stub_module(sys.modules['f.controller.target_delete'], target_delete)
 
           # Test imports
           from controller.config import DatabaseConfig

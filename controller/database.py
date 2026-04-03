@@ -142,6 +142,7 @@ class MetadataDatabaseRepository:
         self.base_config = base_config.copy()
         self.breeder_table_name = 'breeder_meta_data'
         self.credentials_table_name = 'credentials'
+        self.targets_table_name = 'targets'
 
     def _get_db_config(self):
         """Get database config with metadata database name"""
@@ -311,6 +312,95 @@ class MetadataDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Deleted credential catalog entry: {credential_id}")
     
+    def create_targets_table(self):
+        """Create the targets catalog table"""
+        db_config = self._get_db_config()
+
+        query = f"""
+        CREATE TABLE IF NOT EXISTS {self.targets_table_name}
+        (
+        id uuid PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        target_type VARCHAR(50) NOT NULL,
+        address VARCHAR(255) NOT NULL,
+        username VARCHAR(255),
+        credential_id VARCHAR(255),
+        description TEXT,
+        allows_downtime BOOLEAN DEFAULT FALSE,
+        metadata JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        last_used_at TIMESTAMPTZ
+        );
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Ensured targets table exists: {self.targets_table_name}")
+
+    def insert_target(self, target_id, name, target_type, address, username=None, credential_id=None, description=None, allows_downtime=False, metadata=None):
+        """Insert target catalog entry"""
+        db_config = self._get_db_config()
+        metadata_json = json.dumps(metadata) if metadata else 'NULL'
+        description_escaped = "'" + description.replace("'", "''") + "'" if description else 'NULL'
+        username_escaped = "'" + username.replace("'", "''") + "'" if username else 'NULL'
+        credential_id_escaped = "'" + credential_id.replace("'", "''") + "'" if credential_id else 'NULL'
+
+        query = f"""
+        INSERT INTO {self.targets_table_name}
+        (id, name, target_type, address, username, credential_id, description, allows_downtime, metadata)
+        VALUES('{target_id}', '{name}', '{target_type}', '{address}', {username_escaped},
+                {credential_id_escaped}, {description_escaped}, {allows_downtime}, {metadata_json}::jsonb);
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Inserted target catalog entry: {name}")
+
+    def fetch_targets_list(self):
+        """Fetch list of all targets"""
+        db_config = self._get_db_config()
+
+        query = f"""
+        SELECT id, name, target_type, address, username, credential_id, description, allows_downtime, created_at, last_used_at
+        FROM {self.targets_table_name}
+        ORDER BY created_at DESC;
+        """
+
+        result = execute_query(db_config, query, with_result=True)
+        return result if result else []
+
+    def fetch_target_by_id(self, target_id):
+        """Fetch target by ID"""
+        db_config = self._get_db_config()
+
+        query = f"""
+        SELECT id, name, target_type, address, username, credential_id, description, allows_downtime, metadata, created_at, last_used_at
+        FROM {self.targets_table_name}
+        WHERE id = '{target_id}';
+        """
+
+        result = execute_query(db_config, query, with_result=True)
+        return result[0] if result else None
+
+    def fetch_target_by_name(self, name):
+        """Fetch target by name"""
+        db_config = self._get_db_config()
+
+        query = f"""
+        SELECT id, name, target_type, address, username, credential_id, description, allows_downtime, metadata, created_at, last_used_at
+        FROM {self.targets_table_name}
+        WHERE name = '{name}';
+        """
+
+        result = execute_query(db_config, query, with_result=True)
+        return result[0] if result else None
+
+    def delete_target(self, target_id):
+        """Delete target from catalog"""
+        db_config = self._get_db_config()
+
+        query = f"DELETE FROM {self.targets_table_name} WHERE id = '{target_id}';"
+        execute_query(db_config, query)
+        logger.info(f"Deleted target catalog entry: {target_id}")
+
     def update_credential_last_used(self, credential_id):
         """Update the last_used_at timestamp for a credential"""
         db_config = self._get_db_config()

@@ -451,10 +451,12 @@ class BreederConfig:
                 "Example: objectives: [{name: 'latency', goal: 'MINIMIZE', reconnaissance: {...}}]"
             )
 
-        if not breeder_config.get('effectuation', {}).get('targets') or len(breeder_config.get('effectuation', {}).get('targets', [])) == 0:
+        target_refs = breeder_config.get('effectuation', {}).get('targetRefs')
+        if not target_refs or not isinstance(target_refs, list) or len(target_refs) == 0:
             errors.append(
-                "Missing or empty effectuation.targets array. "
-                "Example: effectuation: {targets: [{type: 'ssh', address: '1.2.3.4', ...}]}"
+                "Missing or empty effectuation.targetRefs. "
+                "Targets must be registered via the API first, then referenced by ID or name. "
+                "Example: effectuation: {targetRefs: ['my-server', '550e8400-...']}"
             )
 
         # Support multiple settings categories (sysctl, sysfs, cpufreq, ethtool)
@@ -559,64 +561,14 @@ class BreederConfig:
                     "Cooperation requires parallel > 1 for multiple workers to share trials."
                 )
 
-        # Validate target type compatibility and required fields
+        # Validate targetRefs
         breeder_type = breeder_config.get('breeder', {}).get('type')
-        if breeder_type in BREEDER_CAPABILITIES:
-            supported_types = BREEDER_CAPABILITIES[breeder_type]['supported_target_types']
+        target_refs = breeder_config.get('effectuation', {}).get('targetRefs', [])
 
-            for idx, target in enumerate(breeder_config.get('effectuation', {}).get('targets', [])):
-                target_type = target.get('type')
-
-                if not target_type:
-                    errors.append(f"Target {idx}: Missing required 'type' field. Example: type: 'ssh'")
-                elif target_type not in supported_types:
-                    errors.append(
-                        f"Target {idx} ({target.get('address', 'unknown')}): "
-                        f"Type '{target_type}' not supported by breeder '{breeder_type}'. "
-                        f"Supported types: {supported_types}"
-                    )
-
-                # Validate SSH-specific target fields
-                if target_type == 'ssh':
-                    # Check address
-                    if 'address' not in target:
-                        errors.append(
-                            f"Target {idx}: Missing required field 'address' for SSH target. "
-                            f"Example: address: '192.168.1.10'"
-                        )
-                    elif not isinstance(target['address'], str) or target['address'].strip() == "":
-                        errors.append(
-                            f"Target {idx}: 'address' must be a non-empty string"
-                        )
-
-                    # Check username
-                    if 'username' not in target:
-                        errors.append(
-                            f"Target {idx}: Missing required field 'username' for SSH target. "
-                            f"Example: username: 'admin'"
-                        )
-                    elif not isinstance(target['username'], str) or target['username'].strip() == "":
-                        errors.append(
-                            f"Target {idx}: 'username' must be a non-empty string"
-                        )
-
-                    # Check credential (either credentialName or credentialId)
-                    has_credential_name = 'credentialName' in target
-                    has_credential_id = 'credentialId' in target
-
-                    if not has_credential_name and not has_credential_id:
-                        errors.append(
-                            f"Target {idx}: SSH target requires either 'credentialName' or 'credentialId'. "
-                            f"Example: credentialName: 'my-ssh-key'"
-                        )
-                    elif has_credential_name and (not isinstance(target['credentialName'], str) or target['credentialName'].strip() == ""):
-                        errors.append(
-                            f"Target {idx}: 'credentialName' must be a non-empty string"
-                        )
-                    elif has_credential_id and (not isinstance(target['credentialId'], str) or target['credentialId'].strip() == ""):
-                        errors.append(
-                            f"Target {idx}: 'credentialId' must be a non-empty string"
-                        )
+        if target_refs and isinstance(target_refs, list):
+            for idx, ref in enumerate(target_refs):
+                if not isinstance(ref, str) or ref.strip() == "":
+                    errors.append(f"targetRefs[{idx}]: must be a non-empty string (target ID or name)")
 
         # Validate objectives reconnaissance configuration
         for idx, objective in enumerate(breeder_config.get('objectives', [])):

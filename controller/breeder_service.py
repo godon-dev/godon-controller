@@ -218,6 +218,61 @@ class BreederService:
         if 'settings' in config:
             config['settings'] = normalize_dict(config['settings'])
 
+    def _resolve_target_refs(self, breeder_config):
+        """Resolve targetRefs to inline targets from the targets catalog
+
+        If effectuation.targetRefs is present, fetches each target from
+        the metadata DB and populates effectuation.targets with the resolved data.
+        Backward compatible: if targetRefs is absent, targets are used as-is.
+
+        Args:
+            breeder_config: Breeder configuration dict (modified in place)
+
+        Raises:
+            ValueError: If any target ref cannot be resolved
+        """
+        target_refs = breeder_config.get('effectuation', {}).get('targetRefs', [])
+        if not target_refs:
+            return
+
+        logger.info(f"Resolving {len(target_refs)} target references")
+
+        effectuation = breeder_config.get('effectuation', {})
+        effectuation_type = effectuation.get('type', 'ssh')
+
+        resolved_targets = []
+        meta_db = MetadataDatabaseRepository(DatabaseConfig.META_DB)
+        meta_db.create_targets_table()
+
+        for ref_id in target_refs:
+            target_row = meta_db.fetch_target_by_id(ref_id)
+            if not target_row:
+                target_row = meta_db.fetch_target_by_name(ref_id)
+            if not target_row:
+                raise ValueError(
+                    f"Cannot resolve target reference '{ref_id}'. "
+                    f"Target not found in catalog by ID or name."
+                )
+
+            target_entry = {
+                'id': str(target_row[0]),
+                'type': target_row[2],
+                'address': target_row[3],
+            }
+
+            if target_row[4]:
+                target_entry['username'] = target_row[4]
+            if target_row[5]:
+                target_entry['credentialId'] = target_row[5]
+            if target_row[6]:
+                target_entry['description'] = target_row[6]
+
+            resolved_targets.append(target_entry)
+            logger.info(f"Resolved target ref '{ref_id}' -> {target_row[1]} ({target_row[3]})")
+
+        breeder_config['effectuation']['targets'] = resolved_targets
+        logger.info(f"Resolved {len(resolved_targets)} targets from {len(target_refs)} references")
+
     def create_breeder(self, breeder_config, name):
         """Create a new breeder instance
 
@@ -232,6 +287,8 @@ class BreederService:
         breeder_id = None
 
         try:
+            self._resolve_target_refs(breeder_config)
+
             BreederConfig.validate_minimal(breeder_config)
 
             breeder_instance_name = name
