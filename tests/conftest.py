@@ -50,9 +50,17 @@ fake_otel = create_stub_module('f.shared.otel_logging')
 fake_otel.get_logger = lambda name: MagicMock()
 sys.modules['f.shared.otel_logging'] = fake_otel
 
+fake_controller_shared = create_stub_module('f.controller.shared')
+sys.modules['f.controller.shared'] = fake_controller_shared
+
+fake_controller_otel = create_stub_module('f.controller.shared.otel_logging')
+fake_controller_otel.get_logger = lambda name: MagicMock()
+sys.modules['f.controller.shared.otel_logging'] = fake_controller_otel
+
 # Pre-populate all f.controller.xxx modules BEFORE any imports
 for module_name in ['config', 'database', 'breeder_service', 'credential_create',
-                    'credential_get', 'credential_delete', 'credentials_get']:
+                    'credential_get', 'credential_delete', 'credentials_get',
+                    'target_create', 'target_get', 'targets_get', 'target_delete']:
     full_name = f'f.controller.{module_name}'
     stub = create_stub_module(full_name)
     sys.modules[full_name] = stub
@@ -86,3 +94,15 @@ populate_stub_module(sys.modules['f.controller.credential_delete'], credential_d
 
 import controller.credentials_get as credentials_get
 populate_stub_module(sys.modules['f.controller.credentials_get'], credentials_get)
+
+import controller.target_create as target_create
+populate_stub_module(sys.modules['f.controller.target_create'], target_create)
+
+import controller.target_get as target_get
+populate_stub_module(sys.modules['f.controller.target_get'], target_get)
+
+import controller.targets_get as targets_get
+populate_stub_module(sys.modules['f.controller.targets_get'], targets_get)
+
+import controller.target_delete as target_delete
+populate_stub_module(sys.modules['f.controller.target_delete'], target_delete)
