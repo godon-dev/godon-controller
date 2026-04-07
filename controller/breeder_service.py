@@ -150,7 +150,7 @@ def start_optimization_flow(flow_id, shard_config, run_id, target_id, breeder_id
     """
     try:
         breeder_type = shard_config.get('breeder', {}).get('type', 'unknown_breeder')
-        script_path = f"f/breeder/{breeder_type}/breeder_worker"
+        script_path = "f/breeder/engine/breeder_worker"
 
         # Pass shard_config directly - worker uses it, no DB fetch needed
         script_inputs = {
