@@ -225,6 +225,9 @@ class BreederService:
         the metadata DB and populates effectuation.targets with the resolved data.
         Backward compatible: if targetRefs is absent, targets are used as-is.
 
+        Row tuple: (id, name, target_type, spec JSONB, metadata JSONB, created_at, last_used_at)
+        Resolver produces type-appropriate fields from spec JSONB.
+
         Args:
             breeder_config: Breeder configuration dict (modified in place)
 
@@ -236,9 +239,6 @@ class BreederService:
             return
 
         logger.info(f"Resolving {len(target_refs)} target references")
-
-        effectuation = breeder_config.get('effectuation', {})
-        effectuation_type = effectuation.get('type', 'ssh')
 
         resolved_targets = []
         meta_db = MetadataDatabaseRepository(DatabaseConfig.META_DB)
@@ -254,21 +254,18 @@ class BreederService:
                     f"Target not found in catalog by ID or name."
                 )
 
+            target_type = target_row[2]
+            spec = target_row[3] or {}
+
             target_entry = {
                 'id': str(target_row[0]),
-                'type': target_row[2],
-                'address': target_row[3],
+                'type': target_type,
             }
 
-            if target_row[4]:
-                target_entry['username'] = target_row[4]
-            if target_row[5]:
-                target_entry['credentialId'] = target_row[5]
-            if target_row[6]:
-                target_entry['description'] = target_row[6]
+            target_entry.update(spec)
 
             resolved_targets.append(target_entry)
-            logger.info(f"Resolved target ref '{ref_id}' -> {target_row[1]} ({target_row[3]})")
+            logger.info(f"Resolved target ref '{ref_id}' -> {target_row[1]} (type={target_type})")
 
         breeder_config['effectuation']['targets'] = resolved_targets
         logger.info(f"Resolved {len(resolved_targets)} targets from {len(target_refs)} references")
