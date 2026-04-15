@@ -212,8 +212,10 @@ jobs:
           target_result = create_target(request_data={
               'name': 'test-target',
               'targetType': 'ssh',
-              'address': 'test.local',
-              'username': 'test_user'
+              'spec': {
+                  'address': 'test.local',
+                  'username': 'test_user'
+              }
           })
           assert target_result['result'] == 'SUCCESS', f'Target create failed: {target_result}'
           test_target_id = target_result['data']['id']
