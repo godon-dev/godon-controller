@@ -4,6 +4,19 @@ from f.controller.shared.otel_logging import get_logger
 
 logger = get_logger(__name__)
 
+
+def _format_target(row):
+    return {
+        "id": str(row[0]),
+        "name": row[1],
+        "targetType": row[2],
+        "spec": row[3],
+        "metadata": row[4],
+        "createdAt": row[5].isoformat() if row[5] else None,
+        "lastUsedAt": row[6].isoformat() if row[6] else None,
+    }
+
+
 def main(request_data=None):
     """Get a specific target by ID"""
     target_id = request_data.get('targetId') if request_data else None
@@ -24,18 +37,7 @@ def main(request_data=None):
 
         return {
             "result": "SUCCESS",
-            "data": {
-                "id": str(target[0]),
-                "name": target[1],
-                "targetType": target[2],
-                "address": target[3],
-                "username": target[4],
-                "credentialId": target[5],
-                "description": target[6],
-                "allowsDowntime": target[7],
-                "createdAt": target[9].isoformat() if target[9] else None,
-                "lastUsedAt": target[10].isoformat() if target[10] else None
-            }
+            "data": _format_target(target)
         }
 
     except Exception as e:

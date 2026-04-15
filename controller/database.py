@@ -322,11 +322,7 @@ class MetadataDatabaseRepository:
         id uuid PRIMARY KEY,
         name VARCHAR(255) UNIQUE NOT NULL,
         target_type VARCHAR(50) NOT NULL,
-        address VARCHAR(255) NOT NULL,
-        username VARCHAR(255),
-        credential_id VARCHAR(255),
-        description TEXT,
-        allows_downtime BOOLEAN DEFAULT FALSE,
+        spec JSONB NOT NULL,
         metadata JSONB,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         last_used_at TIMESTAMPTZ
@@ -336,19 +332,16 @@ class MetadataDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Ensured targets table exists: {self.targets_table_name}")
 
-    def insert_target(self, target_id, name, target_type, address, username=None, credential_id=None, description=None, allows_downtime=False, metadata=None):
+    def insert_target(self, target_id, name, target_type, spec, metadata=None):
         """Insert target catalog entry"""
         db_config = self._get_db_config()
+        spec_json = json.dumps(spec) if isinstance(spec, dict) else spec
         metadata_json = json.dumps(metadata) if metadata else 'NULL'
-        description_escaped = "'" + description.replace("'", "''") + "'" if description else 'NULL'
-        username_escaped = "'" + username.replace("'", "''") + "'" if username else 'NULL'
-        credential_id_escaped = "'" + credential_id.replace("'", "''") + "'" if credential_id else 'NULL'
 
         query = f"""
         INSERT INTO {self.targets_table_name}
-        (id, name, target_type, address, username, credential_id, description, allows_downtime, metadata)
-        VALUES('{target_id}', '{name}', '{target_type}', '{address}', {username_escaped},
-                {credential_id_escaped}, {description_escaped}, {allows_downtime}, {metadata_json}::jsonb);
+        (id, name, target_type, spec, metadata)
+        VALUES('{target_id}', '{name}', '{target_type}', '{spec_json}'::jsonb, {metadata_json}::jsonb);
         """
 
         execute_query(db_config, query)
@@ -359,7 +352,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, name, target_type, address, username, credential_id, description, allows_downtime, created_at, last_used_at
+        SELECT id, name, target_type, spec, metadata, created_at, last_used_at
         FROM {self.targets_table_name}
         ORDER BY created_at DESC;
         """
@@ -372,7 +365,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, name, target_type, address, username, credential_id, description, allows_downtime, metadata, created_at, last_used_at
+        SELECT id, name, target_type, spec, metadata, created_at, last_used_at
         FROM {self.targets_table_name}
         WHERE id = '{target_id}';
         """
@@ -385,7 +378,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, name, target_type, address, username, credential_id, description, allows_downtime, metadata, created_at, last_used_at
+        SELECT id, name, target_type, spec, metadata, created_at, last_used_at
         FROM {self.targets_table_name}
         WHERE name = '{name}';
         """
