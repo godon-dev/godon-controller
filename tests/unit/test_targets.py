@@ -76,10 +76,9 @@ class TestTargetCreation:
                 'spec': {
                     'address': '192.168.1.100',
                     'username': 'deploy',
-                    'credential_id': 'cred-123',
-                    'allows_downtime': False,
+                    'ssh_key_variable_path': 'f/vars/test_ssh_key',
                 },
-                'metadata': {'description': 'Test server'}
+                'metadata': {'description': 'Test server', 'allows_downtime': False}
             })
 
             assert result['result'] == 'SUCCESS'
@@ -180,8 +179,8 @@ class TestTargetRetrieval:
             now = datetime.datetime.now()
             mock_target = (
                 test_id, 'test-server', 'ssh',
-                {'address': '192.168.1.100', 'username': 'deploy', 'credential_id': 'cred-123'},
-                {'description': 'Test server'},
+                {'address': '192.168.1.100', 'username': 'deploy', 'ssh_key_variable_path': 'f/vars/test_ssh_key'},
+                {'description': 'Test server', 'allows_downtime': False},
                 now, None
             )
             mock_repo.fetch_target_by_id.return_value = mock_target
