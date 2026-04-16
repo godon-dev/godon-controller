@@ -252,7 +252,7 @@ class MetadataDatabaseRepository:
     def insert_credential(self, credential_id, name, credential_type, description, windmill_variable, store_type='windmill_variable', metadata=None):
         """Insert credential catalog entry"""
         db_config = self._get_db_config()
-        metadata_json = json.dumps(metadata) if metadata else 'NULL'
+        metadata_json = "'" + json.dumps(metadata).replace("'", "''") + "'" if metadata else 'NULL'
         description_escaped = "'" + description.replace("'", "''") + "'" if description else 'NULL'
         
         query = f"""
@@ -336,7 +336,7 @@ class MetadataDatabaseRepository:
         """Insert target catalog entry"""
         db_config = self._get_db_config()
         spec_json = json.dumps(spec) if isinstance(spec, dict) else spec
-        metadata_json = json.dumps(metadata) if metadata else 'NULL'
+        metadata_json = "'" + json.dumps(metadata).replace("'", "''") + "'" if metadata else 'NULL'
 
         query = f"""
         INSERT INTO {self.targets_table_name}
