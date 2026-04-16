@@ -218,7 +218,7 @@ class BreederConfig:
                 )
 
             # Validate reconnaissance fields
-            required_recon_fields = ['service', 'query']
+            required_recon_fields = ['service']
             missing_fields = [f for f in required_recon_fields if f not in recon]
 
             if missing_fields:
@@ -226,16 +226,14 @@ class BreederConfig:
                     f"Guardrail {idx} ({guardrail['name']}): 'reconnaissance' missing required fields: {', '.join(missing_fields)}"
                 )
 
-            # Validate service type
-            valid_services = ['prometheus']  # Extend as needed
+            valid_services = ['prometheus', 'http']
             if recon['service'] not in valid_services:
                 raise ValueError(
                     f"Guardrail {idx} ({guardrail['name']}): service '{recon['service']}' not supported. "
                     f"Valid services: {', '.join(valid_services)}"
                 )
 
-            # Validate query is string
-            if not isinstance(recon['query'], str) or recon['query'].strip() == "":
+            if 'query' in recon and (not isinstance(recon['query'], str) or recon['query'].strip() == ""):
                 raise ValueError(
                     f"Guardrail {idx} ({guardrail['name']}): 'query' must be a non-empty string"
                 )
@@ -254,7 +252,7 @@ class BreederConfig:
                     )
 
             if 'interval' in recon:
-                if not isinstance(recon['interval'], int) or recon['interval'] < 1:
+                if not isinstance(recon['interval'], (int, float)) or recon['interval'] < 0:
                     raise ValueError(
                         f"Guardrail {idx} ({guardrail['name']}): 'interval' must be an integer >= 1"
                     )
@@ -459,18 +457,19 @@ class BreederConfig:
                 "Example: effectuation: {targetRefs: ['my-server', '550e8400-...']}"
             )
 
-        # Support multiple settings categories (sysctl, sysfs, cpufreq, ethtool)
+        # Strain-specific validation: settings and recon constraints are strain-dependent.
+        # For unknown/non-linux_performance strains, skip domain validation and rely on preflight.
+        breeder_type = breeder_config.get('breeder', {}).get('type', '')
         supported_categories = ['sysctl', 'sysfs', 'cpufreq', 'ethtool']
         settings = breeder_config.get('settings', {})
 
-        # Check if at least one supported category exists
-        has_any_category = any(category in settings for category in supported_categories)
-
-        if not has_any_category:
-            errors.append(
-                f"Missing settings configuration. "
-                f"At least one category required: {', '.join(supported_categories)}"
-            )
+        if breeder_type == 'linux_performance':
+            has_any_category = any(category in settings for category in supported_categories)
+            if not has_any_category:
+                errors.append(
+                    f"Missing settings configuration. "
+                    f"At least one category required: {', '.join(supported_categories)}"
+                )
 
         # Validate constraints structure for all present categories
         for category in supported_categories:
@@ -589,7 +588,9 @@ class BreederConfig:
                     continue
 
                 # Check required fields
-                required_recon_fields = ['service', 'query']
+                required_recon_fields = ['service']
+                if breeder_type == 'linux_performance':
+                    required_recon_fields.append('query')
                 missing_fields = [f for f in required_recon_fields if f not in recon]
 
                 if missing_fields:
@@ -601,7 +602,7 @@ class BreederConfig:
 
                 # Validate service type
                 if 'service' in recon:
-                    valid_services = ['prometheus']  # Extend as needed
+                    valid_services = ['prometheus', 'http']
                     if recon['service'] not in valid_services:
                         obj_name = objective.get('name', f'#{idx}')
                         errors.append(
@@ -633,7 +634,7 @@ class BreederConfig:
                         )
 
                 if 'interval' in recon:
-                    if not isinstance(recon['interval'], int) or recon['interval'] < 1:
+                    if not isinstance(recon['interval'], (int, float)) or recon['interval'] < 0:
                         obj_name = objective.get('name', f'#{idx}')
                         errors.append(
                             f"Objective {idx} ({obj_name}): 'interval' must be an integer >= 1"
