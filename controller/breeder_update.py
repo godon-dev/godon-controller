@@ -1,0 +1,20 @@
+from f.controller.config import DatabaseConfig
+from f.controller.breeder_service import BreederService
+
+def main(request_data=None):
+    breeder_id = request_data.get('breeder_id') if request_data else None
+    if not breeder_id:
+        return {"result": "FAILURE", "error": "Missing breeder_id"}
+
+    new_config = request_data.get('config')
+    if not new_config:
+        return {"result": "FAILURE", "error": "Missing config"}
+
+    force = request_data.get('force', False)
+
+    service = BreederService(
+        archive_db_config=DatabaseConfig.ARCHIVE_DB,
+        meta_db_config=DatabaseConfig.META_DB
+    )
+
+    return service.update_breeder(breeder_id, new_config, force=force)
