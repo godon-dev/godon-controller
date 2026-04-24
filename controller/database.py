@@ -135,6 +135,53 @@ class ArchiveDatabaseRepository:
             f"{breeder_id}"
         )
 
+    def create_choreography_table(self):
+        db_config = self.base_config.copy()
+        db_config['database'] = "archive_db"
+
+        query = """
+        CREATE TABLE IF NOT EXISTS interference_choreography (
+            id UUID PRIMARY KEY,
+            participants TEXT[] NOT NULL,
+            phases JSONB NOT NULL,
+            current_phase INT DEFAULT 0,
+            status VARCHAR(20) DEFAULT 'running',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """
+
+        execute_query(db_config, query)
+        logger.info("Ensured interference_choreography table exists in archive_db")
+
+    def insert_choreography(self, choreography_id, participants, phases):
+        db_config = self.base_config.copy()
+        db_config['database'] = "archive_db"
+
+        participants_array = "{" + ",".join(f'"{p}"' for p in participants) + "}"
+        phases_json = json.dumps(phases).replace("'", "''")
+
+        query = f"""
+        INSERT INTO interference_choreography (id, participants, phases, status)
+        VALUES ('{choreography_id}', '{participants_array}', '{phases_json}'::jsonb, 'running');
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Inserted choreography {choreography_id} with participants {participants}")
+
+    def fetch_active_choreographies(self):
+        db_config = self.base_config.copy()
+        db_config['database'] = "archive_db"
+
+        query = """
+        SELECT id, participants, phases, current_phase, status, created_at
+        FROM interference_choreography
+        WHERE status = 'running'
+        ORDER BY created_at DESC;
+        """
+
+        return execute_query(db_config, query, with_result=True)
+
 class MetadataDatabaseRepository:
     """Repository for metadata database operations"""
 
