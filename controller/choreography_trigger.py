@@ -12,7 +12,6 @@ def main(request_data=None):
         return {"result": "FAILURE", "error": "Missing request_data"}
 
     breeder_ids = request_data.get('breeder_ids', [])
-    action = request_data.get('action', 'trigger')
 
     if not breeder_ids or len(breeder_ids) < 2:
         return {"result": "FAILURE", "error": "Need at least 2 breeder_ids"}
@@ -20,12 +19,7 @@ def main(request_data=None):
     repo = ArchiveDatabaseRepository(DatabaseConfig.ARCHIVE_DB)
     repo.create_choreography_table()
 
-    if action == 'trigger':
-        return _trigger_choreography(repo, breeder_ids)
-    elif action == 'list':
-        return _list_choreographies(repo)
-    else:
-        return {"result": "FAILURE", "error": f"Unknown action: {action}"}
+    return _trigger_choreography(repo, breeder_ids)
 
 
 def _trigger_choreography(repo, breeder_ids):
@@ -46,21 +40,3 @@ def _trigger_choreography(repo, breeder_ids):
         "participants": breeder_ids,
         "phases": len(phases)
     }
-
-
-def _list_choreographies(repo):
-    rows = repo.fetch_active_choreographies()
-    if not rows:
-        return {"result": "SUCCESS", "choreographies": []}
-
-    choreographies = []
-    for row in rows:
-        choreographies.append({
-            "id": str(row[0]),
-            "participants": row[1],
-            "current_phase": row[3],
-            "status": row[4],
-            "created_at": str(row[5])
-        })
-
-    return {"result": "SUCCESS", "choreographies": choreographies}
