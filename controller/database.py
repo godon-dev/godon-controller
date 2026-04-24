@@ -169,19 +169,6 @@ class ArchiveDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Inserted choreography {choreography_id} with participants {participants}")
 
-    def fetch_active_choreographies(self):
-        db_config = self.base_config.copy()
-        db_config['database'] = "archive_db"
-
-        query = """
-        SELECT id, participants, phases, current_phase, status, created_at
-        FROM interference_choreography
-        WHERE status = 'running'
-        ORDER BY created_at DESC;
-        """
-
-        return execute_query(db_config, query, with_result=True)
-
 class MetadataDatabaseRepository:
     """Repository for metadata database operations"""
 
