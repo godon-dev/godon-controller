@@ -719,28 +719,6 @@ class BreederService:
             logger.error(f"Failed to request shutdown for breeder {breeder_id}: {e}")
             return {"result": "FAILURE", "error": str(e)}
 
-    def _cleanup_interference(self, breeder_id):
-        try:
-            from f.controller.database import get_db_connection
-            db_config = self.archive_repo.base_config.copy()
-            with get_db_connection(db_config) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "DELETE FROM interference_active_breeders WHERE breeder_id = %s",
-                        (breeder_id,)
-                    )
-                    active_deleted = cur.rowcount
-                    cur.execute(
-                        "UPDATE interference_choreography SET status = 'cancelled', updated_at = NOW() "
-                        "WHERE status = 'running' AND %s = ANY(participants)",
-                        (breeder_id,)
-                    )
-                    choreos_cancelled = cur.rowcount
-                conn.commit()
-                logger.info(f"Interference cleanup for {breeder_id}: removed {active_deleted} active breeder entries, cancelled {choreos_cancelled} choreographies")
-        except Exception as e:
-            logger.warning(f"Failed to cleanup interference tables for breeder {breeder_id}: {e}")
-
     def delete_breeder(self, breeder_id, force=False):
         """Delete a breeder instance
 
@@ -801,9 +779,6 @@ class BreederService:
 
             # Drop the archive database
             self.archive_repo.drop_database(__uuid_common_name)
-
-            # Remove from interference tables in shared archive_db
-            self._cleanup_interference(breeder_id)
 
             # Remove metadata
             self.metadata_repo.remove_breeder_meta(breeder_id)
