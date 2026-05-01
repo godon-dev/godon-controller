@@ -1,5 +1,4 @@
-# extra_requirements: psycopg2-binary
-
+# py311
 import psycopg2
 import json
 from contextlib import contextmanager
