@@ -1,5 +1,5 @@
 #extra_requirements:
-#psycopg2-binary
+psycopg2-binary
 
 import psycopg2
 import json
