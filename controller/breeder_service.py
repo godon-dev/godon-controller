@@ -218,6 +218,50 @@ class BreederService:
         if 'settings' in config:
             config['settings'] = normalize_dict(config['settings'])
 
+
+    def _assign_watermark_slot(self, breeder_config):
+        """Assign a collision-free watermark slot to a new breeder.
+
+        Reads all active breeders' configs from metadata DB to find
+        which slots are already in use, then assigns the lowest available slot.
+        Falls back to hash-based assignment if all slots are taken or metadata
+        is unavailable.
+
+        The slot maps to prime periods in the breeder's watermark encoding:
+        slot 0 -> periods [17, 23], slot 1 -> [29, 37], ..., slot 5 -> [67, 71]
+        With 12 primes and 2 per breeder, max 6 breeders can have unique slots.
+
+        Args:
+            breeder_config: Breeder configuration dict (modified in place)
+        """
+        max_slots = 6  # 12 primes / 2 per breeder
+        used_slots = set()
+
+        try:
+            self.metadata_repo.create_table()
+            breeder_list = self.metadata_repo.fetch_breeders_list()
+            if breeder_list:
+                for row in breeder_list:
+                    # breeder_list returns (id, name, creation_tsz) — fetch config separately
+                    existing_breeder_id = row[0]
+                    meta_row = self.metadata_repo.fetch_meta_data(existing_breeder_id)
+                    if meta_row and len(meta_row) > 0:
+                        existing_config = meta_row[0][3] if len(meta_row[0]) > 3 else None
+                        if existing_config and isinstance(existing_config, dict):
+                            slot = existing_config.get('breeder', {}).get('watermark_slot')
+                            if slot is not None:
+                                used_slots.add(slot)
+        except Exception as e:
+            logger.warning(f"Could not read existing breeder slots: {e}. Falling back.")
+
+        if len(used_slots) < max_slots:
+            # Assign lowest available slot
+            assigned_slot = min(s for s in range(max_slots) if s not in used_slots)
+            breeder_config['breeder']['watermark_slot'] = assigned_slot
+            logger.info(f"Assigned watermark slot {assigned_slot} (used: {sorted(used_slots)})")
+        else:
+            logger.warning(f"All {max_slots} watermark slots in use. Breeder may share frequencies.")
+
     def _resolve_target_refs(self, breeder_config):
         """Resolve targetRefs to inline targets from the targets catalog
 
@@ -329,6 +373,9 @@ class BreederService:
 
             breeder_uuid = str(uuid.uuid4())
             breeder_config['breeder']['uuid'] = breeder_uuid
+
+            # Assign collision-free watermark slot for interference detection
+            self._assign_watermark_slot(breeder_config)
             creation_ts = datetime.datetime.now()
 
             __uuid_common_name = f"breeder_{breeder_uuid.replace('-', '_')}"
