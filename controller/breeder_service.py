@@ -242,7 +242,6 @@ class BreederService:
             breeder_list = self.metadata_repo.fetch_breeders_list()
             if breeder_list:
                 for row in breeder_list:
-                    # breeder_list returns (id, name, creation_tsz) — fetch config separately
                     existing_breeder_id = row[0]
                     meta_row = self.metadata_repo.fetch_meta_data(existing_breeder_id)
                     if meta_row and len(meta_row) > 0:
@@ -251,8 +250,10 @@ class BreederService:
                             slot = existing_config.get('breeder', {}).get('watermark_slot')
                             if slot is not None:
                                 used_slots.add(slot)
+            logger.info(f"Existing watermark slots in use: {sorted(used_slots)}")
         except Exception as e:
-            logger.warning(f"Could not read existing breeder slots: {e}. Falling back.")
+            logger.error(f"Failed to read existing breeder slots from metadata DB: {e}")
+            raise RuntimeError(f"Cannot assign watermark slot — metadata DB unavailable: {e}") from e
 
         if len(used_slots) < max_slots:
             # Assign lowest available slot
@@ -260,7 +261,10 @@ class BreederService:
             breeder_config['breeder']['watermark_slot'] = assigned_slot
             logger.info(f"Assigned watermark slot {assigned_slot} (used: {sorted(used_slots)})")
         else:
-            logger.warning(f"All {max_slots} watermark slots in use. Breeder may share frequencies.")
+            raise RuntimeError(
+                f"All {max_slots} watermark slots in use ({sorted(used_slots)}). "
+                f"Cannot create breeder without a collision-free slot."
+            )
 
     def _resolve_target_refs(self, breeder_config):
         """Resolve targetRefs to inline targets from the targets catalog
