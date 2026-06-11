@@ -128,6 +128,45 @@ class ArchiveDatabaseRepository:
         execute_ddl_query(db_config, query)
         logger.info(f"Dropped archive database: {breeder_id}")
 
+    def ensure_detection_rounds_table(self):
+        """Create the detection_rounds table in archive_db if it doesn't exist.
+        
+        The detection_rounds table coordinates impulse detection between breeders.
+        Each row represents a round where one breeder (sender) pushes an impulse
+        while all others hold still. The controller creates this table and inserts
+        rows at breeder creation time.
+        """
+        db_config = self.base_config.copy()
+        db_config['database'] = "archive_db"
+
+        query = """
+        CREATE TABLE IF NOT EXISTS detection_rounds (
+            round_id    SERIAL PRIMARY KEY,
+            sender_id   VARCHAR(255) NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'active',
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            completed_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_detection_rounds_active 
+            ON detection_rounds (status) WHERE status = 'active';
+        """
+
+        execute_query(db_config, query)
+        logger.info("Ensured detection_rounds table exists in archive_db")
+
+    def insert_detection_round(self, sender_id):
+        """Insert a detection round for a sender breeder.
+        
+        Args:
+            sender_id: UUID of the breeder that will send the impulse
+        """
+        db_config = self.base_config.copy()
+        db_config['database'] = "archive_db"
+
+        query = f"INSERT INTO detection_rounds (sender_id) VALUES ('{sender_id}');"
+        execute_query(db_config, query)
+        logger.info(f"Inserted detection round for sender: {sender_id}")
+
     def get_connection_url(self, breeder_id):
         """Get PostgreSQL connection URL for a breeder database"""
         return (
