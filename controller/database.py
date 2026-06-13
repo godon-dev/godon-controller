@@ -145,7 +145,8 @@ class ArchiveDatabaseRepository:
             sender_id   VARCHAR(255) NOT NULL,
             status      TEXT NOT NULL DEFAULT 'active',
             created_at  TIMESTAMPTZ DEFAULT NOW(),
-            completed_at TIMESTAMPTZ
+            completed_at TIMESTAMPTZ,
+            receiver_violated BOOLEAN NOT NULL DEFAULT FALSE
         );
         CREATE INDEX IF NOT EXISTS idx_detection_rounds_active 
             ON detection_rounds (status) WHERE status = 'active';
