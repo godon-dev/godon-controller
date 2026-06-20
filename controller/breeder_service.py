@@ -339,6 +339,23 @@ class BreederService:
             targets_count = len(targets)
             is_cooperative = breeder_config.get('cooperation', {}).get('active', False)
 
+            # Check if a breeder with this name already exists.
+            # If it does, return the existing breeder instead of creating a duplicate
+            # and dispatching duplicate workers.
+            existing_breeders = self.metadata_repo.fetch_breeders_list()
+            for eb in existing_breeders:
+                eb_name = eb.get('name') if isinstance(eb, dict) else (eb[1] if isinstance(eb, (list, tuple)) and len(eb) > 1 else None)
+                eb_id = eb.get('id') if isinstance(eb, dict) else (eb[0] if isinstance(eb, (list, tuple)) else None)
+                if eb_name == breeder_instance_name and eb_id:
+                    logger.info(f"Breeder '{breeder_instance_name}' already exists: {eb_id}. Skipping creation to prevent duplicate workers.")
+                    return {
+                        "result": "SUCCESS",
+                        "breeder_id": eb_id,
+                        "name": breeder_instance_name,
+                        "status": "active",
+                        "message": "Breeder already exists, skipping duplicate creation"
+                    }
+
             # Call breeder preflight check synchronously before launching workers
             # This validates that the breeder supports all parameters in the config
             # (semantic validation that controller can't do)
