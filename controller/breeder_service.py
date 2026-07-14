@@ -339,6 +339,9 @@ class BreederService:
             targets_count = len(targets)
             is_cooperative = breeder_config.get('cooperation', {}).get('active', False)
 
+            # Ensure metadata table exists before querying it (idempotent check)
+            self.metadata_repo.create_table()
+
             # Check if a breeder with this name already exists.
             # If it does, return the existing breeder instead of creating a duplicate
             # and dispatching duplicate workers.
@@ -481,12 +484,6 @@ class BreederService:
                 creation_ts=creation_ts,
                 meta_state=breeder_config
             )
-
-            # Create detection_rounds table and insert a round for this breeder.
-            # Each breeder gets a round as sender — breeders coordinate through
-            # this table: sender impulses, receivers hold still.
-            self.archive_repo.ensure_detection_rounds_table()
-            self.archive_repo.insert_detection_round(sender_id=breeder_uuid)
 
             # Launch worker scripts with error handling
             worker_launch_failures = []
