@@ -339,6 +339,9 @@ class BreederService:
             targets_count = len(targets)
             is_cooperative = breeder_config.get('cooperation', {}).get('active', False)
 
+            # Ensure metadata table exists before querying it (idempotent check)
+            self.metadata_repo.create_table()
+
             # Check if a breeder with this name already exists.
             # If it does, return the existing breeder instead of creating a duplicate
             # and dispatching duplicate workers.
