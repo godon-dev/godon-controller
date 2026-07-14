@@ -482,12 +482,6 @@ class BreederService:
                 meta_state=breeder_config
             )
 
-            # Create detection_rounds table and insert a round for this breeder.
-            # Each breeder gets a round as sender — breeders coordinate through
-            # this table: sender impulses, receivers hold still.
-            self.archive_repo.ensure_detection_rounds_table()
-            self.archive_repo.insert_detection_round(sender_id=breeder_uuid)
-
             # Launch worker scripts with error handling
             worker_launch_failures = []
             target_count = 0
