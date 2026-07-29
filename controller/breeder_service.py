@@ -165,10 +165,13 @@ def start_optimization_flow(flow_id, shard_config, run_id, target_id, breeder_id
         logger.debug(f"Shard config: {shard_config.get('settings', {}).get('sysctl', {})}")
 
         # Launch the breeder worker script asynchronously
-        # Script tag is set at deployment time, Windmill routes based on script's tag
+        # Tag must be passed explicitly — Windmill does NOT inherit
+        # the script's stored tag for job routing. Without this, jobs
+        # get routed to default workers instead of breeder workers.
         job_id = wmill.run_script_by_path_async(
             path=script_path,
-            args=script_inputs
+            args=script_inputs,
+            tag="breeder"
         )
         
         logger.info(f"Flow {flow_id} started with job ID: {job_id}")
