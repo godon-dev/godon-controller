@@ -847,11 +847,24 @@ class BreederService:
                 if failed_count > 0:
                     logger.warning(f"{failed_count} worker jobs could not be cancelled")
 
+            # Clean coordination state before dropping the database
+            self.archive_repo.cleanup_coordination_state(breeder_id)
+
+            # Read group before metadata is removed
+            det_cfg = breeder_config.get('interference_detection', breeder_config.get('detection', {}))
+            group_id = det_cfg.get('group', breeder_config.get('group', 'default'))
+
             # Drop the archive database
             self.archive_repo.drop_database(__uuid_common_name)
 
             # Remove metadata
             self.metadata_repo.remove_breeder_meta(breeder_id)
+
+            # If this was the last breeder in the group, purge the lease row
+            remaining_in_group = self._count_breeders_in_group(group_id)
+            if remaining_in_group == 0:
+                self.archive_repo.cleanup_group_lease(group_id)
+                logger.info(f"Purged group lease — last breeder in group '{group_id}' deleted")
 
             logger.info(f"Successfully deleted breeder: {breeder_id}")
             return {
@@ -907,6 +920,27 @@ class BreederService:
                 "result": "FAILURE",
                 "error": str(e)
             }
+
+    def _count_breeders_in_group(self, group_id):
+        """Count remaining breeders in the same group after a deletion."""
+        try:
+            self.metadata_repo.create_table()
+            breeders = self.metadata_repo.fetch_breeders_list()
+            count = 0
+            for row in breeders:
+                bid = row[0]
+                meta = self.metadata_repo.fetch_meta_data(bid)
+                if meta and len(meta) > 0:
+                    cfg = meta[0][3]
+                    if isinstance(cfg, dict):
+                        det_cfg = cfg.get('interference_detection', cfg.get('detection', {}))
+                        bgroup = det_cfg.get('group', cfg.get('group', 'default'))
+                        if bgroup == group_id:
+                            count += 1
+            return count
+        except Exception as e:
+            logger.warning(f"Failed to count breeders in group {group_id}: {e}")
+            return -1
 
     def _count_config_params(self, config):
         new_param_count = 0
