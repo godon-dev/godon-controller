@@ -818,6 +818,7 @@ class BreederService:
             __uuid_common_name = f"breeder_{breeder_id.replace('-', '_')}"
 
             # Cancel all running worker jobs before dropping database
+            import time
             if worker_job_ids:
                 if not force:
                     # Future: Check if graceful shutdown was requested
@@ -847,18 +848,24 @@ class BreederService:
                 if failed_count > 0:
                     logger.warning(f"{failed_count} worker jobs could not be cancelled")
 
-            # Clean coordination state before dropping the database
-            self.archive_repo.cleanup_coordination_state(breeder_id)
-
             # Read group before metadata is removed
             det_cfg = breeder_config.get('interference_detection', breeder_config.get('detection', {}))
             group_id = det_cfg.get('group', breeder_config.get('group', 'default'))
 
-            # Drop the archive database
+            # Drop the archive database first — kills the worker's DB connection
+            # so it can't re-register in coordination tables after cleanup
             self.archive_repo.drop_database(__uuid_common_name)
 
             # Remove metadata
             self.metadata_repo.remove_breeder_meta(breeder_id)
+
+            # Clean coordination state after DB drop so workers can't
+            # re-insert themselves via heartbeat between cleanup and termination.
+            # Re-clean after a brief wait because Windmill job cancellation is
+            # async and workers may heartbeat one more time before dying.
+            self.archive_repo.cleanup_coordination_state(breeder_id)
+            time.sleep(5)
+            self.archive_repo.cleanup_coordination_state(breeder_id)
 
             # If this was the last breeder in the group, purge the lease row
             remaining_in_group = self._count_breeders_in_group(group_id)
