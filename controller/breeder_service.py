@@ -817,6 +817,12 @@ class BreederService:
 
             __uuid_common_name = f"breeder_{breeder_id.replace('-', '_')}"
 
+            # Signal workers to stop heartbeating BEFORE anything else.
+            # Workers check this flag before registering in coordination tables.
+            # This prevents the race where a worker re-registers between
+            # coordination cleanup and actual job termination.
+            self.archive_repo.set_shutdown_requested(__uuid_common_name, value=True)
+
             # Cancel all running worker jobs before dropping database
             import time
             if worker_job_ids:
@@ -859,12 +865,8 @@ class BreederService:
             # Remove metadata
             self.metadata_repo.remove_breeder_meta(breeder_id)
 
-            # Clean coordination state after DB drop so workers can't
-            # re-insert themselves via heartbeat between cleanup and termination.
-            # Re-clean after a brief wait because Windmill job cancellation is
-            # async and workers may heartbeat one more time before dying.
-            self.archive_repo.cleanup_coordination_state(breeder_id)
-            time.sleep(5)
+            # Clean coordination state — safe now because workers already
+            # saw the shutdown flag and stopped heartbeating
             self.archive_repo.cleanup_coordination_state(breeder_id)
 
             # If this was the last breeder in the group, purge the lease row
