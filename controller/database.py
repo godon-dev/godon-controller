@@ -128,45 +128,43 @@ class ArchiveDatabaseRepository:
         execute_ddl_query(db_config, query)
         logger.info(f"Dropped archive database: {breeder_id}")
 
-    def ensure_detection_rounds_table(self):
-        """Create the detection_rounds table in archive_db if it doesn't exist.
-        
-        The detection_rounds table coordinates impulse detection between breeders.
-        Each row represents a round where one breeder (sender) pushes an impulse
-        while all others hold still. The controller creates this table and inserts
-        rows at breeder creation time.
+    def cleanup_coordination_state(self, breeder_id):
+        """Remove a breeder's rows from coordination tables in archive_db.
+
+        Called on breeder deletion. Removes the breeder from
+        interference_active_breeders and detection_readiness so stale
+        coordination state doesn't block other breeders in the group.
         """
         db_config = self.base_config.copy()
         db_config['database'] = "archive_db"
 
-        query = """
-        CREATE TABLE IF NOT EXISTS detection_rounds (
-            round_id    SERIAL PRIMARY KEY,
-            sender_id   VARCHAR(255) NOT NULL,
-            status      TEXT NOT NULL DEFAULT 'active',
-            created_at  TIMESTAMPTZ DEFAULT NOW(),
-            completed_at TIMESTAMPTZ,
-            receiver_violated BOOLEAN NOT NULL DEFAULT FALSE
-        );
-        CREATE INDEX IF NOT EXISTS idx_detection_rounds_active 
-            ON detection_rounds (status) WHERE status = 'active';
-        """
+        queries = [
+            f"DELETE FROM interference_active_breeders WHERE breeder_id = '{breeder_id}';",
+            f"DELETE FROM detection_readiness WHERE breeder_id = '{breeder_id}';",
+        ]
 
-        execute_query(db_config, query)
-        logger.info("Ensured detection_rounds table exists in archive_db")
+        for query in queries:
+            try:
+                execute_query(db_config, query)
+            except Exception as e:
+                logger.warning(f"Coordination cleanup query failed (table may not exist yet): {e}")
 
-    def insert_detection_round(self, sender_id):
-        """Insert a detection round for a sender breeder.
-        
-        Args:
-            sender_id: UUID of the breeder that will send the impulse
+        logger.info(f"Cleaned coordination state for breeder: {breeder_id}")
+
+    def cleanup_group_lease(self, group_id):
+        """Remove the sender_lease row for a group with no remaining breeders.
+
+        Called automatically when the last breeder in a group is deleted.
+        Per-breeder coordination rows (interference_active_breeders,
+        detection_readiness) are already cleaned by cleanup_coordination_state.
         """
         db_config = self.base_config.copy()
         db_config['database'] = "archive_db"
 
-        query = f"INSERT INTO detection_rounds (sender_id) VALUES ('{sender_id}');"
-        execute_query(db_config, query)
-        logger.info(f"Inserted detection round for sender: {sender_id}")
+        try:
+            execute_query(db_config, f"DELETE FROM sender_lease WHERE group_id = '{group_id}';")
+        except Exception as e:
+            logger.warning(f"Group lease cleanup failed (table may not exist yet): {e}")
 
     def get_connection_url(self, breeder_id):
         """Get PostgreSQL connection URL for a breeder database"""
