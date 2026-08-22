@@ -134,6 +134,9 @@ class ArchiveDatabaseRepository:
         Called on breeder deletion. Removes the breeder from
         interference_active_breeders and detection_readiness so stale
         coordination state doesn't block other breeders in the group.
+        Also removes the breeder's receiver_observations and curve_points
+        rows — measurement state follows the breeder lifecycle (no ghost
+        rows; causal's registry is cleared via its API in delete_breeder).
         """
         db_config = self.base_config.copy()
         db_config['database'] = "archive_db"
@@ -141,6 +144,8 @@ class ArchiveDatabaseRepository:
         queries = [
             f"DELETE FROM interference_active_breeders WHERE breeder_id = '{breeder_id}';",
             f"DELETE FROM detection_readiness WHERE breeder_id = '{breeder_id}';",
+            f"DELETE FROM receiver_observations WHERE receiver_id = '{breeder_id}';",
+            f"DELETE FROM curve_points WHERE sender_id = '{breeder_id}';",
         ]
 
         for query in queries:
