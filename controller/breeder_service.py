@@ -869,6 +869,25 @@ class BreederService:
             # saw the shutdown flag and stopped heartbeating
             self.archive_repo.cleanup_coordination_state(breeder_id)
 
+            # Curves follow the breeder: clear causal's in-memory registry
+            # AND its persisted rows. Best-effort with error log — deletion
+            # succeeds even if causal is unreachable; leftover ghosts are
+            # visible in GET /curves and sweepable via the same endpoint
+            # (rows alone would replay back into the registry on restart).
+            try:
+                import urllib.request
+                causal_url = os.environ.get(
+                    'GODON_CAUSAL_URL', 'http://godon-godon-causal:9091')
+                req = urllib.request.Request(
+                    f"{causal_url}/curves/{breeder_id}", method='DELETE')
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    logger.info(
+                        f"Causal curve purge for {breeder_id}: HTTP {resp.status}")
+            except Exception as e:
+                logger.warning(
+                    f"Causal curve purge failed for {breeder_id} "
+                    f"(ghost curves may linger in /curves): {e}")
+
             # If this was the last breeder in the group, purge the lease row
             remaining_in_group = self._count_breeders_in_group(group_id)
             if remaining_in_group == 0:
