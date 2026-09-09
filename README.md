@@ -1,2 +1,2 @@
 # godon-controller
-Controller Logic that Manages Godon Breeder Lifecycles
+Controller Logic that Manages Godon Systemtender Lifecycles
