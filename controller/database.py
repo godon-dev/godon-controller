@@ -60,49 +60,49 @@ class ArchiveDatabaseRepository:
     def __init__(self, base_config):
         self.base_config = base_config.copy()
 
-    def create_breeder_state_table(self, breeder_id):
-        """Create the breeder state table for shutdown signaling"""
+    def create_systemtender_state_table(self, systemtender_id):
+        """Create the systemtender state table for shutdown signaling"""
         db_config = self.base_config.copy()
-        db_config['database'] = breeder_id
+        db_config['database'] = systemtender_id
 
         query = """
-        CREATE TABLE IF NOT EXISTS breeder_state (
+        CREATE TABLE IF NOT EXISTS systemtender_state (
             id SERIAL PRIMARY KEY,
             shutdown_requested BOOLEAN DEFAULT FALSE,
             updated_at TIMESTAMPTZ DEFAULT NOW()
         );
 
-        INSERT INTO breeder_state (shutdown_requested) VALUES (FALSE)
+        INSERT INTO systemtender_state (shutdown_requested) VALUES (FALSE)
         ON CONFLICT DO NOTHING;
         """
 
         execute_query(db_config, query)
-        logger.info(f"Created breeder state table for: {breeder_id}")
+        logger.info(f"Created systemtender state table for: {systemtender_id}")
 
-    def set_shutdown_requested(self, breeder_id, value=True):
-        """Set or clear the shutdown requested flag in the breeder's archive database
+    def set_shutdown_requested(self, systemtender_id, value=True):
+        """Set or clear the shutdown requested flag in the systemtender's archive database
 
         Args:
-            breeder_id: The breeder database name
+            systemtender_id: The systemtender database name
             value: True to set shutdown flag, False to clear it
         """
         db_config = self.base_config.copy()
-        db_config['database'] = breeder_id
+        db_config['database'] = systemtender_id
 
         query = f"""
-        UPDATE breeder_state SET shutdown_requested = {str(value).upper()}, updated_at = NOW();
+        UPDATE systemtender_state SET shutdown_requested = {str(value).upper()}, updated_at = NOW();
         """
 
         execute_query(db_config, query)
-        logger.info(f"Set shutdown_requested={value} in archive DB for breeder: {breeder_id}")
+        logger.info(f"Set shutdown_requested={value} in archive DB for systemtender: {systemtender_id}")
 
-    def get_shutdown_requested(self, breeder_id):
-        """Check if shutdown has been requested for a breeder"""
+    def get_shutdown_requested(self, systemtender_id):
+        """Check if shutdown has been requested for a systemtender"""
         db_config = self.base_config.copy()
-        db_config['database'] = breeder_id
+        db_config['database'] = systemtender_id
 
         query = """
-        SELECT shutdown_requested FROM breeder_state;
+        SELECT shutdown_requested FROM systemtender_state;
         """
 
         result = execute_query(db_config, query, with_result=True)
@@ -110,42 +110,42 @@ class ArchiveDatabaseRepository:
             return result[0][0]
         return False
 
-    def create_database(self, breeder_id):
-        """Create a new database for a breeder"""
+    def create_database(self, systemtender_id):
+        """Create a new database for a systemtender"""
         db_config = self.base_config.copy()
         db_config['database'] = "archive_db"
 
-        query = f"CREATE DATABASE {breeder_id};"
+        query = f"CREATE DATABASE {systemtender_id};"
         execute_ddl_query(db_config, query)
-        logger.info(f"Created archive database: {breeder_id}")
+        logger.info(f"Created archive database: {systemtender_id}")
 
-    def drop_database(self, breeder_id):
-        """Drop a breeder database"""
+    def drop_database(self, systemtender_id):
+        """Drop a systemtender database"""
         db_config = self.base_config.copy()
         db_config['database'] = "archive_db"
 
-        query = f"DROP DATABASE IF EXISTS {breeder_id};"
+        query = f"DROP DATABASE IF EXISTS {systemtender_id};"
         execute_ddl_query(db_config, query)
-        logger.info(f"Dropped archive database: {breeder_id}")
+        logger.info(f"Dropped archive database: {systemtender_id}")
 
-    def cleanup_coordination_state(self, breeder_id):
-        """Remove a breeder's rows from coordination tables in archive_db.
+    def cleanup_coordination_state(self, systemtender_id):
+        """Remove a systemtender's rows from coordination tables in archive_db.
 
-        Called on breeder deletion. Removes the breeder from
-        interference_active_breeders and detection_readiness so stale
-        coordination state doesn't block other breeders in the group.
-        Also removes the breeder's receiver_observations and curve_points
-        rows — measurement state follows the breeder lifecycle (no ghost
-        rows; causal's registry is cleared via its API in delete_breeder).
+        Called on systemtender deletion. Removes the systemtender from
+        interference_active_systemtenders and detection_readiness so stale
+        coordination state doesn't block other systemtenders in the group.
+        Also removes the systemtender's receiver_observations and curve_points
+        rows — measurement state follows the systemtender lifecycle (no ghost
+        rows; causal's registry is cleared via its API in delete_systemtender).
         """
         db_config = self.base_config.copy()
         db_config['database'] = "archive_db"
 
         queries = [
-            f"DELETE FROM interference_active_breeders WHERE breeder_id = '{breeder_id}';",
-            f"DELETE FROM detection_readiness WHERE breeder_id = '{breeder_id}';",
-            f"DELETE FROM receiver_observations WHERE receiver_id = '{breeder_id}';",
-            f"DELETE FROM curve_points WHERE sender_id = '{breeder_id}';",
+            f"DELETE FROM interference_active_systemtenders WHERE systemtender_id = '{systemtender_id}';",
+            f"DELETE FROM detection_readiness WHERE systemtender_id = '{systemtender_id}';",
+            f"DELETE FROM receiver_observations WHERE receiver_id = '{systemtender_id}';",
+            f"DELETE FROM curve_points WHERE sender_id = '{systemtender_id}';",
         ]
 
         for query in queries:
@@ -154,13 +154,13 @@ class ArchiveDatabaseRepository:
             except Exception as e:
                 logger.warning(f"Coordination cleanup query failed (table may not exist yet): {e}")
 
-        logger.info(f"Cleaned coordination state for breeder: {breeder_id}")
+        logger.info(f"Cleaned coordination state for systemtender: {systemtender_id}")
 
     def cleanup_group_lease(self, group_id):
-        """Remove the sender_lease row for a group with no remaining breeders.
+        """Remove the sender_lease row for a group with no remaining systemtenders.
 
-        Called automatically when the last breeder in a group is deleted.
-        Per-breeder coordination rows (interference_active_breeders,
+        Called automatically when the last systemtender in a group is deleted.
+        Per-systemtender coordination rows (interference_active_systemtenders,
         detection_readiness) are already cleaned by cleanup_coordination_state.
         """
         db_config = self.base_config.copy()
@@ -171,14 +171,14 @@ class ArchiveDatabaseRepository:
         except Exception as e:
             logger.warning(f"Group lease cleanup failed (table may not exist yet): {e}")
 
-    def get_connection_url(self, breeder_id):
-        """Get PostgreSQL connection URL for a breeder database"""
+    def get_connection_url(self, systemtender_id):
+        """Get PostgreSQL connection URL for a systemtender database"""
         return (
             f"postgresql://{self.base_config['user']}:"
             f"{self.base_config['password']}@"
             f"{self.base_config['host']}:"
             f"{self.base_config['port']}/"
-            f"{breeder_id}"
+            f"{systemtender_id}"
         )
 
 
@@ -187,7 +187,7 @@ class MetadataDatabaseRepository:
 
     def __init__(self, base_config):
         self.base_config = base_config.copy()
-        self.breeder_table_name = 'breeder_meta_data'
+        self.systemtender_table_name = 'systemtender_meta_data'
         self.credentials_table_name = 'credentials'
         self.targets_table_name = 'targets'
 
@@ -198,11 +198,11 @@ class MetadataDatabaseRepository:
         return db_config
 
     def create_table(self):
-        """Create the breeder metadata table"""
+        """Create the systemtender metadata table"""
         db_config = self._get_db_config()
 
         query = f"""
-        CREATE TABLE IF NOT EXISTS {self.breeder_table_name}
+        CREATE TABLE IF NOT EXISTS {self.systemtender_table_name}
         (
         id uuid PRIMARY KEY,
         name VARCHAR(255) NOT NULL DEFAULT '',
@@ -212,7 +212,7 @@ class MetadataDatabaseRepository:
         """
 
         execute_query(db_config, query)
-        logger.info(f"Ensured metadata table exists: {self.breeder_table_name}")
+        logger.info(f"Ensured metadata table exists: {self.systemtender_table_name}")
 
     def create_credentials_table(self):
         """Create the credentials catalog table"""
@@ -237,58 +237,58 @@ class MetadataDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Ensured credentials table exists: {self.credentials_table_name}")
 
-    def insert_breeder_meta(self, breeder_id, name, creation_ts, meta_state):
-        """Insert breeder metadata"""
+    def insert_systemtender_meta(self, systemtender_id, name, creation_ts, meta_state):
+        """Insert systemtender metadata"""
         db_config = self._get_db_config()
         json_string = json.dumps(meta_state).replace("'", "''")
         name_escaped = name.replace("'", "''")
 
         query = f"""
-        INSERT INTO {self.breeder_table_name} (id, name, creation_tsz, definition)
-        VALUES('{breeder_id}', '{name_escaped}', '{creation_ts}', '{json_string}');
+        INSERT INTO {self.systemtender_table_name} (id, name, creation_tsz, definition)
+        VALUES('{systemtender_id}', '{name_escaped}', '{creation_ts}', '{json_string}');
         """
 
         execute_query(db_config, query)
-        logger.info(f"Inserted metadata for breeder: {breeder_id}")
+        logger.info(f"Inserted metadata for systemtender: {systemtender_id}")
 
-    def update_breeder_meta(self, breeder_id, meta_state):
-        """Update breeder metadata (e.g., to add job IDs)"""
+    def update_systemtender_meta(self, systemtender_id, meta_state):
+        """Update systemtender metadata (e.g., to add job IDs)"""
         db_config = self._get_db_config()
         json_string = json.dumps(meta_state).replace("'", "''")
 
         query = f"""
-        UPDATE {self.breeder_table_name}
+        UPDATE {self.systemtender_table_name}
         SET definition = '{json_string}'
-        WHERE id = '{breeder_id}';
+        WHERE id = '{systemtender_id}';
         """
 
         execute_query(db_config, query)
-        logger.info(f"Updated metadata for breeder: {breeder_id}")
+        logger.info(f"Updated metadata for systemtender: {systemtender_id}")
 
-    def remove_breeder_meta(self, breeder_id):
-        """Remove breeder metadata"""
+    def remove_systemtender_meta(self, systemtender_id):
+        """Remove systemtender metadata"""
         db_config = self._get_db_config()
 
-        query = f"DELETE FROM {self.breeder_table_name} WHERE id = '{breeder_id}';"
+        query = f"DELETE FROM {self.systemtender_table_name} WHERE id = '{systemtender_id}';"
         execute_query(db_config, query)
-        logger.info(f"Removed metadata for breeder: {breeder_id}")
+        logger.info(f"Removed metadata for systemtender: {systemtender_id}")
 
-    def fetch_meta_data(self, breeder_id):
-        """Fetch metadata for a specific breeder"""
+    def fetch_meta_data(self, systemtender_id):
+        """Fetch metadata for a specific systemtender"""
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, name, creation_tsz, definition FROM {self.breeder_table_name} WHERE id = '{breeder_id}';
+        SELECT id, name, creation_tsz, definition FROM {self.systemtender_table_name} WHERE id = '{systemtender_id}';
         """
 
         return execute_query(db_config, query, with_result=True)
 
-    def fetch_breeders_list(self):
-        """Fetch list of all breeders"""
+    def fetch_systemtenders_list(self):
+        """Fetch list of all systemtenders"""
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT id, name, creation_tsz FROM {self.breeder_table_name};
+        SELECT id, name, creation_tsz FROM {self.systemtender_table_name};
         """
 
         result = execute_query(db_config, query, with_result=True)

@@ -58,7 +58,7 @@ fake_controller_otel.get_logger = lambda name: MagicMock()
 sys.modules['f.controller.shared.otel_logging'] = fake_controller_otel
 
 # Pre-populate all f.controller.xxx modules BEFORE any imports
-for module_name in ['config', 'database', 'breeder_service', 'credential_create',
+for module_name in ['config', 'database', 'systemtender_service', 'credential_create',
                     'credential_get', 'credential_delete', 'credentials_get',
                     'target_create', 'target_get', 'targets_get', 'target_delete']:
     full_name = f'f.controller.{module_name}'
@@ -80,8 +80,8 @@ populate_stub_module(sys.modules['f.controller.config'], config)
 import controller.database as database
 populate_stub_module(sys.modules['f.controller.database'], database)
 
-import controller.breeder_service as breeder_service
-populate_stub_module(sys.modules['f.controller.breeder_service'], breeder_service)
+import controller.systemtender_service as systemtender_service
+populate_stub_module(sys.modules['f.controller.systemtender_service'], systemtender_service)
 
 import controller.credential_create as credential_create
 populate_stub_module(sys.modules['f.controller.credential_create'], credential_create)

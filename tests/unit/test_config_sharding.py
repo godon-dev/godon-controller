@@ -24,7 +24,7 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from controller.breeder_service import determine_config_shard
+from controller.systemtender_service import determine_config_shard
 
 
 class TestConfigSharding:

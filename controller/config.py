@@ -1,11 +1,11 @@
 import os
 
-# Internal breeder capabilities - not customer configurable
-BREEDER_CAPABILITIES = {
+# Internal systemtender capabilities - not customer configurable
+SYSTEMTENDER_CAPABILITIES = {
     "linux_performance": {
         "supported_target_types": ["ssh"]
     },
-    # Future breeders:
+    # Future systemtenders:
     # "api_performance": {
     #     "supported_target_types": ["http", "api"],
     # },
@@ -26,13 +26,13 @@ class DatabaseConfig:
         port=os.environ.get('GODON_METADATA_DB_SERVICE_PORT')
     )
 
-class BreederConfig:
+class SystemtenderConfig:
     @staticmethod
-    def extract_breeder_config(request_data):
-        if not request_data or 'breeder' not in request_data:
-            raise ValueError("Invalid breeder configuration: missing 'breeder' key")
+    def extract_systemtender_config(request_data):
+        if not request_data or 'systemtender' not in request_data:
+            raise ValueError("Invalid systemtender configuration: missing 'systemtender' key")
 
-        return request_data.get('breeder', {})
+        return request_data.get('systemtender', {})
 
     @staticmethod
     def validate_constraints_v03(constraints, param_name):
@@ -163,20 +163,20 @@ class BreederConfig:
             )
 
     @staticmethod
-    def validate_guardrails_v03(breeder_config):
+    def validate_guardrails_v03(systemtender_config):
         """Validate guardrails section
 
         Args:
-            breeder_config: Full breeder configuration
+            systemtender_config: Full systemtender configuration
 
         Raises:
             ValueError: If guardrails section is invalid
         """
-        if 'guardrails' not in breeder_config:
+        if 'guardrails' not in systemtender_config:
             # Guardrails are optional
             return
 
-        guardrails = breeder_config['guardrails']
+        guardrails = systemtender_config['guardrails']
 
         if not isinstance(guardrails, list):
             raise ValueError(
@@ -258,20 +258,20 @@ class BreederConfig:
                     )
 
     @staticmethod
-    def validate_rollback_strategies_v03(breeder_config):
+    def validate_rollback_strategies_v03(systemtender_config):
         """Validate rollback_strategies section
 
         Args:
-            breeder_config: Full breeder configuration
+            systemtender_config: Full systemtender configuration
 
         Raises:
             ValueError: If rollback_strategies section is invalid
         """
-        if 'rollback_strategies' not in breeder_config:
+        if 'rollback_strategies' not in systemtender_config:
             # Rollback strategies are optional
             return
 
-        strategies = breeder_config['rollback_strategies']
+        strategies = systemtender_config['rollback_strategies']
 
         if not isinstance(strategies, dict):
             raise ValueError(
@@ -361,8 +361,8 @@ class BreederConfig:
                     )
 
         # Validate strategy references in targets
-        if 'effectuation' in breeder_config and 'targets' in breeder_config['effectuation']:
-            targets = breeder_config['effectuation']['targets']
+        if 'effectuation' in systemtender_config and 'targets' in systemtender_config['effectuation']:
+            targets = systemtender_config['effectuation']['targets']
 
             for idx, target in enumerate(targets):
                 if 'rollback' in target and target['rollback'].get('enabled', False):
@@ -380,11 +380,11 @@ class BreederConfig:
                         )
 
     @staticmethod
-    def validate_minimal(breeder_config, strict_mode=True):
+    def validate_minimal(systemtender_config, strict_mode=True):
         """Minimal validation to catch catastrophic config errors early
 
         Args:
-            breeder_config: Breeder configuration dict
+            systemtender_config: Systemtender configuration dict
             strict_mode: If True (default), reject unknown parameters.
                        If False, allow unknown parameters with warnings.
                        Can be overridden by meta.strict_validation in config.
@@ -426,7 +426,7 @@ class BreederConfig:
         warnings = []
 
         # Determine strict mode: CLI param > meta config > default (true)
-        meta_section = breeder_config.get('meta', {})
+        meta_section = systemtender_config.get('meta', {})
         if 'strict_validation' in meta_section:
             strict_mode = meta_section['strict_validation']
         # else: use the strict_mode parameter passed in (default: true)
@@ -438,18 +438,18 @@ class BreederConfig:
                 f"See documentation for migration guide."
             )
 
-        if not breeder_config.get('breeder', {}).get('type'):
+        if not systemtender_config.get('systemtender', {}).get('type'):
             errors.append(
-                "Missing breeder.type. Example: breeder: {type: 'linux_performance'}"
+                "Missing systemtender.type. Example: systemtender: {type: 'linux_performance'}"
             )
 
-        if not breeder_config.get('objectives') or len(breeder_config.get('objectives', [])) == 0:
+        if not systemtender_config.get('objectives') or len(systemtender_config.get('objectives', [])) == 0:
             errors.append(
                 "Missing or empty objectives array. "
                 "Example: objectives: [{name: 'latency', goal: 'MINIMIZE', reconnaissance: {...}}]"
             )
 
-        target_refs = breeder_config.get('effectuation', {}).get('targetRefs')
+        target_refs = systemtender_config.get('effectuation', {}).get('targetRefs')
         if not target_refs or not isinstance(target_refs, list) or len(target_refs) == 0:
             errors.append(
                 "Missing or empty effectuation.targetRefs. "
@@ -459,11 +459,11 @@ class BreederConfig:
 
         # Strain-specific validation: settings and recon constraints are strain-dependent.
         # For unknown/non-linux_performance strains, skip domain validation and rely on preflight.
-        breeder_type = breeder_config.get('breeder', {}).get('type', '')
+        systemtender_type = systemtender_config.get('systemtender', {}).get('type', '')
         supported_categories = ['sysctl', 'sysfs', 'cpufreq', 'ethtool']
-        settings = breeder_config.get('settings', {})
+        settings = systemtender_config.get('settings', {})
 
-        if breeder_type == 'linux_performance':
+        if systemtender_type == 'linux_performance':
             has_any_category = any(category in settings for category in supported_categories)
             if not has_any_category:
                 errors.append(
@@ -515,7 +515,7 @@ class BreederConfig:
 
                             try:
                                 # Validate constraint structure (list of ranges or values)
-                                constraint_type = BreederConfig.validate_constraints_v03(
+                                constraint_type = SystemtenderConfig.validate_constraints_v03(
                                     ethtool_config['constraints'],
                                     f"ethtool.{param_name}.{ethtool_param}"
                                 )
@@ -532,7 +532,7 @@ class BreederConfig:
 
                     try:
                         # Validate constraint structure (list of ranges or values)
-                        constraint_type = BreederConfig.validate_constraints_v03(
+                        constraint_type = SystemtenderConfig.validate_constraints_v03(
                             param_config['constraints'],
                             f"{category}.{param_name}"
                         )
@@ -541,19 +541,19 @@ class BreederConfig:
 
         # Validate guardrails section (if present)
         try:
-            BreederConfig.validate_guardrails_v03(breeder_config)
+            SystemtenderConfig.validate_guardrails_v03(systemtender_config)
         except ValueError as e:
             errors.append(str(e))
 
         # Validate rollback_strategies section (if present)
         try:
-            BreederConfig.validate_rollback_strategies_v03(breeder_config)
+            SystemtenderConfig.validate_rollback_strategies_v03(systemtender_config)
         except ValueError as e:
             errors.append(str(e))
 
         # Validate cooperation configuration
-        if breeder_config.get('cooperation', {}).get('active', False):
-            parallel_workers = breeder_config.get('run', {}).get('parallel', 1)
+        if systemtender_config.get('cooperation', {}).get('active', False):
+            parallel_workers = systemtender_config.get('run', {}).get('parallel', 1)
             if parallel_workers <= 1:
                 errors.append(
                     f"Cooperation enabled but run.parallel={parallel_workers}. "
@@ -561,8 +561,8 @@ class BreederConfig:
                 )
 
         # Validate targetRefs
-        breeder_type = breeder_config.get('breeder', {}).get('type')
-        target_refs = breeder_config.get('effectuation', {}).get('targetRefs', [])
+        systemtender_type = systemtender_config.get('systemtender', {}).get('type')
+        target_refs = systemtender_config.get('effectuation', {}).get('targetRefs', [])
 
         if target_refs and isinstance(target_refs, list):
             for idx, ref in enumerate(target_refs):
@@ -570,7 +570,7 @@ class BreederConfig:
                     errors.append(f"targetRefs[{idx}]: must be a non-empty string (target ID or name)")
 
         # Validate objectives reconnaissance configuration
-        for idx, objective in enumerate(breeder_config.get('objectives', [])):
+        for idx, objective in enumerate(systemtender_config.get('objectives', [])):
             if not isinstance(objective, dict):
                 errors.append(
                     f"Objective {idx}: must be a dict, got {type(objective).__name__}"
@@ -589,7 +589,7 @@ class BreederConfig:
 
                 # Check required fields
                 required_recon_fields = ['service']
-                if breeder_type == 'linux_performance':
+                if systemtender_type == 'linux_performance':
                     required_recon_fields.append('query')
                 missing_fields = [f for f in required_recon_fields if f not in recon]
 
@@ -641,7 +641,7 @@ class BreederConfig:
                         )
 
         # Validate run completion criteria
-        run_config = breeder_config.get('run', {})
+        run_config = systemtender_config.get('run', {})
         if 'completion' in run_config:
             completion = run_config['completion']
 

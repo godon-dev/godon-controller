@@ -26,91 +26,91 @@ import uuid
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from controller.breeder_get import main as get_breeder
-from controller.breeders_get import main as list_breeders
-from controller.breeder_create import main as create_breeder
-from controller.breeder_delete import main as delete_breeder
-from controller.breeder_stop import main as stop_breeder
-from controller.breeder_start import main as start_breeder
+from controller.systemtender_get import main as get_systemtender
+from controller.systemtenders_get import main as list_systemtenders
+from controller.systemtender_create import main as create_systemtender
+from controller.systemtender_delete import main as delete_systemtender
+from controller.systemtender_stop import main as stop_systemtender
+from controller.systemtender_start import main as start_systemtender
 
 
-class TestBreederRetrieval:
-    """Test breeder retrieval logic"""
+class TestSystemtenderRetrieval:
+    """Test systemtender retrieval logic"""
 
-    def test_get_breeder_missing_id(self):
-        """Test that missing breeder_id parameter fails"""
-        result = get_breeder(request_data=None)
+    def test_get_systemtender_missing_id(self):
+        """Test that missing systemtender_id parameter fails"""
+        result = get_systemtender(request_data=None)
         assert result['result'] == 'FAILURE'
-        assert 'Missing breeder_id' in result['error']
+        assert 'Missing systemtender_id' in result['error']
 
-    def test_get_breeder_not_found(self):
-        """Test retrieving non-existent breeder"""
-        with patch('controller.breeder_get.BreederService') as mock_service_class:
+    def test_get_systemtender_not_found(self):
+        """Test retrieving non-existent systemtender"""
+        with patch('controller.systemtender_get.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
-            # Service returns FAILURE for non-existent breeder
-            mock_service.get_breeder.return_value = {
+            # Service returns FAILURE for non-existent systemtender
+            mock_service.get_systemtender.return_value = {
                 "result": "FAILURE",
-                "breeder_data": "{}"
+                "systemtender_data": "{}"
             }
 
             fake_id = str(uuid.uuid4())
-            result = get_breeder(request_data={"breeder_id": fake_id})
+            result = get_systemtender(request_data={"systemtender_id": fake_id})
 
             assert result['result'] == 'FAILURE'
 
-    def test_get_breeder_success(self):
-        """Test successful breeder retrieval"""
-        with patch('controller.breeder_get.BreederService') as mock_service_class:
+    def test_get_systemtender_success(self):
+        """Test successful systemtender retrieval"""
+        with patch('controller.systemtender_get.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
             # Service returns wrapped response with data field
-            mock_service.get_breeder.return_value = {
+            mock_service.get_systemtender.return_value = {
                 "result": "SUCCESS",
                 "data": {
                     "id": test_id,
-                    "name": "test-breeder",
+                    "name": "test-systemtender",
                     "status": "active",
                     "createdAt": "2024-01-01T00:00:00Z",
                     "config": {"type": "linux_performance"}
                 }
             }
 
-            result = get_breeder(request_data={"breeder_id": test_id})
+            result = get_systemtender(request_data={"systemtender_id": test_id})
 
             # Command adapter passes through wrapped response
             assert result['result'] == 'SUCCESS'
             assert 'data' in result
             assert result['data']['id'] == test_id
-            assert result['data']['name'] == 'test-breeder'
+            assert result['data']['name'] == 'test-systemtender'
             assert result['data']['status'] == 'active'
 
 
-class TestBreederListing:
-    """Test breeder listing logic"""
+class TestSystemtenderListing:
+    """Test systemtender listing logic"""
 
-    def test_list_breeders_empty(self):
-        """Test listing when no breeders exist"""
-        with patch('controller.breeders_get.BreederService') as mock_service_class:
+    def test_list_systemtenders_empty(self):
+        """Test listing when no systemtenders exist"""
+        with patch('controller.systemtenders_get.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
-            mock_service.list_breeders.return_value = {
+            mock_service.list_systemtenders.return_value = {
                 "result": "SUCCESS",
                 "data": []
             }
 
-            result = list_breeders(request_data=None)
+            result = list_systemtenders(request_data=None)
 
             # Command adapter passes through wrapped response
             assert result['result'] == 'SUCCESS'
             assert 'data' in result
             assert result['data'] == []
 
-    def test_list_breeders_multiple(self):
-        """Test listing multiple breeders"""
-        with patch('controller.breeders_get.BreederService') as mock_service_class:
+    def test_list_systemtenders_multiple(self):
+        """Test listing multiple systemtenders"""
+        with patch('controller.systemtenders_get.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
@@ -120,15 +120,15 @@ class TestBreederListing:
             now = datetime.now()
 
             # Service returns wrapped response with data field
-            mock_service.list_breeders.return_value = {
+            mock_service.list_systemtenders.return_value = {
                 "result": "SUCCESS",
                 "data": [
-                    (id1, "breeder1", now.isoformat()),
-                    (id2, "breeder2", now.isoformat())
+                    (id1, "systemtender1", now.isoformat()),
+                    (id2, "systemtender2", now.isoformat())
                 ]
             }
 
-            result = list_breeders(request_data=None)
+            result = list_systemtenders(request_data=None)
 
             # Command adapter passes through wrapped response
             assert result['result'] == 'SUCCESS'
@@ -137,282 +137,282 @@ class TestBreederListing:
             assert len(result['data']) == 2
             # Service returns tuples: (id, name, createdAt)
             assert result['data'][0][0] == id1
-            assert result['data'][0][1] == 'breeder1'
+            assert result['data'][0][1] == 'systemtender1'
             assert result['data'][1][0] == id2
-            assert result['data'][1][1] == 'breeder2'
+            assert result['data'][1][1] == 'systemtender2'
 
-    def test_list_breeders_service_failure(self):
+    def test_list_systemtenders_service_failure(self):
         """Test listing when service fails"""
-        with patch('controller.breeders_get.BreederService') as mock_service_class:
+        with patch('controller.systemtenders_get.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
-            mock_service.list_breeders.return_value = {
+            mock_service.list_systemtenders.return_value = {
                 "result": "FAILURE",
-                "breeders": [],
+                "systemtenders": [],
                 "error": "Database error"
             }
 
-            result = list_breeders(request_data=None)
+            result = list_systemtenders(request_data=None)
 
             # Should return error as-is
             assert result['result'] == 'FAILURE'
             assert 'error' in result
 
 
-class TestBreederDeletion:
-    """Test breeder deletion logic"""
+class TestSystemtenderDeletion:
+    """Test systemtender deletion logic"""
 
-    def test_delete_breeder_missing_id(self):
-        """Test that missing breeder_id parameter fails"""
-        result = delete_breeder(request_data=None)
+    def test_delete_systemtender_missing_id(self):
+        """Test that missing systemtender_id parameter fails"""
+        result = delete_systemtender(request_data=None)
         assert result['result'] == 'FAILURE'
-        assert 'Missing breeder_id' in result['error']
+        assert 'Missing systemtender_id' in result['error']
 
-    def test_delete_breeder_not_found(self):
-        """Test deleting non-existent breeder"""
-        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+    def test_delete_systemtender_not_found(self):
+        """Test deleting non-existent systemtender"""
+        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
-            # Simulate deletion failure (breeder doesn't exist)
-            mock_service.delete_breeder.return_value = {
+            # Simulate deletion failure (systemtender doesn't exist)
+            mock_service.delete_systemtender.return_value = {
                 "result": "FAILURE",
-                "error": "Breeder not found"
+                "error": "Systemtender not found"
             }
 
             fake_id = str(uuid.uuid4())
-            result = delete_breeder(request_data={"breeder_id": fake_id})
+            result = delete_systemtender(request_data={"systemtender_id": fake_id})
 
             assert result['result'] == 'FAILURE'
             assert 'error' in result
 
-    def test_delete_breeder_success(self):
-        """Test successful breeder deletion"""
-        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+    def test_delete_systemtender_success(self):
+        """Test successful systemtender deletion"""
+        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.delete_breeder.return_value = {
+            mock_service.delete_systemtender.return_value = {
                 "result": "SUCCESS"
             }
 
-            result = delete_breeder(request_data={"breeder_id": test_id})
+            result = delete_systemtender(request_data={"systemtender_id": test_id})
 
             assert result['result'] == 'SUCCESS'
-            mock_service.delete_breeder.assert_called_once_with(test_id, force=False)
+            mock_service.delete_systemtender.assert_called_once_with(test_id, force=False)
 
-    def test_delete_breeder_with_force_true(self):
+    def test_delete_systemtender_with_force_true(self):
         """Test deletion with force=true parameter"""
-        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.delete_breeder.return_value = {
+            mock_service.delete_systemtender.return_value = {
                 "result": "SUCCESS",
                 "data": {
-                    "breeder_id": test_id,
+                    "systemtender_id": test_id,
                     "delete_type": "force",
                     "workers_cancelled": 3
                 }
             }
 
-            result = delete_breeder(request_data={"breeder_id": test_id, "force": True})
+            result = delete_systemtender(request_data={"systemtender_id": test_id, "force": True})
 
             assert result['result'] == 'SUCCESS'
-            mock_service.delete_breeder.assert_called_once_with(test_id, force=True)
+            mock_service.delete_systemtender.assert_called_once_with(test_id, force=True)
 
-    def test_delete_breeder_with_force_false_default(self):
+    def test_delete_systemtender_with_force_false_default(self):
         """Test that force defaults to False (safe operation)"""
-        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.delete_breeder.return_value = {
+            mock_service.delete_systemtender.return_value = {
                 "result": "SUCCESS",
                 "data": {
-                    "breeder_id": test_id,
+                    "systemtender_id": test_id,
                     "delete_type": "graceful",
                     "workers_cancelled": 0
                 }
             }
 
             # Don't pass force parameter - should default to False
-            result = delete_breeder(request_data={"breeder_id": test_id})
+            result = delete_systemtender(request_data={"systemtender_id": test_id})
 
             assert result['result'] == 'SUCCESS'
-            mock_service.delete_breeder.assert_called_once_with(test_id, force=False)
+            mock_service.delete_systemtender.assert_called_once_with(test_id, force=False)
 
-    def test_delete_breeder_requires_stop_when_not_forced(self):
+    def test_delete_systemtender_requires_stop_when_not_forced(self):
         """Test that deletion without force requires graceful stop first"""
-        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
             # Simulate error: workers still running and force=False
-            mock_service.delete_breeder.return_value = {
+            mock_service.delete_systemtender.return_value = {
                 "result": "FAILURE",
-                "error": "Breeder has active workers. Call stop_breeder() first or use force=True",
+                "error": "Systemtender has active workers. Call stop_systemtender() first or use force=True",
                 "active_workers": 3
             }
 
-            result = delete_breeder(request_data={"breeder_id": test_id, "force": False})
+            result = delete_systemtender(request_data={"systemtender_id": test_id, "force": False})
 
             assert result['result'] == 'FAILURE'
             assert 'active_workers' in result
 
-    def test_delete_breeder_cancels_worker_jobs(self):
+    def test_delete_systemtender_cancels_worker_jobs(self):
         """Test that delete cancels all worker jobs before dropping database"""
-        with patch('controller.breeder_delete.BreederService') as mock_service_class:
+        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.delete_breeder.return_value = {
+            mock_service.delete_systemtender.return_value = {
                 "result": "SUCCESS",
                 "data": {
-                    "breeder_id": test_id,
+                    "systemtender_id": test_id,
                     "delete_type": "force",
                     "workers_cancelled": 3
                 }
             }
 
-            result = delete_breeder(request_data={"breeder_id": test_id, "force": True})
+            result = delete_systemtender(request_data={"systemtender_id": test_id, "force": True})
 
             assert result['result'] == 'SUCCESS'
             assert result['data']['workers_cancelled'] == 3
 
 
-class TestBreederStop:
-    """Test breeder stop functionality"""
+class TestSystemtenderStop:
+    """Test systemtender stop functionality"""
 
-    def test_stop_breeder_missing_id(self):
-        """Test that missing breeder_id parameter fails"""
-        result = stop_breeder(request_data=None)
+    def test_stop_systemtender_missing_id(self):
+        """Test that missing systemtender_id parameter fails"""
+        result = stop_systemtender(request_data=None)
         assert result['result'] == 'FAILURE'
-        assert 'Missing breeder_id' in result['error']
+        assert 'Missing systemtender_id' in result['error']
 
-    def test_stop_breeder_not_found(self):
-        """Test stopping non-existent breeder"""
-        with patch('controller.breeder_stop.BreederService') as mock_service_class:
+    def test_stop_systemtender_not_found(self):
+        """Test stopping non-existent systemtender"""
+        with patch('controller.systemtender_stop.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.stop_breeder.return_value = {
+            mock_service.stop_systemtender.return_value = {
                 "result": "FAILURE",
-                "error": f"Breeder with ID '{test_id}' not found"
+                "error": f"Systemtender with ID '{test_id}' not found"
             }
 
-            result = stop_breeder(request_data={"breeder_id": test_id})
+            result = stop_systemtender(request_data={"systemtender_id": test_id})
 
             assert result['result'] == 'FAILURE'
             assert 'error' in result
 
-    def test_stop_breeder_success(self):
+    def test_stop_systemtender_success(self):
         """Test successful graceful shutdown request"""
-        with patch('controller.breeder_stop.BreederService') as mock_service_class:
+        with patch('controller.systemtender_stop.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.stop_breeder.return_value = {
+            mock_service.stop_systemtender.return_value = {
                 "result": "SUCCESS",
                 "message": "Graceful shutdown requested. Workers will stop after completing current trials.",
                 "data": {
-                    "breeder_id": test_id,
+                    "systemtender_id": test_id,
                     "shutdown_type": "graceful"
                 }
             }
 
-            result = stop_breeder(request_data={"breeder_id": test_id})
+            result = stop_systemtender(request_data={"systemtender_id": test_id})
 
             assert result['result'] == 'SUCCESS'
             assert result['data']['shutdown_type'] == 'graceful'
-            mock_service.stop_breeder.assert_called_once_with(test_id)
+            mock_service.stop_systemtender.assert_called_once_with(test_id)
 
 
-class TestBreederStart:
-    """Test breeder start/resume functionality"""
+class TestSystemtenderStart:
+    """Test systemtender start/resume functionality"""
 
-    def test_start_breeder_missing_id(self):
-        """Test that missing breeder_id parameter fails"""
-        result = start_breeder(request_data=None)
+    def test_start_systemtender_missing_id(self):
+        """Test that missing systemtender_id parameter fails"""
+        result = start_systemtender(request_data=None)
         assert result['result'] == 'FAILURE'
-        assert 'Missing breeder_id' in result['error']
+        assert 'Missing systemtender_id' in result['error']
 
-    def test_start_breeder_not_found(self):
-        """Test starting non-existent breeder"""
-        with patch('controller.breeder_start.BreederService') as mock_service_class:
+    def test_start_systemtender_not_found(self):
+        """Test starting non-existent systemtender"""
+        with patch('controller.systemtender_start.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.start_breeder.return_value = {
+            mock_service.start_systemtender.return_value = {
                 "result": "FAILURE",
-                "error": f"Breeder with ID '{test_id}' not found"
+                "error": f"Systemtender with ID '{test_id}' not found"
             }
 
-            result = start_breeder(request_data={"breeder_id": test_id})
+            result = start_systemtender(request_data={"systemtender_id": test_id})
 
             assert result['result'] == 'FAILURE'
             assert 'error' in result
 
-    def test_start_breeder_success(self):
-        """Test successful breeder start/resume"""
-        with patch('controller.breeder_start.BreederService') as mock_service_class:
+    def test_start_systemtender_success(self):
+        """Test successful systemtender start/resume"""
+        with patch('controller.systemtender_start.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.start_breeder.return_value = {
+            mock_service.start_systemtender.return_value = {
                 "result": "SUCCESS",
                 "data": {
-                    "breeder_id": test_id,
+                    "systemtender_id": test_id,
                     "workers_started": 3,
                     "status": "ACTIVE"
                 }
             }
 
-            result = start_breeder(request_data={"breeder_id": test_id})
+            result = start_systemtender(request_data={"systemtender_id": test_id})
 
             assert result['result'] == 'SUCCESS'
             assert result['data']['status'] == 'ACTIVE'
             assert result['data']['workers_started'] == 3
-            mock_service.start_breeder.assert_called_once_with(test_id)
+            mock_service.start_systemtender.assert_called_once_with(test_id)
 
-    def test_start_breeder_clears_shutdown_flag(self):
+    def test_start_systemtender_clears_shutdown_flag(self):
         """Test that start clears the shutdown flag"""
-        with patch('controller.breeder_start.BreederService') as mock_service_class:
+        with patch('controller.systemtender_start.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.start_breeder.return_value = {
+            mock_service.start_systemtender.return_value = {
                 "result": "SUCCESS",
                 "data": {
-                    "breeder_id": test_id,
+                    "systemtender_id": test_id,
                     "workers_started": 2,
                     "status": "ACTIVE"
                 }
             }
 
-            result = start_breeder(request_data={"breeder_id": test_id})
+            result = start_systemtender(request_data={"systemtender_id": test_id})
 
             assert result['result'] == 'SUCCESS'
             # Verify the service was called and would clear the flag
-            mock_service.start_breeder.assert_called_once()
+            mock_service.start_systemtender.assert_called_once()
 
 
 class TestWorkerCancellation:
     """Test worker job cancellation functionality"""
 
-    @patch('controller.breeder_service.cancel_job_by_id')
+    @patch('controller.systemtender_service.cancel_job_by_id')
     def test_cancel_job_by_id_success(self, mock_cancel):
         """Test successful job cancellation"""
-        from controller.breeder_service import cancel_job_by_id
+        from controller.systemtender_service import cancel_job_by_id
 
         mock_cancel.return_value = True
 
@@ -421,10 +421,10 @@ class TestWorkerCancellation:
         assert result is True
         mock_cancel.assert_called_once_with("test-job-id")
 
-    @patch('controller.breeder_service.cancel_job_by_id')
+    @patch('controller.systemtender_service.cancel_job_by_id')
     def test_cancel_job_by_id_failure(self, mock_cancel):
         """Test job cancellation failure"""
-        from controller.breeder_service import cancel_job_by_id
+        from controller.systemtender_service import cancel_job_by_id
 
         mock_cancel.return_value = False
 
@@ -432,10 +432,10 @@ class TestWorkerCancellation:
 
         assert result is False
 
-    @patch('controller.breeder_service.Windmill')
+    @patch('controller.systemtender_service.Windmill')
     def test_cancel_job_by_id_handles_windmill_init(self, mock_windmill):
         """Test that Windmill client is initialized and API is called"""
-        from controller.breeder_service import cancel_job_by_id
+        from controller.systemtender_service import cancel_job_by_id
 
         # Mock Windmill client to avoid actual API calls
         mock_client = Mock()
@@ -450,28 +450,28 @@ class TestWorkerCancellation:
 
 
 
-class TestBreederResponseFormats:
+class TestSystemtenderResponseFormats:
     """Test that response formats match API expectations"""
 
-    def test_get_breeder_response_structure(self):
-        """Test that get_breeder returns correct structure"""
-        with patch('controller.breeder_get.BreederService') as mock_service_class:
+    def test_get_systemtender_response_structure(self):
+        """Test that get_systemtender returns correct structure"""
+        with patch('controller.systemtender_get.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
             test_id = str(uuid.uuid4())
-            mock_service.get_breeder.return_value = {
+            mock_service.get_systemtender.return_value = {
                 "result": "SUCCESS",
                 "data": {
                     "id": test_id,
-                    "name": "test-breeder",
+                    "name": "test-systemtender",
                     "status": "active",
                     "createdAt": "2024-01-01T00:00:00Z",
                     "config": {"type": "linux_performance"}
                 }
             }
 
-            result = get_breeder(request_data={"breeder_id": test_id})
+            result = get_systemtender(request_data={"systemtender_id": test_id})
 
             # Command adapter passes through wrapped response
             assert result['result'] == 'SUCCESS'
@@ -482,20 +482,20 @@ class TestBreederResponseFormats:
             assert 'createdAt' in result['data']
             assert 'config' in result['data']
 
-    def test_list_breeders_response_structure(self):
-        """Test that list_breeders returns correct structure"""
-        with patch('controller.breeders_get.BreederService') as mock_service_class:
+    def test_list_systemtenders_response_structure(self):
+        """Test that list_systemtenders returns correct structure"""
+        with patch('controller.systemtenders_get.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
             from datetime import datetime
             now = datetime.now()
 
-            mock_service.list_breeders.return_value = {
+            mock_service.list_systemtenders.return_value = {
                 "result": "SUCCESS",
                 "data": [(str(uuid.uuid4()), "test", now.isoformat())]
             }
 
-            result = list_breeders(request_data=None)
+            result = list_systemtenders(request_data=None)
 
             # Command adapter passes through wrapped response
             assert result['result'] == 'SUCCESS'

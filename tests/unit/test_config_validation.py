@@ -1,20 +1,20 @@
 import pytest
-from controller.config import BreederConfig, BREEDER_CAPABILITIES
+from controller.config import SystemtenderConfig, SYSTEMTENDER_CAPABILITIES
 
 
 class TestTargetTypeValidation:
-    """Test target type validation and breeder compatibility"""
+    """Test target type validation and systemtender compatibility"""
 
-    def test_breeder_capabilities_loaded(self):
-        """Test that breeder capabilities are properly defined"""
-        assert 'linux_performance' in BREEDER_CAPABILITIES
-        assert 'ssh' in BREEDER_CAPABILITIES['linux_performance']['supported_target_types']
+    def test_systemtender_capabilities_loaded(self):
+        """Test that systemtender capabilities are properly defined"""
+        assert 'linux_performance' in SYSTEMTENDER_CAPABILITIES
+        assert 'ssh' in SYSTEMTENDER_CAPABILITIES['linux_performance']['supported_target_types']
 
     def test_valid_target_refs_accepted(self):
         """Test that valid targetRefs configuration passes validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -28,14 +28,14 @@ class TestTargetTypeValidation:
             }
         }
 
-        result = BreederConfig.validate_minimal(config)
+        result = SystemtenderConfig.validate_minimal(config)
         assert result["success"] is True
 
-    def test_unknown_breeder_skips_type_validation(self):
-        """Test that unknown breeder types don't crash validation"""
+    def test_unknown_systemtender_skips_type_validation(self):
+        """Test that unknown systemtender types don't crash validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'future_breeder'},
+            'systemtender': {'type': 'future_systemtender'},
             'objectives': [{'name': 'metric'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -49,7 +49,7 @@ class TestTargetTypeValidation:
             }
         }
 
-        result = BreederConfig.validate_minimal(config)
+        result = SystemtenderConfig.validate_minimal(config)
         assert result["success"] is True
 
 
@@ -59,7 +59,7 @@ class TestConfigVersionValidation:
     def test_missing_config_version_warns(self):
         """Test that missing ConfigVersion defaults to v0.2 and triggers warning"""
         config = {
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -74,7 +74,7 @@ class TestConfigVersionValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "Config version '0.2' is outdated" in error_msg
@@ -84,7 +84,7 @@ class TestConfigVersionValidation:
         """Test that ConfigVersion passes validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -98,7 +98,7 @@ class TestConfigVersionValidation:
             }
         }
 
-        result = BreederConfig.validate_minimal(config)
+        result = SystemtenderConfig.validate_minimal(config)
         assert result["success"] is True
 
 
@@ -109,7 +109,7 @@ class TestV03ConstraintValidation:
         """Test that valid v0.3 integer range constraint passes"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -126,14 +126,14 @@ class TestV03ConstraintValidation:
             }
         }
 
-        result = BreederConfig.validate_minimal(config)
+        result = SystemtenderConfig.validate_minimal(config)
         assert result["success"] is True
 
     def test_v03_categorical_constraint_passes(self):
         """Test that valid v0.3 categorical constraint passes"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -149,14 +149,14 @@ class TestV03ConstraintValidation:
             }
         }
 
-        result = BreederConfig.validate_minimal(config)
+        result = SystemtenderConfig.validate_minimal(config)
         assert result["success"] is True
 
     def test_constraints_not_list_fails(self):
         """Test that dict constraints without 'values' key fail validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -171,7 +171,7 @@ class TestV03ConstraintValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "constraints dict must have 'values' key" in error_msg
@@ -180,7 +180,7 @@ class TestV03ConstraintValidation:
         """Test that lower >= upper fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -195,7 +195,7 @@ class TestV03ConstraintValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "lower" in error_msg.lower()
@@ -206,7 +206,7 @@ class TestV03ConstraintValidation:
         """Test that non-positive step fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -221,7 +221,7 @@ class TestV03ConstraintValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "step" in error_msg.lower()
@@ -231,7 +231,7 @@ class TestV03ConstraintValidation:
         """Test that categorical values with < 2 items fail validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -245,7 +245,7 @@ class TestV03ConstraintValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "values" in error_msg.lower()
@@ -259,7 +259,7 @@ class TestEmptyStringValidation:
         """Test that empty parameter name fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -274,7 +274,7 @@ class TestEmptyStringValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "parameter name cannot be empty" in error_msg.lower()
@@ -283,7 +283,7 @@ class TestEmptyStringValidation:
         """Test that whitespace-only parameter name fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -298,7 +298,7 @@ class TestEmptyStringValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "parameter name cannot be empty" in error_msg.lower() or "whitespace" in error_msg.lower()
@@ -311,7 +311,7 @@ class TestObjectiveReconnaissanceValidation:
         """Test that missing reconnaissance service fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{
                 'name': 'latency',
                 'goal': 'MINIMIZE',
@@ -332,7 +332,7 @@ class TestObjectiveReconnaissanceValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "reconnaissance" in error_msg.lower()
@@ -343,7 +343,7 @@ class TestObjectiveReconnaissanceValidation:
         """Test that empty reconnaissance query fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{
                 'name': 'latency',
                 'goal': 'MINIMIZE',
@@ -365,7 +365,7 @@ class TestObjectiveReconnaissanceValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "query" in error_msg.lower()
@@ -375,7 +375,7 @@ class TestObjectiveReconnaissanceValidation:
         """Test that samples < 1 fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{
                 'name': 'latency',
                 'goal': 'MINIMIZE',
@@ -398,7 +398,7 @@ class TestObjectiveReconnaissanceValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "samples" in error_msg.lower()
@@ -408,7 +408,7 @@ class TestObjectiveReconnaissanceValidation:
         """Test that negative stabilization_seconds fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{
                 'name': 'latency',
                 'goal': 'MINIMIZE',
@@ -431,7 +431,7 @@ class TestObjectiveReconnaissanceValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "stabilization_seconds" in error_msg.lower()
@@ -445,7 +445,7 @@ class TestRunCompletionValidation:
         """Test that iterations.min > iterations.max fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -468,7 +468,7 @@ class TestRunCompletionValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "min" in error_msg.lower()
@@ -483,7 +483,7 @@ class TestGuardrailsValidation:
         """Test that valid guardrails configuration passes"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'latency', 'goal': 'MINIMIZE'}],
             'guardrails': [{
                 'name': 'cpu_usage',
@@ -505,14 +505,14 @@ class TestGuardrailsValidation:
             }
         }
 
-        result = BreederConfig.validate_minimal(config)
+        result = SystemtenderConfig.validate_minimal(config)
         assert result["success"] is True
 
     def test_guardrail_missing_hard_limit_fails(self):
         """Test that missing hard_limit fails validation"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'latency', 'goal': 'MINIMIZE'}],
             'guardrails': [{
                 'name': 'cpu_usage'
@@ -530,7 +530,7 @@ class TestGuardrailsValidation:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "hard_limit" in error_msg
@@ -544,7 +544,7 @@ class TestRollbackStrategiesValidation:
         """Test that valid rollback strategies configuration passes"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'latency', 'goal': 'MINIMIZE'}],
             'rollback_strategies': {
                 'standard': {
@@ -571,14 +571,14 @@ class TestRollbackStrategiesValidation:
             }
         }
 
-        result = BreederConfig.validate_minimal(config)
+        result = SystemtenderConfig.validate_minimal(config)
         assert result["success"] is True
 
     def test_undefined_strategy_reference_passes(self):
         """Test that rollback strategies are validated even without inline targets"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'latency', 'goal': 'MINIMIZE'}],
             'rollback_strategies': {
                 'standard': {
@@ -605,7 +605,7 @@ class TestRollbackStrategiesValidation:
             }
         }
 
-        result = BreederConfig.validate_minimal(config)
+        result = SystemtenderConfig.validate_minimal(config)
         assert result["success"] is True
 
 
@@ -616,7 +616,7 @@ class TestMultipleErrorReporting:
         """Test that multiple validation errors are reported in a single message"""
         config = {
             'meta': {'configVersion': '0.3'},
-            'breeder': {'type': 'linux_performance'},
+            'systemtender': {'type': 'linux_performance'},
             'objectives': [],
             'effectuation': {
                 'targetRefs': ['test-target-1']
@@ -631,7 +631,7 @@ class TestMultipleErrorReporting:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            BreederConfig.validate_minimal(config)
+            SystemtenderConfig.validate_minimal(config)
 
         error_msg = str(exc_info.value)
         assert "[1/" in error_msg or "[2/" in error_msg

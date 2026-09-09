@@ -88,9 +88,9 @@ jobs:
           sys.modules['f.controller.shared.otel_logging'] = fake_controller_otel
 
           # Pre-populate all f.controller.xxx modules BEFORE any imports
-          for module_name in ['config', 'database', 'breeder_service', 'breeder_create',
-                              'breeder_get', 'breeder_delete', 'breeders_get',
-                              'breeder_stop', 'breeder_start',
+          for module_name in ['config', 'database', 'systemtender_service', 'systemtender_create',
+                              'systemtender_get', 'systemtender_delete', 'systemtenders_get',
+                              'systemtender_stop', 'systemtender_start',
                               'credential_create', 'credential_get', 'credential_delete',
                               'credentials_get',
                               'target_create', 'target_get', 'targets_get', 'target_delete']:
@@ -109,26 +109,26 @@ jobs:
           import controller.database as database
           populate_stub_module(sys.modules['f.controller.database'], database)
 
-          import controller.breeder_service as breeder_service
-          populate_stub_module(sys.modules['f.controller.breeder_service'], breeder_service)
+          import controller.systemtender_service as systemtender_service
+          populate_stub_module(sys.modules['f.controller.systemtender_service'], systemtender_service)
 
-          import controller.breeder_create as breeder_create
-          populate_stub_module(sys.modules['f.controller.breeder_create'], breeder_create)
+          import controller.systemtender_create as systemtender_create
+          populate_stub_module(sys.modules['f.controller.systemtender_create'], systemtender_create)
 
-          import controller.breeder_get as breeder_get
-          populate_stub_module(sys.modules['f.controller.breeder_get'], breeder_get)
+          import controller.systemtender_get as systemtender_get
+          populate_stub_module(sys.modules['f.controller.systemtender_get'], systemtender_get)
 
-          import controller.breeder_delete as breeder_delete
-          populate_stub_module(sys.modules['f.controller.breeder_delete'], breeder_delete)
+          import controller.systemtender_delete as systemtender_delete
+          populate_stub_module(sys.modules['f.controller.systemtender_delete'], systemtender_delete)
 
-          import controller.breeders_get as breeders_get
-          populate_stub_module(sys.modules['f.controller.breeders_get'], breeders_get)
+          import controller.systemtenders_get as systemtenders_get
+          populate_stub_module(sys.modules['f.controller.systemtenders_get'], systemtenders_get)
 
-          import controller.breeder_stop as breeder_stop
-          populate_stub_module(sys.modules['f.controller.breeder_stop'], breeder_stop)
+          import controller.systemtender_stop as systemtender_stop
+          populate_stub_module(sys.modules['f.controller.systemtender_stop'], systemtender_stop)
 
-          import controller.breeder_start as breeder_start
-          populate_stub_module(sys.modules['f.controller.breeder_start'], breeder_start)
+          import controller.systemtender_start as systemtender_start
+          populate_stub_module(sys.modules['f.controller.systemtender_start'], systemtender_start)
 
           import controller.credential_create as credential_create
           populate_stub_module(sys.modules['f.controller.credential_create'], credential_create)
@@ -156,14 +156,14 @@ jobs:
 
           # Test imports
           from controller.config import DatabaseConfig
-          from controller.breeder_service import BreederService
+          from controller.systemtender_service import SystemtenderService
           from controller.database import execute_query, execute_ddl_query
-          from controller.breeder_create import main as create_breeder
-          from controller.breeder_get import main as get_breeder
-          from controller.breeder_delete import main as delete_breeder
-          from controller.breeders_get import main as list_breeders
-          from controller.breeder_stop import main as stop_breeder
-          from controller.breeder_start import main as start_breeder
+          from controller.systemtender_create import main as create_systemtender
+          from controller.systemtender_get import main as get_systemtender
+          from controller.systemtender_delete import main as delete_systemtender
+          from controller.systemtenders_get import main as list_systemtenders
+          from controller.systemtender_stop import main as stop_systemtender
+          from controller.systemtender_start import main as start_systemtender
           from controller.target_create import main as create_target
           from controller.target_get import main as get_target
 
@@ -203,12 +203,12 @@ jobs:
           execute_ddl_query(admin_config, 'CREATE DATABASE meta_data;')
           print('✓ Created meta_data')
 
-          # Create archive database (needed for breeder databases)
+          # Create archive database (needed for systemtender databases)
           execute_ddl_query(admin_config, 'CREATE DATABASE archive_db;')
           print('✓ Created archive_db')
 
-          # Create a target first (breeder configs now require targetRefs)
-          print('Creating test target for breeder config...')
+          # Create a target first (systemtender configs now require targetRefs)
+          print('Creating test target for systemtender config...')
           target_result = create_target(request_data={
               'name': 'test-target',
               'targetType': 'ssh',
@@ -221,15 +221,15 @@ jobs:
           test_target_id = target_result['data']['id']
           print(f'✓ Created test target: {test_target_id}')
 
-          # Test 1: Create breeder (tests schema creation + data insertion)
-          print('Testing breeder creation (schema + data)...')
-          breeder_config = {
-              'name': 'test-breeder',
+          # Test 1: Create systemtender (tests schema creation + data insertion)
+          print('Testing systemtender creation (schema + data)...')
+          systemtender_config = {
+              'name': 'test-systemtender',
               'config': {
                   'meta': {
                       'configVersion': '0.3'
                   },
-                  'breeder': {
+                  'systemtender': {
                       'type': 'linux_performance'
                   },
                   'run': {
@@ -253,16 +253,16 @@ jobs:
               }
           }
 
-          result = create_breeder(request_data=breeder_config)
+          result = create_systemtender(request_data=systemtender_config)
           assert result['result'] == 'SUCCESS', f'Create failed: {result}'
-          breeder_id = result['data']['id']
-          print(f'✓ Created breeder with schema + data: {breeder_id}')
+          systemtender_id = result['data']['id']
+          print(f'✓ Created systemtender with schema + data: {systemtender_id}')
 
           # Test 1.5: Verify archive database was created
           print('Testing archive database creation...')
           import uuid
-          breeder_uuid_suffix = breeder_id.replace('-', '_')
-          expected_archive_db_name = f'breeder_{breeder_uuid_suffix}'
+          systemtender_uuid_suffix = systemtender_id.replace('-', '_')
+          expected_archive_db_name = f'systemtender_{systemtender_uuid_suffix}'
 
           # Check if the archive database exists
           check_db_query = f\"SELECT datname FROM pg_database WHERE datname = '{expected_archive_db_name}';\"
@@ -273,114 +273,114 @@ jobs:
           # by testing that we can connect to it (it would fail if it doesn't exist)
           print(f'✓ Archive database {expected_archive_db_name} was created')
 
-          # Test 2: Get breeder (tests data retrieval)
-          print('Testing breeder retrieval...')
-          result = get_breeder(request_data=dict(breeder_id=breeder_id))
+          # Test 2: Get systemtender (tests data retrieval)
+          print('Testing systemtender retrieval...')
+          result = get_systemtender(request_data=dict(systemtender_id=systemtender_id))
           # Command adapter returns wrapped response
           assert result['result'] == 'SUCCESS', f'Get failed: {result}'
-          assert result['data']['id'] == breeder_id
-          print('✓ Retrieved breeder data')
+          assert result['data']['id'] == systemtender_id
+          print('✓ Retrieved systemtender data')
 
-          # Test 3: Create another breeder (tests schema is reused)
-          print('Testing second breeder creation...')
-          breeder_config_2 = breeder_config.copy()
-          breeder_config_2['name'] = 'test-breeder-2'
-          result = create_breeder(request_data=breeder_config_2)
+          # Test 3: Create another systemtender (tests schema is reused)
+          print('Testing second systemtender creation...')
+          systemtender_config_2 = systemtender_config.copy()
+          systemtender_config_2['name'] = 'test-systemtender-2'
+          result = create_systemtender(request_data=systemtender_config_2)
           assert result['result'] == 'SUCCESS', f'Create 2 failed: {result}'
-          breeder_id_2 = result['data']['id']
-          print(f'✓ Created second breeder: {breeder_id_2}')
+          systemtender_id_2 = result['data']['id']
+          print(f'✓ Created second systemtender: {systemtender_id_2}')
 
-          # Test 4: List breeders (tests listing with multiple records)
-          print('Testing breeder listing...')
-          result = list_breeders(request_data=None)
+          # Test 4: List systemtenders (tests listing with multiple records)
+          print('Testing systemtender listing...')
+          result = list_systemtenders(request_data=None)
           # Command adapter returns wrapped response
           assert result['result'] == 'SUCCESS', f'List failed: {result}'
           assert isinstance(result['data'], list), f'List data is not a list: {result}'
-          breeders_list = result['data']
-          assert len(breeders_list) >= 2, f'Expected >=2 breeders, got {len(breeders_list)}'
-          print(f'✓ Found {len(breeders_list)} breeder(s)')
+          systemtenders_list = result['data']
+          assert len(systemtenders_list) >= 2, f'Expected >=2 systemtenders, got {len(systemtenders_list)}'
+          print(f'✓ Found {len(systemtenders_list)} systemtender(s)')
 
-          # Test 5: Delete breeder (tests deletion logic with force=True for active workers)
-          print('Testing breeder deletion with force=true...')
-          result = delete_breeder(request_data=dict(breeder_id=breeder_id, force=True))
+          # Test 5: Delete systemtender (tests deletion logic with force=True for active workers)
+          print('Testing systemtender deletion with force=true...')
+          result = delete_systemtender(request_data=dict(systemtender_id=systemtender_id, force=True))
           assert result['result'] == 'SUCCESS', f'Delete failed: {result}'
-          print('✓ Deleted breeder')
+          print('✓ Deleted systemtender')
 
           # Test 6: Verify deletion (tests get after delete)
-          print('Testing deleted breeder retrieval...')
-          result = get_breeder(request_data=dict(breeder_id=breeder_id))
-          assert result['result'] == 'FAILURE', 'Should not find deleted breeder'
+          print('Testing deleted systemtender retrieval...')
+          result = get_systemtender(request_data=dict(systemtender_id=systemtender_id))
+          assert result['result'] == 'FAILURE', 'Should not find deleted systemtender'
           print('✓ Verified deletion')
 
-          # Test 6.5: Test getting completely non-existent breeder
-          print('Testing non-existent breeder retrieval...')
+          # Test 6.5: Test getting completely non-existent systemtender
+          print('Testing non-existent systemtender retrieval...')
           fake_id = '00000000-0000-4000-8000-000000000000'
-          result = get_breeder(request_data=dict(breeder_id=fake_id))
-          assert result['result'] == 'FAILURE', f'Should not find non-existent breeder, got: {result}'
-          print('✓ Non-existent breeder properly rejected')
+          result = get_systemtender(request_data=dict(systemtender_id=fake_id))
+          assert result['result'] == 'FAILURE', f'Should not find non-existent systemtender, got: {result}'
+          print('✓ Non-existent systemtender properly rejected')
 
           # Test 7: Verify list updated (tests list after deletion)
-          print('Testing breeder listing after deletion...')
-          result = list_breeders(request_data=None)
+          print('Testing systemtender listing after deletion...')
+          result = list_systemtenders(request_data=None)
           # Command adapter returns wrapped response
           assert result['result'] == 'SUCCESS', f'List failed: {result}'
           assert isinstance(result['data'], list), f'List data is not a list: {result}'
-          breeders_list = result['data']
-          assert len(breeders_list) >= 1, 'Should have 1 breeder left'
-          print(f'✓ Found {len(breeders_list)} breeder(s) after deletion')
+          systemtenders_list = result['data']
+          assert len(systemtenders_list) >= 1, 'Should have 1 systemtender left'
+          print(f'✓ Found {len(systemtenders_list)} systemtender(s) after deletion')
 
-          # Test 8: Test breeder stop functionality
-          print('Testing breeder stop (sets shutdown flag)...')
-          result = stop_breeder(request_data=dict(breeder_id=breeder_id_2))
+          # Test 8: Test systemtender stop functionality
+          print('Testing systemtender stop (sets shutdown flag)...')
+          result = stop_systemtender(request_data=dict(systemtender_id=systemtender_id_2))
           assert result['result'] == 'SUCCESS', f'Stop failed: {result}'
           assert result['data']['shutdown_type'] == 'graceful'
-          print(f'✓ Stop requested for breeder: {breeder_id_2}')
+          print(f'✓ Stop requested for systemtender: {systemtender_id_2}')
 
-          # Test 9: Test breeder start functionality
-          print('Testing breeder start (clears shutdown flag)...')
-          result = start_breeder(request_data=dict(breeder_id=breeder_id_2))
+          # Test 9: Test systemtender start functionality
+          print('Testing systemtender start (clears shutdown flag)...')
+          result = start_systemtender(request_data=dict(systemtender_id=systemtender_id_2))
           assert result['result'] == 'SUCCESS', f'Start failed: {result}'
           assert result['data']['status'] == 'ACTIVE'
-          print(f'✓ Started breeder: {breeder_id_2}')
+          print(f'✓ Started systemtender: {systemtender_id_2}')
 
           # Test 10: Test delete with force=true parameter
-          print('Testing breeder delete with force=true...')
-          breeder_config_3 = breeder_config.copy()
-          breeder_config_3['name'] = 'test-breeder-3'
-          result = create_breeder(request_data=breeder_config_3)
+          print('Testing systemtender delete with force=true...')
+          systemtender_config_3 = systemtender_config.copy()
+          systemtender_config_3['name'] = 'test-systemtender-3'
+          result = create_systemtender(request_data=systemtender_config_3)
           assert result['result'] == 'SUCCESS', f'Create 3 failed: {result}'
-          breeder_id_3 = result['data']['id']
-          print(f'✓ Created third breeder for force delete test: {breeder_id_3}')
+          systemtender_id_3 = result['data']['id']
+          print(f'✓ Created third systemtender for force delete test: {systemtender_id_3}')
 
           # Delete with force=true
-          result = delete_breeder(request_data=dict(breeder_id=breeder_id_3, force=True))
+          result = delete_systemtender(request_data=dict(systemtender_id=systemtender_id_3, force=True))
           assert result['result'] == 'SUCCESS', f'Force delete failed: {result}'
           assert result['data']['delete_type'] == 'force'
-          print('✓ Force deleted breeder')
+          print('✓ Force deleted systemtender')
 
           # Test 11: Test delete with force=false (safe mode)
-          print('Testing breeder delete with force=false (safe mode)...')
-          breeder_config_4 = breeder_config.copy()
-          breeder_config_4['name'] = 'test-breeder-4'
-          result = create_breeder(request_data=breeder_config_4)
+          print('Testing systemtender delete with force=false (safe mode)...')
+          systemtender_config_4 = systemtender_config.copy()
+          systemtender_config_4['name'] = 'test-systemtender-4'
+          result = create_systemtender(request_data=systemtender_config_4)
           assert result['result'] == 'SUCCESS', f'Create 4 failed: {result}'
-          breeder_id_4 = result['data']['id']
-          print(f'✓ Created fourth breeder for safe delete test: {breeder_id_4}')
+          systemtender_id_4 = result['data']['id']
+          print(f'✓ Created fourth systemtender for safe delete test: {systemtender_id_4}')
 
           # Delete with force=false should fail (has active workers)
-          result = delete_breeder(request_data=dict(breeder_id=breeder_id_4, force=False))
+          result = delete_systemtender(request_data=dict(systemtender_id=systemtender_id_4, force=False))
           # This will succeed in our test environment since workers don't actually run
           # but the code path is validated
           print(f'✓ Safe delete behavior validated: {result[\"result\"]}')
 
           # Cleanup
           print('Cleaning up test data...')
-          delete_breeder(request_data=dict(breeder_id=breeder_id_2, force=True))
-          delete_breeder(request_data=dict(breeder_id=breeder_id_4, force=True))
-          print('✓ Cleaned up test breeders')
+          delete_systemtender(request_data=dict(systemtender_id=systemtender_id_2, force=True))
+          delete_systemtender(request_data=dict(systemtender_id=systemtender_id_4, force=True))
+          print('✓ Cleaned up test systemtenders')
 
           print('')
-          print('ALL BREEDER TESTS PASSED ✅')
+          print('ALL SYSTEMTENDER TESTS PASSED ✅')
           print('Schema creation, data insertion, retrieval, listing, and deletion all work!')
           "
 
@@ -409,7 +409,7 @@ jobs:
           sys.modules['optuna'] = MagicMock()
           sys.modules['optuna.storages'] = MagicMock()
 
-          # Create stub modules using FakeControllerModule class (like breeder tests)
+          # Create stub modules using FakeControllerModule class (like systemtender tests)
           class FakeControllerModule:
               def __init__(self):
                   self.__path__ = []
@@ -434,9 +434,9 @@ jobs:
           sys.modules['f.controller.shared.otel_logging'] = fake_controller_otel
 
           # Pre-populate all f.controller.xxx modules BEFORE any imports
-          for module_name in ['config', 'database', 'breeder_service', 'breeder_create',
-                              'breeder_get', 'breeder_delete', 'breeders_get',
-                              'breeder_stop', 'breeder_start',
+          for module_name in ['config', 'database', 'systemtender_service', 'systemtender_create',
+                              'systemtender_get', 'systemtender_delete', 'systemtenders_get',
+                              'systemtender_stop', 'systemtender_start',
                               'credential_create', 'credential_get', 'credential_delete',
                               'credentials_get',
                               'target_create', 'target_get', 'targets_get', 'target_delete']:
@@ -456,26 +456,26 @@ jobs:
           import controller.database as database
           populate_stub_module(sys.modules['f.controller.database'], database)
 
-          import controller.breeder_service as breeder_service
-          populate_stub_module(sys.modules['f.controller.breeder_service'], breeder_service)
+          import controller.systemtender_service as systemtender_service
+          populate_stub_module(sys.modules['f.controller.systemtender_service'], systemtender_service)
 
-          import controller.breeder_create as breeder_create
-          populate_stub_module(sys.modules['f.controller.breeder_create'], breeder_create)
+          import controller.systemtender_create as systemtender_create
+          populate_stub_module(sys.modules['f.controller.systemtender_create'], systemtender_create)
 
-          import controller.breeder_get as breeder_get
-          populate_stub_module(sys.modules['f.controller.breeder_get'], breeder_get)
+          import controller.systemtender_get as systemtender_get
+          populate_stub_module(sys.modules['f.controller.systemtender_get'], systemtender_get)
 
-          import controller.breeder_delete as breeder_delete
-          populate_stub_module(sys.modules['f.controller.breeder_delete'], breeder_delete)
+          import controller.systemtender_delete as systemtender_delete
+          populate_stub_module(sys.modules['f.controller.systemtender_delete'], systemtender_delete)
 
-          import controller.breeders_get as breeders_get
-          populate_stub_module(sys.modules['f.controller.breeders_get'], breeders_get)
+          import controller.systemtenders_get as systemtenders_get
+          populate_stub_module(sys.modules['f.controller.systemtenders_get'], systemtenders_get)
 
-          import controller.breeder_stop as breeder_stop
-          populate_stub_module(sys.modules['f.controller.breeder_stop'], breeder_stop)
+          import controller.systemtender_stop as systemtender_stop
+          populate_stub_module(sys.modules['f.controller.systemtender_stop'], systemtender_stop)
 
-          import controller.breeder_start as breeder_start
-          populate_stub_module(sys.modules['f.controller.breeder_start'], breeder_start)
+          import controller.systemtender_start as systemtender_start
+          populate_stub_module(sys.modules['f.controller.systemtender_start'], systemtender_start)
 
           import controller.credential_create as credential_create
           populate_stub_module(sys.modules['f.controller.credential_create'], credential_create)
