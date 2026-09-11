@@ -190,6 +190,8 @@ class MetadataDatabaseRepository:
         self.systemtender_table_name = 'systemtender_meta_data'
         self.credentials_table_name = 'credentials'
         self.targets_table_name = 'targets'
+        self.steerwishes_table_name = 'steerwishes'
+        self.steerwish_events_table_name = 'steerwish_events'
 
     def _get_db_config(self):
         """Get database config with metadata database name"""
@@ -359,6 +361,123 @@ class MetadataDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Deleted credential catalog entry: {credential_id}")
     
+    def create_steerwish_tables(self):
+        """Create the steerwish registry + lifecycle event tables.
+
+        The wish OBJECT and its lifecycle live here (controller-owned);
+        all steering CALCULATION lives in causal, keyed by wish id.
+        State is never stored - it derives from the latest event.
+        """
+        db_config = self._get_db_config()
+
+        query = f"""
+        CREATE TABLE IF NOT EXISTS {self.steerwishes_table_name}
+        (
+        id uuid PRIMARY KEY,
+        outcome VARCHAR(255) NOT NULL,
+        band JSONB NOT NULL,
+        limits JSONB,
+        budget INTEGER,
+        regime VARCHAR(50) NOT NULL DEFAULT 'standing',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+        execute_query(db_config, query)
+
+        query = f"""
+        CREATE TABLE IF NOT EXISTS {self.steerwish_events_table_name}
+        (
+        id SERIAL PRIMARY KEY,
+        wish_id uuid NOT NULL REFERENCES {self.steerwishes_table_name}(id) ON DELETE CASCADE,
+        event_type VARCHAR(50) NOT NULL,
+        detail TEXT,
+        at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_steerwish_events_wish
+        ON {self.steerwish_events_table_name}(wish_id, at);
+        """
+        execute_query(db_config, query)
+        logger.info("Ensured steerwish tables exist")
+
+    def insert_steerwish(self, wish_id, outcome, band, limits, budget, regime):
+        """Insert a declared steerwish (the 'declared' event is appended by the caller)"""
+        db_config = self._get_db_config()
+        band_json = "'" + json.dumps(band).replace("'", "''") + "'"
+        limits_json = "'" + json.dumps(limits).replace("'", "''") + "'::jsonb" if limits else 'NULL'
+        budget_sql = str(int(budget)) if budget is not None else 'NULL'
+        outcome_sql = outcome.replace("'", "''")
+        regime_sql = regime.replace("'", "''")
+
+        query = f"""
+        INSERT INTO {self.steerwishes_table_name}
+        (id, outcome, band, limits, budget, regime)
+        VALUES('{wish_id}', '{outcome_sql}', {band_json}::jsonb, {limits_json}, {budget_sql}, '{regime_sql}');
+        """
+        execute_query(db_config, query)
+        logger.info(f"Inserted steerwish {wish_id} for outcome: {outcome}")
+
+    def fetch_steerwish_by_id(self, wish_id):
+        """Fetch one steerwish row with its derived state (latest event)"""
+        db_config = self._get_db_config()
+        wish_id_sql = str(wish_id).replace("'", "''")
+
+        query = f"""
+        SELECT w.id, w.outcome, w.band, w.limits, w.budget, w.regime, w.created_at,
+               COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
+                         WHERE e.wish_id = w.id
+                         ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state
+        FROM {self.steerwishes_table_name} w
+        WHERE w.id = '{wish_id_sql}';
+        """
+
+        result = execute_query(db_config, query, with_result=True)
+        return result[0] if result else None
+
+    def fetch_steerwishes_list(self):
+        """Fetch all steerwishes with derived state, newest first"""
+        db_config = self._get_db_config()
+
+        query = f"""
+        SELECT w.id, w.outcome, w.band, w.limits, w.budget, w.regime, w.created_at,
+               COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
+                         WHERE e.wish_id = w.id
+                         ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state
+        FROM {self.steerwishes_table_name} w
+        ORDER BY w.created_at DESC;
+        """
+
+        result = execute_query(db_config, query, with_result=True)
+        return result if result else []
+
+    def insert_steerwish_event(self, wish_id, event_type, detail=None):
+        """Append a lifecycle event to a wish"""
+        db_config = self._get_db_config()
+        wish_id_sql = str(wish_id).replace("'", "''")
+        event_type_sql = event_type.replace("'", "''")
+        detail_sql = "'" + str(detail).replace("'", "''") + "'" if detail is not None else 'NULL'
+
+        query = f"""
+        INSERT INTO {self.steerwish_events_table_name}
+        (wish_id, event_type, detail)
+        VALUES('{wish_id_sql}', '{event_type_sql}', {detail_sql});
+        """
+        execute_query(db_config, query)
+
+    def fetch_steerwish_events(self, wish_id):
+        """Fetch a wish's lifecycle events, oldest first"""
+        db_config = self._get_db_config()
+        wish_id_sql = str(wish_id).replace("'", "''")
+
+        query = f"""
+        SELECT event_type, at, detail
+        FROM {self.steerwish_events_table_name}
+        WHERE wish_id = '{wish_id_sql}'
+        ORDER BY at ASC, id ASC;
+        """
+
+        result = execute_query(db_config, query, with_result=True)
+        return result if result else []
+
     def create_targets_table(self):
         """Create the targets catalog table"""
         db_config = self._get_db_config()
