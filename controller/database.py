@@ -438,10 +438,11 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT w.id, w.outcome, w.band, w.limits, w.budget, w.regime, w.created_at,
+        SELECT w.id, w.outcome,
                COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
                          WHERE e.wish_id = w.id
-                         ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state
+                         ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state,
+               w.created_at
         FROM {self.steerwishes_table_name} w
         ORDER BY w.created_at DESC;
         """
