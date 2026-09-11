@@ -225,6 +225,7 @@ class TestSteerwishService:
                           return_value=_wish_row()), \
              patch.object(service.repo, 'fetch_steerwish_events',
                           return_value=_events('declared')), \
+             patch.object(service.repo, 'create_steerwish_tables'), \
              patch.object(service.repo, 'insert_steerwish') as insert, \
              patch.object(service.repo, 'insert_steerwish_event') as event:
             wish = service.create_steerwish(payload)

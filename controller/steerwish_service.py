@@ -32,11 +32,12 @@ class SteerwishService:
     def __init__(self, meta_db_config):
         self.repo = MetadataDatabaseRepository(meta_db_config)
 
-    def ensure_registry(self):
-        """Idempotent: registry tables exist before any wish operation.
+    def _ensure_registry(self):
+        """Idempotent: registry tables exist before the first DB touch.
 
-        Mirrors the targets/credentials pattern - every entry point
-        ensures its own schema (CREATE TABLE IF NOT EXISTS).
+        Mirrors the targets/credentials pattern - schema is ensured at
+        the point of use (CREATE TABLE IF NOT EXISTS), after entry
+        validation, so malformed wishes never reach the database.
         """
         self.repo.create_steerwish_tables()
 
@@ -75,6 +76,7 @@ class SteerwishService:
             raise SteerwishValidationError('limits must be an object (exclude, maxChange)')
 
         wish_id = str(uuid.uuid4())
+        self._ensure_registry()
         self.repo.insert_steerwish(
             wish_id=wish_id,
             outcome=outcome.strip(),
@@ -93,6 +95,7 @@ class SteerwishService:
 
     def get_steerwish(self, wish_id):
         """Fetch one wish with full event history; None if unknown."""
+        self._ensure_registry()
         row = self.repo.fetch_steerwish_by_id(wish_id)
         if row is None:
             return None
@@ -101,6 +104,7 @@ class SteerwishService:
 
     def list_steerwishes(self):
         """Summaries (no event history), newest first."""
+        self._ensure_registry()
         rows = self.repo.fetch_steerwishes_list()
         return [self._format_summary(row) for row in rows]
 
