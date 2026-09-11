@@ -13,6 +13,7 @@ def main(request_data=None):
     """
     try:
         service = SteerwishService(DatabaseConfig.META_DB)
+        service.ensure_registry()
         return service.create_steerwish(request_data)
     except SteerwishValidationError as e:
         return {"result": "FAILURE", "error": str(e)}
