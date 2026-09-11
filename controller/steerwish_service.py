@@ -32,6 +32,14 @@ class SteerwishService:
     def __init__(self, meta_db_config):
         self.repo = MetadataDatabaseRepository(meta_db_config)
 
+    def ensure_registry(self):
+        """Idempotent: registry tables exist before any wish operation.
+
+        Mirrors the targets/credentials pattern - every entry point
+        ensures its own schema (CREATE TABLE IF NOT EXISTS).
+        """
+        self.repo.create_steerwish_tables()
+
     def create_steerwish(self, payload):
         """Validate at the door, insert, stamp 'declared', return the wish."""
         payload = payload or {}
