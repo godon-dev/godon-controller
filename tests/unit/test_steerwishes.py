@@ -21,7 +21,7 @@ import pytest
 import sys
 import os
 from datetime import datetime, timezone
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
@@ -227,7 +227,8 @@ class TestSteerwishService:
                           return_value=_events('declared')), \
              patch.object(service.repo, 'create_steerwish_tables'), \
              patch.object(service.repo, 'insert_steerwish') as insert, \
-             patch.object(service.repo, 'insert_steerwish_event') as event:
+             patch.object(service.repo, 'insert_steerwish_event') as event, \
+             patch.object(service, '_ask_causal_to_plan') as ask:
             wish = service.create_steerwish(payload)
 
         args, kwargs = insert.call_args
@@ -235,8 +236,77 @@ class TestSteerwishService:
         assert kwargs['regime'] == 'standing', 'omitted regime defaults to standing'
         event.assert_called_once()
         assert event.call_args[0][1] == 'declared'
+        # the declare flow asks causal to plan, terms riding the request
+        ask.assert_called_once()
+        ask_args = ask.call_args[0]
+        assert ask_args[0] == kwargs['wish_id'], 'the minted wish id rides the ask'
+        assert ask_args[1] == 'chainend.shift'
         assert wish['state'] == 'declared'
         assert wish['budget'] == 2
+
+    def test_create_planned_plants_assignment_row(self):
+        import json as _json
+        service = steerwish_service.SteerwishService(
+            {'database': 'meta_data'}, {'database': 'archive_db'})
+        payload = {
+            'outcome': 'chainend.shift',
+            'band': {'lo': -0.14, 'hi': -0.06, 'target': -0.10},
+        }
+        planned = {
+            'status': 'planned',
+            'moves': [{'sender': 'abc-def', 'param': 'p', 'setting': 1.0}],
+            'predicted': {'value': -0.10, 'bars': 0.02},
+            'range_used': {},
+        }
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = _json.dumps(planned).encode('utf-8')
+        fake_resp.__enter__.return_value = fake_resp
+
+        with patch.object(service.repo, 'fetch_steerwish_by_id',
+                          return_value=_wish_row()), \
+             patch.object(service.repo, 'fetch_steerwish_events',
+                          return_value=_events('declared', 'planned', 'assigned')), \
+             patch.object(service.repo, 'create_steerwish_tables'), \
+             patch.object(service.repo, 'insert_steerwish'), \
+             patch.object(service.repo, 'insert_steerwish_event') as event, \
+             patch.object(service.archive_repo, 'write_wish_assignment') as write_a, \
+             patch('urllib.request.urlopen', return_value=fake_resp):
+            service.create_steerwish(payload)
+
+        # the plan named the dial: the assignment row lands in that
+        # tender's own archive DB, causal's book is the plan's home
+        write_a.assert_called_once()
+        assert write_a.call_args[0][0] == 'systemtender_abc_def'
+        stamped = [c[0][1] for c in event.call_args_list]
+        assert 'planned' in stamped and 'assigned' in stamped
+
+    def test_create_refusal_is_recorded_not_raised(self):
+        import json as _json
+        service = steerwish_service.SteerwishService(
+            {'database': 'meta_data'}, {'database': 'archive_db'})
+        payload = {
+            'outcome': 'chainend.shift',
+            'band': {'lo': -0.14, 'hi': -0.06},
+        }
+        refused = {'status': 'refused',
+                   'reason': 'unmeasured_path', 'detail': 'no curve'}
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = _json.dumps(refused).encode('utf-8')
+        fake_resp.__enter__.return_value = fake_resp
+
+        with patch.object(service.repo, 'fetch_steerwish_by_id',
+                          return_value=_wish_row()), \
+             patch.object(service.repo, 'fetch_steerwish_events',
+                          return_value=_events('declared', 'refused')), \
+             patch.object(service.repo, 'create_steerwish_tables'), \
+             patch.object(service.repo, 'insert_steerwish'), \
+             patch.object(service.repo, 'insert_steerwish_event') as event, \
+             patch('urllib.request.urlopen', return_value=fake_resp):
+            wish = service.create_steerwish(payload)
+
+        stamped = [c[0][1] for c in event.call_args_list]
+        assert 'refused' in stamped, 'a refusal is a book entry, not an error'
+        assert wish['state'] == 'declared'
 
     def test_state_is_latest_event_not_stored(self):
         service, _ = self._service_with_repo(_wish_row(state='landed'),

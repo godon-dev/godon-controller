@@ -16,7 +16,7 @@ def main(request_data=None):
         return {"result": "FAILURE", "error": "Missing wish_id"}
 
     try:
-        service = SteerwishService(DatabaseConfig.META_DB)
+        service = SteerwishService(DatabaseConfig.META_DB, DatabaseConfig.ARCHIVE_DB)
         wish = service.close_steerwish(wish_id)
         if wish is None:
             return {"result": "FAILURE", "error": f"steerwish not found: {wish_id}"}
