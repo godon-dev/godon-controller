@@ -342,3 +342,140 @@ class TestSteerwishService:
     def test_get_unknown_wish_is_none(self):
         service, repo = self._service_with_repo(None, [])
         assert service.get_steerwish(WISH_ID) is None
+
+
+class TestLazyFoldIn:
+    """Reading is asking: get/list mirror causal's book into the registry."""
+
+    BOOK_PAGE = {
+        'wish_id': WISH_ID,
+        'status': 'missed',
+        'instruction': 'remeasure',
+        'events': [
+            {'tsz': 1000.0, 'event': 'planned', 'detail': None},
+            {'tsz': 2000.0, 'event': 'missed',
+             'detail': {'median': -0.17, 'bar': 0.02, 'n': 5}},
+            {'tsz': 2500.0, 'event': 'walk_opened',
+             'detail': {'held': 0.62, 'separated': True}},
+        ],
+    }
+
+    def test_get_mirrors_unseen_book_events(self):
+        service, repo = self._service_with_repo(
+            _wish_row(state='missed'), _events('declared'))
+        with patch.object(service, '_fetch_causal_page',
+                          return_value=self.BOOK_PAGE), \
+                patch.object(repo, 'has_steerwish_event_at',
+                             return_value=False) as seen, \
+                patch.object(repo, 'insert_steerwish_event_at') as mirror:
+            service.get_steerwish(WISH_ID)
+
+        mirrored = [(c[0][1], c[0][3]) for c in mirror.call_args_list]
+        assert ('planned', 1000.0) in mirrored
+        assert ('missed', 2000.0) in mirrored
+        assert ('walk_opened', 2500.0) in mirrored, 'the full story, not just state words'
+        assert seen.call_count == 3
+
+    def test_get_fold_in_dedupes_by_type_and_time(self):
+        service, repo = self._service_with_repo(
+            _wish_row(state='missed'), _events('declared'))
+
+        def already_seen(wid, event, tsz):
+            return event == 'missed'
+
+        with patch.object(service, '_fetch_causal_page',
+                          return_value=self.BOOK_PAGE), \
+                patch.object(repo, 'has_steerwish_event_at',
+                             side_effect=already_seen), \
+                patch.object(repo, 'insert_steerwish_event_at') as mirror:
+            service.get_steerwish(WISH_ID)
+
+        mirrored_types = [c[0][1] for c in mirror.call_args_list]
+        assert mirrored_types == ['planned', 'walk_opened'], 'seen events stay single'
+
+    def test_get_is_silent_when_the_book_is_unreachable(self):
+        service, repo = self._service_with_repo(
+            _wish_row(), _events('declared'))
+        with patch.object(service, '_fetch_causal_page', return_value=None), \
+                patch.object(repo, 'insert_steerwish_event_at') as mirror:
+            wish = service.get_steerwish(WISH_ID)
+
+        mirror.assert_not_called()
+        assert wish['state'] == 'declared', 'stale mirror, no drama'
+
+    def test_list_folds_only_open_wishes(self):
+        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        rows = [
+            ('w-open', 'chainend.shift', 'serving', CREATED_AT),
+            ('w-closed', 'chainend.shift', 'closed', CREATED_AT),
+        ]
+        with patch.object(service.repo, 'fetch_steerwishes_list',
+                          return_value=rows), \
+                patch.object(service, '_fold_in_book') as fold:
+            service.list_steerwishes()
+
+        folded = [c[0][0] for c in fold.call_args_list]
+        assert folded == ['w-open'], 'closed wishes never re-ask'
+
+
+class TestBudgetRidesTheAsk:
+    """The declared round allowance reaches causal — it enforces the
+    outer total, the controller only declares it."""
+
+    def test_create_sends_budget_in_plan_ask(self):
+        import json as _json
+        service = steerwish_service.SteerwishService(
+            {'database': 'meta_data'}, {'database': 'archive_db'})
+        payload = {
+            'outcome': 'chainend.shift',
+            'band': {'lo': -0.14, 'hi': -0.06, 'target': -0.10},
+            'budget': 2,
+        }
+        planned = {
+            'status': 'planned',
+            'moves': [{'sender': 'abc-def', 'param': 'p', 'setting': 1.0}],
+            'predicted': {'value': -0.10, 'bars': 0.02},
+            'range_used': {},
+        }
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = _json.dumps(planned).encode('utf-8')
+        fake_resp.__enter__.return_value = fake_resp
+
+        with patch.object(service.repo, 'fetch_steerwish_by_id',
+                          return_value=_wish_row()), \
+                patch.object(service.repo, 'fetch_steerwish_events',
+                             return_value=_events('declared', 'planned', 'assigned')), \
+                patch.object(service.repo, 'create_steerwish_tables'), \
+                patch.object(service.repo, 'insert_steerwish'), \
+                patch.object(service.repo, 'insert_steerwish_event'), \
+                patch.object(service.archive_repo, 'write_wish_assignment'), \
+                patch('urllib.request.urlopen', return_value=fake_resp) as urlopen:
+            service.create_steerwish(payload)
+
+        body = _json.loads(urlopen.call_args[0][0].data.decode('utf-8'))
+        assert body['budget'] == 2, 'the allowance rides the ask'
+
+    def test_create_without_budget_omits_the_field(self):
+        import json as _json
+        service = steerwish_service.SteerwishService(
+            {'database': 'meta_data'}, {'database': 'archive_db'})
+        payload = {'outcome': 'chainend.shift',
+                   'band': {'lo': -0.14, 'hi': -0.06}}
+        planned = {'status': 'refused', 'reason': 'unmeasured_path',
+                   'detail': 'no curve'}
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = _json.dumps(planned).encode('utf-8')
+        fake_resp.__enter__.return_value = fake_resp
+
+        with patch.object(service.repo, 'fetch_steerwish_by_id',
+                          return_value=_wish_row()), \
+                patch.object(service.repo, 'fetch_steerwish_events',
+                             return_value=_events('declared', 'refused')), \
+                patch.object(service.repo, 'create_steerwish_tables'), \
+                patch.object(service.repo, 'insert_steerwish'), \
+                patch.object(service.repo, 'insert_steerwish_event'), \
+                patch('urllib.request.urlopen', return_value=fake_resp) as urlopen:
+            service.create_steerwish(payload)
+
+        body = _json.loads(urlopen.call_args[0][0].data.decode('utf-8'))
+        assert 'budget' not in body, 'standing wishes carry no cap'
