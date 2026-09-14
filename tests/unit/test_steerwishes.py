@@ -21,7 +21,7 @@ import pytest
 import sys
 import os
 from datetime import datetime, timezone
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
@@ -258,7 +258,7 @@ class TestSteerwishService:
             'predicted': {'value': -0.10, 'bars': 0.02},
             'range_used': {},
         }
-        fake_resp = Mock()
+        fake_resp = MagicMock()
         fake_resp.read.return_value = _json.dumps(planned).encode('utf-8')
         fake_resp.__enter__.return_value = fake_resp
 
@@ -290,7 +290,7 @@ class TestSteerwishService:
         }
         refused = {'status': 'refused',
                    'reason': 'unmeasured_path', 'detail': 'no curve'}
-        fake_resp = Mock()
+        fake_resp = MagicMock()
         fake_resp.read.return_value = _json.dumps(refused).encode('utf-8')
         fake_resp.__enter__.return_value = fake_resp
 
