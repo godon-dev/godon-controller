@@ -409,15 +409,17 @@ class TestLazyFoldIn:
         assert wish['state'] == 'declared', 'stale mirror, no drama'
 
     def test_list_folds_only_open_wishes(self):
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
         rows = [
             ('w-open', 'chainend.shift', 'serving', CREATED_AT),
             ('w-closed', 'chainend.shift', 'closed', CREATED_AT),
         ]
-        with patch.object(service.repo, 'fetch_steerwishes_list',
-                          return_value=rows), \
-                patch.object(service, '_fold_in_book') as fold:
-            service.list_steerwishes()
+        with patch('controller.steerwish_service.MetadataDatabaseRepository') as repo_cls:
+            repo = repo_cls.return_value
+            repo.fetch_steerwishes_list.return_value = rows
+            service = steerwish_service.SteerwishService({'database': 'meta_data'})
+
+            with patch.object(service, '_fold_in_book') as fold:
+                service.list_steerwishes()
 
         folded = [c[0][0] for c in fold.call_args_list]
         assert folded == ['w-open'], 'closed wishes never re-ask'
