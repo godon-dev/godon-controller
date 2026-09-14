@@ -124,8 +124,9 @@ class SteerwishService:
         row = self.repo.fetch_steerwish_by_id(wish_id)
         if row is None:
             return None
-        self._fold_in_book(wish_id)
-        row = self.repo.fetch_steerwish_by_id(wish_id)
+        if self._fold_in_book(wish_id) > 0:
+            # the mirror moved: the derived state may have moved with it
+            row = self.repo.fetch_steerwish_by_id(wish_id)
         events = self.repo.fetch_steerwish_events(wish_id)
         return self._format_wish(row, events)
 
@@ -180,10 +181,12 @@ class SteerwishService:
     def _fold_in_book(self, wish_id):
         """Mirror every book event the registry has not seen, stamped at
         the book's own time. The book is the truth; this copy is late
-        but complete. Idempotent per event (type + timestamp dedupe)."""
+        but complete. Idempotent per event (type + timestamp dedupe).
+        Returns how many events were mirrored."""
         page = self._fetch_causal_page(wish_id)
         if not page:
-            return
+            return 0
+        mirrored = 0
         for e in page.get('events') or []:
             tsz = e.get('tsz')
             event = e.get('event')
@@ -194,8 +197,10 @@ class SteerwishService:
                     continue
                 detail = json.dumps({'at': tsz, 'book': e.get('detail')})
                 self.repo.insert_steerwish_event_at(wish_id, event, detail, tsz)
+                mirrored += 1
             except Exception as ex:
                 logger.debug(f"Wish {wish_id}: fold-in of {event} skipped: {ex}")
+        return mirrored
 
     def _ask_causal_to_plan(self, wish_id, outcome, band, limits, budget=None):
         plan_request = {

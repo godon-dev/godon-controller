@@ -50,6 +50,16 @@ def _wish_row(state='declared'):
     )
 
 
+def _service_with_repo(wish_row, events):
+    """A SteerwishService bound to a stubbed registry repo."""
+    with patch('controller.steerwish_service.MetadataDatabaseRepository') as repo_cls:
+        repo = repo_cls.return_value
+        repo.fetch_steerwish_by_id.return_value = wish_row
+        repo.fetch_steerwish_events.return_value = events
+        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+    return service, repo
+
+
 def _events(*kinds):
     base = datetime(2026, 9, 10, 10, 30, 0, tzinfo=timezone.utc)
     rows = []
@@ -205,12 +215,7 @@ class TestSteerwishService:
     """Service logic against a stubbed registry (state derives from events)."""
 
     def _service_with_repo(self, wish_row, events):
-        with patch('controller.steerwish_service.MetadataDatabaseRepository') as repo_cls:
-            repo = repo_cls.return_value
-            repo.fetch_steerwish_by_id.return_value = wish_row
-            repo.fetch_steerwish_events.return_value = events
-            service = steerwish_service.SteerwishService({'database': 'meta_data'})
-        return service, repo
+        return _service_with_repo(wish_row, events)
 
     def test_create_inserts_and_stamps_declared(self):
         service = steerwish_service.SteerwishService({'database': 'meta_data'})
@@ -361,7 +366,7 @@ class TestLazyFoldIn:
     }
 
     def test_get_mirrors_unseen_book_events(self):
-        service, repo = self._service_with_repo(
+        service, repo = _service_with_repo(
             _wish_row(state='missed'), _events('declared'))
         with patch.object(service, '_fetch_causal_page',
                           return_value=self.BOOK_PAGE), \
@@ -377,7 +382,7 @@ class TestLazyFoldIn:
         assert seen.call_count == 3
 
     def test_get_fold_in_dedupes_by_type_and_time(self):
-        service, repo = self._service_with_repo(
+        service, repo = _service_with_repo(
             _wish_row(state='missed'), _events('declared'))
 
         def already_seen(wid, event, tsz):
@@ -394,7 +399,7 @@ class TestLazyFoldIn:
         assert mirrored_types == ['planned', 'walk_opened'], 'seen events stay single'
 
     def test_get_is_silent_when_the_book_is_unreachable(self):
-        service, repo = self._service_with_repo(
+        service, repo = _service_with_repo(
             _wish_row(), _events('declared'))
         with patch.object(service, '_fetch_causal_page', return_value=None), \
                 patch.object(repo, 'insert_steerwish_event_at') as mirror:
@@ -452,7 +457,8 @@ class TestBudgetRidesTheAsk:
                 patch('urllib.request.urlopen', return_value=fake_resp) as urlopen:
             service.create_steerwish(payload)
 
-        body = _json.loads(urlopen.call_args[0][0].data.decode('utf-8'))
+        ask_req = urlopen.call_args_list[0][0][0]
+        body = _json.loads(ask_req.data.decode('utf-8'))
         assert body['budget'] == 2, 'the allowance rides the ask'
 
     def test_create_without_budget_omits_the_field(self):
@@ -477,5 +483,6 @@ class TestBudgetRidesTheAsk:
                 patch('urllib.request.urlopen', return_value=fake_resp) as urlopen:
             service.create_steerwish(payload)
 
-        body = _json.loads(urlopen.call_args[0][0].data.decode('utf-8'))
+        ask_req = urlopen.call_args_list[0][0][0]
+        body = _json.loads(ask_req.data.decode('utf-8'))
         assert 'budget' not in body, 'standing wishes carry no cap'
