@@ -1,12 +1,15 @@
+import json
+import os
+import urllib.request
 import uuid
 
-from f.controller.database import MetadataDatabaseRepository
+from f.controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
 from f.controller.shared.otel_logging import get_logger
 
 logger = get_logger(__name__)
 
 VALID_EVENT_TYPES = [
-    'declared', 'planned', 'refused', 'acted',
+    'declared', 'planned', 'refused', 'assigned', 'plan_error', 'acted',
     'landed', 'missed', 're_opened', 'closed',
 ]
 
@@ -29,8 +32,13 @@ class SteerwishService:
     event, derived on read, never stored.
     """
 
-    def __init__(self, meta_db_config):
+    def __init__(self, meta_db_config, archive_db_config=None):
         self.repo = MetadataDatabaseRepository(meta_db_config)
+        # Archive access is optional at construction: get/list never need
+        # it; create (plan ask -> assignment row) and close (release)
+        # degrade to logged warnings when it is absent.
+        self.archive_repo = (
+            ArchiveDatabaseRepository(archive_db_config) if archive_db_config else None)
 
     def _ensure_registry(self):
         """Idempotent: registry tables exist before the first DB touch.
@@ -88,6 +96,13 @@ class SteerwishService:
         self.repo.insert_steerwish_event(wish_id, 'declared', None)
         logger.info(f"Steerwish declared: {wish_id} (outcome: {outcome.strip()})")
 
+        # ── the ask: causal learns the wish and plans it ────────────────
+        # One HTTP ask seeds causal's book (the terms ride the request).
+        # A planned answer names the dial - the controller then plants the
+        # assignment row in the serving tender's archive DB, and the
+        # tender's pulse does the rest.
+        self._ask_causal_to_plan(wish_id, outcome.strip(), band, limits)
+
         wish = self.get_steerwish(wish_id)
         if wish is None:
             raise RuntimeError(f'inserted steerwish vanished: {wish_id}')
@@ -111,8 +126,9 @@ class SteerwishService:
     def close_steerwish(self, wish_id):
         """Append the 'closed' event; idempotent on already-closed wishes.
 
-        Closing is the owner's act - it is what releases the held outcome
-        (release-to-neutral is the tender's exit behavior, not stored here).
+        Closing is the owner's act - it is what releases the held outcome:
+        the assignment row is removed, and the serving tender's pulse
+        reverts the dial to neutral on its next boundary.
         """
         wish = self.get_steerwish(wish_id)
         if wish is None:
@@ -120,7 +136,96 @@ class SteerwishService:
         if wish['state'] == 'closed':
             return wish
         self.repo.insert_steerwish_event(wish_id, 'closed', None)
+        self._unassign_wish(wish)
         return self.get_steerwish(wish_id)
+
+    # ── the plan ask + assignment (the controller asks, never computes) ──
+
+    def _causal_url(self):
+        return os.environ.get(
+            'GODON_CAUSAL_URL', 'http://godon-godon-causal:9091')
+
+    def _ask_causal_to_plan(self, wish_id, outcome, band, limits):
+        plan_request = {
+            'wish_id': wish_id,
+            'outcome': outcome,
+            'band': {
+                'lo': float(band['lo']),
+                'hi': float(band['hi']),
+                **({'target': float(band['target'])}
+                   if band.get('target') is not None else {}),
+            },
+        }
+        if limits:
+            plan_request['limits'] = limits
+        try:
+            req = urllib.request.Request(
+                f"{self._causal_url()}/steer/plan",
+                data=json.dumps(plan_request).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                plan_response = json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            logger.warning(f"Wish {wish_id}: plan ask failed: {e}")
+            self.repo.insert_steerwish_event(
+                wish_id, 'plan_error', json.dumps({'error': str(e)}))
+            return
+
+        if plan_response.get('status') == 'planned':
+            self.repo.insert_steerwish_event(
+                wish_id, 'planned', json.dumps(plan_response))
+            moves = plan_response.get('moves') or []
+            sender = (moves[0] or {}).get('sender') if moves else None
+            if sender and self.archive_repo is not None:
+                db_name = f"systemtender_{str(sender).replace('-', '_')}"
+                try:
+                    self.archive_repo.write_wish_assignment(db_name, wish_id)
+                    self.repo.insert_steerwish_event(
+                        wish_id, 'assigned',
+                        json.dumps({'sender': sender, 'db': db_name}))
+                    logger.info(f"Wish {wish_id} assigned to {db_name}")
+                except Exception as e:
+                    logger.warning(
+                        f"Wish {wish_id}: assignment write failed: {e}")
+                    self.repo.insert_steerwish_event(
+                        wish_id, 'plan_error',
+                        json.dumps({'error': f'assignment write failed: {e}'}))
+            elif sender is None:
+                logger.warning(f"Wish {wish_id}: planned but no move named")
+            else:
+                logger.warning(
+                    f"Wish {wish_id}: planned on {sender} but no archive "
+                    f"config - assignment not written")
+        else:
+            self.repo.insert_steerwish_event(wish_id, 'refused', json.dumps({
+                'reason': plan_response.get('reason'),
+                'detail': plan_response.get('detail'),
+            }))
+            logger.info(
+                f"Wish {wish_id} refused: {plan_response.get('reason')}")
+
+    def _unassign_wish(self, wish):
+        """Close is the owner's release: remove the assignment row so the
+        serving tender's pulse reverts the dial to neutral."""
+        if self.archive_repo is None:
+            return
+        for event in wish.get('events', []):
+            if event.get('type') != 'assigned':
+                continue
+            detail = event.get('detail')
+            try:
+                d = json.loads(detail) if isinstance(detail, str) else detail
+                db_name = (d or {}).get('db')
+            except Exception:
+                db_name = None
+            if db_name:
+                try:
+                    self.archive_repo.delete_wish_assignment(db_name, wish['id'])
+                except Exception as e:
+                    logger.warning(
+                        f"Wish {wish['id']}: assignment removal failed: {e}")
 
     # ── formatting ──────────────────────────────────────────────────
 

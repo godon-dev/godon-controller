@@ -12,7 +12,7 @@ def main(request_data=None):
     the FAILURE error names what was wrong.
     """
     try:
-        service = SteerwishService(DatabaseConfig.META_DB)
+        service = SteerwishService(DatabaseConfig.META_DB, DatabaseConfig.ARCHIVE_DB)
         return service.create_steerwish(request_data)
     except SteerwishValidationError as e:
         return {"result": "FAILURE", "error": str(e)}

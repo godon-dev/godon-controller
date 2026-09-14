@@ -96,6 +96,38 @@ class ArchiveDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Set shutdown_requested={value} in archive DB for systemtender: {systemtender_id}")
 
+    def write_wish_assignment(self, systemtender_db_name, wish_id):
+        """Plant the wish assignment row in the tender's own archive DB -
+        the same DB the shutdown flag lives in. The tender's pulse (its
+        trial boundary) picks the row up and adopts the wish."""
+        db_config = self.base_config.copy()
+        db_config['database'] = systemtender_db_name
+
+        wish_id_sql = str(wish_id).replace("'", "''")
+
+        create_query = (
+            "CREATE TABLE IF NOT EXISTS wish_assignments ("
+            "wish_id TEXT PRIMARY KEY, assigned_tsz DOUBLE PRECISION NOT NULL);"
+        )
+        insert_query = (
+            "INSERT INTO wish_assignments (wish_id, assigned_tsz) "
+            f"VALUES ('{wish_id_sql}', EXTRACT(EPOCH FROM NOW()));"
+        )
+        execute_query(db_config, create_query)
+        execute_query(db_config, insert_query)
+        logger.info(f"Wish assignment written into archive DB {systemtender_db_name} (wish: {wish_id})")
+
+    def delete_wish_assignment(self, systemtender_db_name, wish_id):
+        """Remove the assignment row - the tender's pulse reverts the dial
+        to neutral on the next boundary."""
+        db_config = self.base_config.copy()
+        db_config['database'] = systemtender_db_name
+
+        wish_id_sql = str(wish_id).replace("'", "''")
+        query = f"DELETE FROM wish_assignments WHERE wish_id = '{wish_id_sql}';"
+        execute_query(db_config, query)
+        logger.info(f"Wish assignment removed from archive DB {systemtender_db_name} (wish: {wish_id})")
+
     def get_shutdown_requested(self, systemtender_id):
         """Check if shutdown has been requested for a systemtender"""
         db_config = self.base_config.copy()
