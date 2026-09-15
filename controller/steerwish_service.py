@@ -11,6 +11,9 @@ logger = get_logger(__name__)
 VALID_EVENT_TYPES = [
     'declared', 'planned', 'refused', 'assigned', 'plan_error', 'acted',
     'landed', 'missed', 're_opened', 'closed',
+    # mirrored from causal's book by the lazy fold-in
+    'undecidable', 'replanned', 'released',
+    'walk_opened', 'walk_probe', 'walk_closed',
 ]
 
 
@@ -100,8 +103,9 @@ class SteerwishService:
         # One HTTP ask seeds causal's book (the terms ride the request).
         # A planned answer names the dial - the controller then plants the
         # assignment row in the serving tender's archive DB, and the
-        # tender's pulse does the rest.
-        self._ask_causal_to_plan(wish_id, outcome.strip(), band, limits)
+        # tender's pulse does the rest. The budget rides along: causal
+        # enforces the outer round total, the controller only declares it.
+        self._ask_causal_to_plan(wish_id, outcome.strip(), band, limits, budget)
 
         wish = self.get_steerwish(wish_id)
         if wish is None:
@@ -109,17 +113,31 @@ class SteerwishService:
         return wish
 
     def get_steerwish(self, wish_id):
-        """Fetch one wish with full event history; None if unknown."""
+        """Fetch one wish with full event history; None if unknown.
+
+        Reading is asking: the lazy fold-in pulls causal's page for this
+        wish once and mirrors every book event the registry has not yet
+        seen. The book is the truth; the registry is a late-but-complete
+        mirror — whoever looks triggers the catch-up.
+        """
         self._ensure_registry()
         row = self.repo.fetch_steerwish_by_id(wish_id)
         if row is None:
             return None
+        if self._fold_in_book(wish_id) > 0:
+            # the mirror moved: the derived state may have moved with it
+            row = self.repo.fetch_steerwish_by_id(wish_id)
         events = self.repo.fetch_steerwish_events(wish_id)
         return self._format_wish(row, events)
 
     def list_steerwishes(self):
-        """Summaries (no event history), newest first."""
+        """Summaries (no event history), newest first. The fold-in runs
+        for every open wish — a handful of wishes, a handful of cheap
+        GETs, no timers."""
         self._ensure_registry()
+        for row in self.repo.fetch_steerwishes_list():
+            if row[2] != 'closed':
+                self._fold_in_book(str(row[0]))
         rows = self.repo.fetch_steerwishes_list()
         return [self._format_summary(row) for row in rows]
 
@@ -145,7 +163,46 @@ class SteerwishService:
         return os.environ.get(
             'GODON_CAUSAL_URL', 'http://godon-godon-causal:9091')
 
-    def _ask_causal_to_plan(self, wish_id, outcome, band, limits):
+    # ── the lazy fold-in: reading is asking ───────────────────────────
+
+    def _fetch_causal_page(self, wish_id):
+        """GET the wish's page from causal's book (status, instruction,
+        event tail). Best-effort: None on any failure — the registry
+        then simply stays as stale as it was."""
+        import urllib.request
+        url = f"{self._causal_url()}/steer/plan/{wish_id}"
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                return json.loads(resp.read().decode())
+        except Exception as e:
+            logger.debug(f"Wish {wish_id}: book page fetch skipped: {e}")
+            return None
+
+    def _fold_in_book(self, wish_id):
+        """Mirror every book event the registry has not seen, stamped at
+        the book's own time. The book is the truth; this copy is late
+        but complete. Idempotent per event (type + timestamp dedupe).
+        Returns how many events were mirrored."""
+        page = self._fetch_causal_page(wish_id)
+        if not page:
+            return 0
+        mirrored = 0
+        for e in page.get('events') or []:
+            tsz = e.get('tsz')
+            event = e.get('event')
+            if tsz is None or not event:
+                continue
+            try:
+                if self.repo.has_steerwish_event_at(wish_id, event, tsz):
+                    continue
+                detail = json.dumps({'at': tsz, 'book': e.get('detail')})
+                self.repo.insert_steerwish_event_at(wish_id, event, detail, tsz)
+                mirrored += 1
+            except Exception as ex:
+                logger.debug(f"Wish {wish_id}: fold-in of {event} skipped: {ex}")
+        return mirrored
+
+    def _ask_causal_to_plan(self, wish_id, outcome, band, limits, budget=None):
         plan_request = {
             'wish_id': wish_id,
             'outcome': outcome,
@@ -156,6 +213,8 @@ class SteerwishService:
                    if band.get('target') is not None else {}),
             },
         }
+        if budget is not None:
+            plan_request['budget'] = int(budget)
         if limits:
             plan_request['limits'] = limits
         try:

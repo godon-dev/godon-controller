@@ -457,6 +457,7 @@ class MetadataDatabaseRepository:
         SELECT w.id, w.outcome, w.band, w.limits, w.budget, w.regime, w.created_at,
                COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
                          WHERE e.wish_id = w.id
+                         AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
                          ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state
         FROM {self.steerwishes_table_name} w
         WHERE w.id = '{wish_id_sql}';
@@ -473,6 +474,7 @@ class MetadataDatabaseRepository:
         SELECT w.id, w.outcome,
                COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
                          WHERE e.wish_id = w.id
+                         AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
                          ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state,
                w.created_at
         FROM {self.steerwishes_table_name} w
@@ -510,6 +512,38 @@ class MetadataDatabaseRepository:
 
         result = execute_query(db_config, query, with_result=True)
         return result if result else []
+
+    def insert_steerwish_event_at(self, wish_id, event_type, detail, at_epoch):
+        """Append an event stamped at a book timestamp — the lazy
+        fold-in's write. Mirrored events carry causal's own time so the
+        registry's ordering matches the book's."""
+        db_config = self._get_db_config()
+        wish_id_sql = str(wish_id).replace("'", "''")
+        event_type_sql = str(event_type).replace("'", "''")
+        detail_sql = "'" + str(detail).replace("'", "''") + "'" if detail is not None else 'NULL'
+
+        query = f"""
+        INSERT INTO {self.steerwish_events_table_name}
+        (wish_id, event_type, detail, at)
+        VALUES('{wish_id_sql}', '{event_type_sql}', {detail_sql},
+               TO_TIMESTAMP({float(at_epoch)}));
+        """
+        execute_query(db_config, query)
+
+    def has_steerwish_event_at(self, wish_id, event_type, at_epoch):
+        """The fold-in's dedupe: this book event already mirrored?"""
+        db_config = self._get_db_config()
+        wish_id_sql = str(wish_id).replace("'", "''")
+        event_type_sql = str(event_type).replace("'", "''")
+
+        query = f"""
+        SELECT COUNT(*) FROM {self.steerwish_events_table_name}
+        WHERE wish_id = '{wish_id_sql}'
+        AND event_type = '{event_type_sql}'
+        AND at = TO_TIMESTAMP({float(at_epoch)});
+        """
+        result = execute_query(db_config, query, with_result=True)
+        return bool(result and result[0][0])
 
     def create_targets_table(self):
         """Create the targets catalog table"""
