@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import urllib.request
 import uuid
@@ -70,6 +71,16 @@ class SteerwishService:
             raise SteerwishValidationError('band lo and hi must be numbers')
         if not lo < hi:
             raise SteerwishValidationError('band lo must be below hi')
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            raise SteerwishValidationError('band lo and hi must be finite')
+        target = band.get('target')
+        if target is not None:
+            try:
+                t = float(target)
+            except (TypeError, ValueError):
+                raise SteerwishValidationError('band target must be a number')
+            if not math.isfinite(t):
+                raise SteerwishValidationError('band target must be finite')
 
         budget = payload.get('budget')
         if budget is not None:
@@ -83,8 +94,26 @@ class SteerwishService:
                 f"unknown regime: {regime} (only 'standing' exists today)")
 
         limits = payload.get('limits')
-        if limits is not None and not isinstance(limits, dict):
-            raise SteerwishValidationError('limits must be an object (exclude, maxChange)')
+        if limits is not None:
+            if not isinstance(limits, dict):
+                raise SteerwishValidationError(
+                    'limits must be an object (exclude, maxChange)')
+            exclude = limits.get('exclude')
+            if exclude is not None and (
+                    not isinstance(exclude, list)
+                    or not all(isinstance(p, str) for p in exclude)):
+                raise SteerwishValidationError(
+                    'limits.exclude must be a list of param names')
+            max_change = limits.get('maxChange')
+            if max_change is not None:
+                # (0, 1) exclusive - aligned with the planner's own
+                # plan-time rule, the downstream truth this door mirrors
+                if isinstance(max_change, bool) \
+                        or not isinstance(max_change, (int, float)) \
+                        or not 0.0 < float(max_change) < 1.0:
+                    raise SteerwishValidationError(
+                        'limits.maxChange must be a fraction of a param\'s '
+                        'range from neutral, in (0, 1)')
 
         wish_id = str(uuid.uuid4())
         self._ensure_registry()

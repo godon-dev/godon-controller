@@ -488,3 +488,62 @@ class TestBudgetRidesTheAsk:
         ask_req = urlopen.call_args_list[0][0][0]
         body = _json.loads(ask_req.data.decode('utf-8'))
         assert 'budget' not in body, 'standing wishes carry no cap'
+
+
+class TestDoorValidation:
+    """Wish-shape freedom (2026-09-21): the controller is the door - it
+    owns every check the API surface dropped. These pin the absorbed
+    field-level checks (finiteness, limits shape, maxChange range)."""
+
+    def _service(self):
+        return steerwish_service.SteerwishService({'database': 'meta_data'})
+
+    def _assert_refused(self, payload, fragment):
+        service = self._service()
+        try:
+            service.create_steerwish(payload)
+        except steerwish_service.SteerwishValidationError as e:
+            assert fragment in str(e), f'expected {fragment!r} in {str(e)!r}'
+            return
+        raise AssertionError(f'wish with {fragment!r} must be refused at the door')
+
+    def test_infinite_band_edges_refused(self):
+        self._assert_refused(
+            {'outcome': 'chainend.shift', 'band': {'lo': float('-inf'), 'hi': -0.06}},
+            'finite')
+
+    def test_nan_target_refused(self):
+        self._assert_refused(
+            {'outcome': 'chainend.shift',
+             'band': {'lo': -0.14, 'hi': -0.06, 'target': float('nan')}},
+            'finite')
+
+    def test_exclude_must_be_names(self):
+        self._assert_refused(
+            {'outcome': 'chainend.shift',
+             'band': {'lo': -0.14, 'hi': -0.06},
+             'limits': {'exclude': [7]}},
+            'list of param names')
+
+    def test_max_change_bounds_refused(self):
+        base = {'outcome': 'chainend.shift', 'band': {'lo': -0.14, 'hi': -0.06}}
+        for bad in (0.0, 1.0, 1.5, -0.2, True):
+            self._assert_refused(
+                dict(base, limits={'maxChange': bad}), '(0, 1)')
+
+    def test_max_change_half_range_accepted(self):
+        service = self._service()
+        payload = {
+            'outcome': 'chainend.shift',
+            'band': {'lo': -0.14, 'hi': -0.06},
+            'limits': {'exclude': ['param_1'], 'maxChange': 0.5},
+        }
+        with patch.object(service.repo, 'fetch_steerwish_by_id',
+                          return_value=_wish_row()), \
+             patch.object(service.repo, 'fetch_steerwish_events',
+                          return_value=_events('declared')), \
+             patch.object(service.repo, 'create_steerwish_tables'), \
+             patch.object(service.repo, 'insert_steerwish'), \
+             patch.object(service.repo, 'insert_steerwish_event'):
+            wish = service.create_steerwish(payload)
+        assert wish['state'] == 'declared'
