@@ -99,20 +99,35 @@ class ArchiveDatabaseRepository:
     def read_heartbeat(self, systemtender_db_name):
         """The tender's pulse: (age_secs, beat_interval_secs).
 
-        The tender touches the row every trial boundary and writes its
-        MEASURED beat interval alongside; the age is computed by the
-        database's own clock, so pod skew cannot fake life or death.
-        beat_interval_secs is None until the tender's second beat.
-        Returns None when the row (or the db) is absent.
+        The tender touches the row every beat (its own parallel beater)
+        and writes its declared beat interval alongside; the age is
+        computed by the database's own clock, so pod skew cannot fake
+        life or death. Falls back to an age-only read when the row
+        predates the interval column (rollout-order independent) —
+        interval then reads as None, and the caller uses its fallback
+        window. Returns None when the row (or the db) is absent.
         """
         db_config = self.base_config.copy()
         db_config['database'] = systemtender_db_name
-        rows = execute_query(
-            db_config,
-            "SELECT EXTRACT(EPOCH FROM (now() - updated_at)), "
-            "beat_interval_secs FROM systemtender_state LIMIT 1",
-            with_result=True,
-        )
+        try:
+            rows = execute_query(
+                db_config,
+                "SELECT EXTRACT(EPOCH FROM (now() - updated_at)), "
+                "beat_interval_secs FROM systemtender_state LIMIT 1",
+                with_result=True,
+            )
+        except Exception as e:
+            # a state row born before the interval column: age still
+            # decides, with the caller's fallback window
+            if 'beat_interval_secs' in str(e) and 'does not exist' in str(e):
+                rows = execute_query(
+                    db_config,
+                    "SELECT EXTRACT(EPOCH FROM (now() - updated_at)), NULL "
+                    "FROM systemtender_state LIMIT 1",
+                    with_result=True,
+                )
+            else:
+                raise
         if rows and rows[0][0] is not None:
             interval = float(rows[0][1]) if rows[0][1] is not None else None
             return float(rows[0][0]), interval

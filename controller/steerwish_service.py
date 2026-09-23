@@ -9,15 +9,15 @@ from f.controller.shared.otel_logging import get_logger
 
 logger = get_logger(__name__)
 
-# The stale window derives from the tender's MEASURED beat interval:
+# The stale window derives from the tender's DECLARED beat interval:
 # alive iff age <= BEAT_MULTIPLIER * interval. Three beats of margin
 # covers one slow trial without pretending immortality. The fallback
-# below only serves a tender's first beat (before it has a measured
-# cadence); it errs loud — a false "dead" is a visible refusal, a
-# false "alive" is the old silent void.
+# below serves only a tender's first seconds (before its second beat
+# reports the interval); it errs loud — a false "dead" is a visible
+# refusal, a false "alive" is the old silent void.
 BEAT_MULTIPLIER = 3
 HEARTBEAT_FALLBACK_TTL_SECS = float(
-    os.environ.get('GODON_HEARTBEAT_FALLBACK_TTL_SECS', '300'))
+    os.environ.get('GODON_HEARTBEAT_FALLBACK_TTL_SECS', '60'))
 
 VALID_EVENT_TYPES = [
     'declared', 'planned', 'refused', 'assigned', 'plan_error', 'acted',
