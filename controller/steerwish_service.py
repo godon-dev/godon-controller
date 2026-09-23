@@ -9,6 +9,16 @@ from f.controller.shared.otel_logging import get_logger
 
 logger = get_logger(__name__)
 
+# The stale window derives from the tender's MEASURED beat interval:
+# alive iff age <= BEAT_MULTIPLIER * interval. Three beats of margin
+# covers one slow trial without pretending immortality. The fallback
+# below only serves a tender's first beat (before it has a measured
+# cadence); it errs loud — a false "dead" is a visible refusal, a
+# false "alive" is the old silent void.
+BEAT_MULTIPLIER = 3
+HEARTBEAT_FALLBACK_TTL_SECS = float(
+    os.environ.get('GODON_HEARTBEAT_FALLBACK_TTL_SECS', '300'))
+
 VALID_EVENT_TYPES = [
     'declared', 'planned', 'refused', 'assigned', 'plan_error', 'acted',
     'landed', 'missed', 're_opened', 'closed',
@@ -192,6 +202,42 @@ class SteerwishService:
         return os.environ.get(
             'GODON_CAUSAL_URL', 'http://godon-godon-causal:9091')
 
+    def _sender_alive(self, sender_uuid):
+        """(alive, reason) — is the named sender a breathing house?
+
+        Decided from the tender's OWN state, never the platform: the
+        tender touches its state row on every pulse and writes its
+        measured beat interval; the controller derives the window from
+        that cadence (age <= multiplier * interval), falling back to a
+        fixed window only before the tender's second beat. The registry
+        row alone proves existence, not breath (cell teardown kills
+        workers without walking through delete — flight 9 planted into
+        exactly such a void). The heartbeat read rides the same archive
+        connection the delivery itself uses: one door, one clock (the
+        database's own now()).
+        """
+        db_name = f"systemtender_{str(sender_uuid).replace('-', '_')}"
+        try:
+            rows = self.repo.fetch_meta_data(str(sender_uuid))
+            if not rows:
+                return False, 'unknown tender: not in registry'
+        except Exception as e:
+            return False, f'registry check failed: {e}'
+        try:
+            beat = self.archive_repo.read_heartbeat(db_name)
+        except Exception as e:
+            return False, f'archive db unreachable ({db_name}): {e}'
+        if beat is None:
+            return False, f'no state row in {db_name} (db missing or empty)'
+        age, interval = beat
+        window = (BEAT_MULTIPLIER * interval if interval is not None
+                  else HEARTBEAT_FALLBACK_TTL_SECS)
+        if age <= window:
+            return True, (f'heartbeat {age:.0f}s old '
+                          f'(window {window:.0f}s)')
+        return False, (f'heartbeat stale: last beat {age:.0f}s ago '
+                       f'(window {window:.0f}s)')
+
     # ── the lazy fold-in: reading is asking ───────────────────────────
 
     def _fetch_causal_page(self, wish_id):
@@ -267,19 +313,31 @@ class SteerwishService:
             moves = plan_response.get('moves') or []
             sender = (moves[0] or {}).get('sender') if moves else None
             if sender and self.archive_repo is not None:
-                db_name = f"systemtender_{str(sender).replace('-', '_')}"
-                try:
-                    self.archive_repo.write_wish_assignment(db_name, wish_id)
-                    self.repo.insert_steerwish_event(
-                        wish_id, 'assigned',
-                        json.dumps({'sender': sender, 'db': db_name}))
-                    logger.info(f"Wish {wish_id} assigned to {db_name}")
-                except Exception as e:
-                    logger.warning(
-                        f"Wish {wish_id}: assignment write failed: {e}")
-                    self.repo.insert_steerwish_event(
-                        wish_id, 'plan_error',
-                        json.dumps({'error': f'assignment write failed: {e}'}))
+                # The door check: never plant into a house that is not
+                # breathing. Flight 9 planted into a torn-down cell's db
+                # and the wish died silently; a dead sender now refuses
+                # loudly on the wish instead of vanishing into a void.
+                alive, reason = self._sender_alive(sender)
+                if not alive:
+                    detail = {'error': f'sender {sender} not alive: {reason} '
+                                       '- assignment not planted'}
+                    self.repo.insert_steerwish_event(wish_id, 'plan_error', json.dumps(detail))
+                    logger.warning(f"Wish {wish_id}: sender {sender} not alive "
+                                   f"({reason}) - no note planted")
+                else:
+                    db_name = f"systemtender_{str(sender).replace('-', '_')}"
+                    try:
+                        self.archive_repo.write_wish_assignment(db_name, wish_id)
+                        self.repo.insert_steerwish_event(
+                            wish_id, 'assigned',
+                            json.dumps({'sender': sender, 'db': db_name}))
+                        logger.info(f"Wish {wish_id} assigned to {db_name}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Wish {wish_id}: assignment write failed: {e}")
+                        self.repo.insert_steerwish_event(
+                            wish_id, 'plan_error',
+                            json.dumps({'error': f'assignment write failed: {e}'}))
             elif sender is None:
                 logger.warning(f"Wish {wish_id}: planned but no move named")
             else:

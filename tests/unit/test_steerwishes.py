@@ -274,6 +274,11 @@ class TestSteerwishService:
              patch.object(service.repo, 'create_steerwish_tables'), \
              patch.object(service.repo, 'insert_steerwish'), \
              patch.object(service.repo, 'insert_steerwish_event') as event, \
+             patch.object(service.repo, 'fetch_meta_data',
+                          return_value=[(WISH_ID, 't', CREATED_AT,
+                                         {'worker_job_ids': ['j1']})]), \
+             patch.object(service.archive_repo, 'read_heartbeat',
+                          return_value=(1.0, 10.0)), \
              patch.object(service.archive_repo, 'write_wish_assignment') as write_a, \
              patch('urllib.request.urlopen', return_value=fake_resp):
             service.create_steerwish(payload)
@@ -547,3 +552,115 @@ class TestDoorValidation:
              patch.object(service.repo, 'insert_steerwish_event'):
             wish = service.create_steerwish(payload)
         assert wish['state'] == 'declared'
+
+
+class TestSenderLivenessAtTheDoor:
+    """Never plant into a house that is not breathing.
+
+    Flight 9 wrote an assignment into a torn-down cell's archive db:
+    'assigned' was stamped, the tender never saw anything, and the
+    failure surfaced hours later as archaeology. The door now reads the
+    tender's heartbeat (its own state row's age) and refuses loudly.
+    """
+
+    SENDER = 'abc-def'
+
+    def _service(self, heartbeat=1.0, meta_row='default', hb_error=None):
+        from contextlib import ExitStack
+        import json as _json
+        service = steerwish_service.SteerwishService(
+            {'database': 'meta_data'}, {'database': 'archive_db'})
+        payload = {
+            'outcome': 'chainend.shift',
+            'band': {'lo': -0.14, 'hi': -0.06},
+        }
+        planned = {
+            'status': 'planned',
+            'moves': [{'sender': self.SENDER, 'param': 'p', 'setting': 1.0}],
+        }
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = _json.dumps(planned).encode('utf-8')
+        fake_resp.__enter__.return_value = fake_resp
+
+        if meta_row == 'default':
+            meta_row = [(WISH_ID, 't', CREATED_AT, {'worker_job_ids': ['j1']})]
+        with ExitStack() as stack:
+            for p in [
+                patch.object(service.repo, 'fetch_steerwish_by_id',
+                             return_value=_wish_row()),
+                patch.object(service.repo, 'fetch_steerwish_events',
+                             return_value=_events('declared', 'planned', 'plan_error')),
+                patch.object(service.repo, 'create_steerwish_tables'),
+                patch.object(service.repo, 'insert_steerwish'),
+                patch.object(service.repo, 'insert_steerwish_event'),
+                patch.object(service.repo, 'fetch_meta_data',
+                             return_value=meta_row),
+                patch.object(service.archive_repo, 'write_wish_assignment'),
+                patch('urllib.request.urlopen', return_value=fake_resp),
+            ]:
+                stack.enter_context(p)
+            if hb_error is not None:
+                stack.enter_context(patch.object(
+                    service.archive_repo, 'read_heartbeat',
+                    side_effect=hb_error))
+            else:
+                stack.enter_context(patch.object(
+                    service.archive_repo, 'read_heartbeat',
+                    return_value=heartbeat))
+            event = service.repo.insert_steerwish_event
+            write_a = service.archive_repo.write_wish_assignment
+            service.create_steerwish(payload)
+        return service, event, write_a
+
+    def _stamped(self, event):
+        import json as _json
+        out = []
+        for c in event.call_args_list:
+            if c[0][1] == 'plan_error' and c[0][2]:
+                try:
+                    out.append(_json.loads(c[0][2]).get('error', ''))
+                except Exception:
+                    out.append(str(c[0][2]))
+        return out
+
+    def test_fresh_heartbeat_plants(self):
+        _, event, write_a = self._service(heartbeat=(1.0, 10.0))
+        write_a.assert_called_once()
+        stamped = [c[0][1] for c in event.call_args_list]
+        assert 'assigned' in stamped
+        assert not any('not alive' in e for e in self._stamped(event))
+
+    def test_window_derives_from_measured_cadence(self):
+        # a slow-but-honest cadence widens its own window: 250s is dead
+        # under a 10s cadence (window 30) and alive under a 100s one
+        _, event, write_a = self._service(heartbeat=(250.0, 100.0))
+        write_a.assert_called_once()
+        _, event2, write_a2 = self._service(heartbeat=(250.0, 10.0))
+        write_a2.assert_not_called()
+
+    def test_stale_heartbeat_refused_loudly(self):
+        _, event, write_a = self._service(heartbeat=(99999.0, 10.0))
+        write_a.assert_not_called()
+        errors = self._stamped(event)
+        assert any('not alive' in e and 'heartbeat stale' in e for e in errors), \
+            f'the refusal must name the stale heartbeat: {errors}'
+
+    def test_fallback_window_before_first_measured_beat(self):
+        # interval NULL (no second beat yet): the fixed fallback window
+        _, event, write_a = self._service(heartbeat=(299.0, None))
+        write_a.assert_called_once()
+        _, event2, write_a2 = self._service(heartbeat=(301.0, None))
+        write_a2.assert_not_called()
+
+    def test_unknown_tender_refused(self):
+        # registry returned no row: refused before any heartbeat read
+        _, event, write_a = self._service(meta_row=None, heartbeat=(1.0, 10.0))
+        write_a.assert_not_called()
+        errors = self._stamped(event)
+        assert any('unknown tender' in e for e in errors), errors
+
+    def test_unreachable_archive_refused(self):
+        _, event, write_a = self._service(hb_error=RuntimeError('conn refused'))
+        write_a.assert_not_called()
+        errors = self._stamped(event)
+        assert any('unreachable' in e for e in errors), errors
