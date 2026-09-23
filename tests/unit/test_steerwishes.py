@@ -647,10 +647,71 @@ class TestSenderLivenessAtTheDoor:
 
     def test_fallback_window_before_first_measured_beat(self):
         # interval NULL (no second beat yet): the fixed fallback window
-        _, event, write_a = self._service(heartbeat=(299.0, None))
+        _, event, write_a = self._service(heartbeat=(59.0, None))
         write_a.assert_called_once()
-        _, event2, write_a2 = self._service(heartbeat=(301.0, None))
+        _, event2, write_a2 = self._service(heartbeat=(61.0, None))
         write_a2.assert_not_called()
+
+    def test_age_only_fallback_when_column_missing(self):
+        # a state row born before the interval column: the read falls
+        # back to age-only, and the fallback window decides
+        import json as _json
+        from contextlib import ExitStack
+        service = steerwish_service.SteerwishService(
+            {'database': 'meta_data'}, {'database': 'archive_db'})
+        payload = {
+            'outcome': 'chainend.shift',
+            'band': {'lo': -0.14, 'hi': -0.06},
+        }
+        planned = {
+            'status': 'planned',
+            'moves': [{'sender': self.SENDER, 'param': 'p', 'setting': 1.0}],
+        }
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = _json.dumps(planned).encode('utf-8')
+        fake_resp.__enter__.return_value = fake_resp
+
+        calls = {'heartbeat': 0, 'ageonly': 0}
+
+        def flaky_execute(db_config, query, with_result=False):
+            if 'beat_interval_secs' in query:
+                calls['heartbeat'] += 1
+                if calls['heartbeat'] == 1:
+                    raise Exception('column "beat_interval_secs" does not exist')
+                return [(299.0, 10.0)]
+            if 'NULL' in query:
+                calls['ageonly'] += 1
+                return [(55.0, None)]
+            if 'systemtender_meta_data' in query:
+                return [(WISH_ID, 't', CREATED_AT, {})]
+            return None
+
+        with ExitStack() as stack:
+            for p in [
+                patch.object(service.repo, 'fetch_steerwish_by_id',
+                             return_value=_wish_row()),
+                patch.object(service.repo, 'fetch_steerwish_events',
+                             return_value=_events('declared', 'planned', 'assigned')),
+                patch.object(service.repo, 'create_steerwish_tables'),
+                patch.object(service.repo, 'insert_steerwish'),
+                patch.object(service.repo, 'insert_steerwish_event'),
+                patch.object(service.repo, 'fetch_meta_data',
+                             return_value=[(WISH_ID, 't', CREATED_AT, {})]),
+                patch.object(service.archive_repo, 'write_wish_assignment'),
+                patch('controller.database.execute_query',
+                      side_effect=flaky_execute),
+                patch('urllib.request.urlopen', return_value=fake_resp),
+            ]:
+                stack.enter_context(p)
+            write_a = service.archive_repo.write_wish_assignment
+            event = service.repo.insert_steerwish_event
+            service.create_steerwish(payload)
+
+        assert calls['heartbeat'] == 1 and calls['ageonly'] == 1, \
+            'one full read, one age-only retry'
+        write_a.assert_called_once()
+        stamped = [c[0][1] for c in event.call_args_list]
+        assert 'assigned' in stamped
 
     def test_unknown_tender_refused(self):
         # registry returned no row: refused before any heartbeat read
