@@ -21,7 +21,7 @@ HEARTBEAT_FALLBACK_TTL_SECS = float(
 
 VALID_EVENT_TYPES = [
     'declared', 'planned', 'refused', 'assigned', 'plan_error', 'acted',
-    'landed', 'missed', 're_opened', 'closed',
+    'landed', 'missed', 're_opened', 'closed', 'corrected',
     # mirrored from causal's book by the lazy fold-in
     'undecidable', 'replanned', 'released',
     'walk_opened', 'walk_probe', 'walk_closed',
@@ -195,6 +195,84 @@ class SteerwishService:
         self.repo.insert_steerwish_event(wish_id, 'closed', None)
         self._unassign_wish(wish)
         return self.get_steerwish(wish_id)
+
+    def update_steerwish(self, wish_id, payload):
+        """The holder corrects the wish: new terms on the same identity.
+
+        A deliberate holder act - the machinery never rewrites terms on
+        its own. Stamps 'corrected' with the previous band, removes the
+        stale assignment, and re-asks causal to plan under the same
+        wish id; the plan ask rides the same door as declare (plan,
+        door check, assignment plant).
+        """
+        payload = payload or {}
+        wish = self.get_steerwish(wish_id)
+        if wish is None:
+            raise SteerwishValidationError(f'unknown wish: {wish_id}')
+        if wish['state'] == 'closed':
+            raise SteerwishValidationError(
+                'wish is closed - corrections apply to living wishes')
+
+        band = payload.get('band')
+        if not isinstance(band, dict) or 'lo' not in band or 'hi' not in band:
+            raise SteerwishValidationError(
+                'band requires lo and hi (in the outcome measurement units)')
+        try:
+            lo, hi = float(band['lo']), float(band['hi'])
+        except (TypeError, ValueError):
+            raise SteerwishValidationError('band lo and hi must be numbers')
+        if not lo < hi or not (math.isfinite(lo) and math.isfinite(hi)):
+            raise SteerwishValidationError(
+                'band lo must be below hi, both finite')
+        target = band.get('target')
+        if target is not None:
+            try:
+                t = float(target)
+            except (TypeError, ValueError):
+                raise SteerwishValidationError('band target must be a number')
+            if not math.isfinite(t):
+                raise SteerwishValidationError('band target must be finite')
+
+        limits = payload.get('limits')
+        if limits is not None and not isinstance(limits, dict):
+            raise SteerwishValidationError(
+                'limits must be an object (exclude, maxChange)')
+
+        budget = payload.get('budget')
+        if budget is None:
+            budget = wish.get('budget')
+
+        old_band = wish.get('band')
+        reason = payload.get('reason') or 'holder correction'
+
+        self._ensure_registry()
+        self.repo.update_steerwish_terms(
+            wish_id=wish_id, band=band, limits=limits, budget=budget)
+        self.repo.insert_steerwish_event(
+            wish_id, 'corrected',
+            json.dumps({'reason': reason, 'previous_band': old_band}))
+        logger.info(
+            f"Steerwish corrected: {wish_id} "
+            f"-> band [{band.get('lo')}, {band.get('hi')}]")
+
+        # the world moved: the planted note points at a stale plan.
+        # Out with it, then the same door as declare.
+        self._unassign_wish(wish)
+        self._ask_causal_to_plan(wish_id, wish['outcome'], band, limits, budget)
+        return self.get_steerwish(wish_id)
+
+    def delete_steerwish(self, wish_id):
+        """Administrative purge, holder's act. Closes first (unassign +
+        dial revert), then removes the registry rows - events cascade.
+        Deletion is forgetting, not stopping; the causal book page is
+        purged by its own delete path (paired change)."""
+        wish = self.get_steerwish(wish_id)
+        if wish is None:
+            return None
+        self.close_steerwish(wish_id)
+        self.repo.delete_steerwish(wish_id)
+        logger.info(f"Steerwish purged: {wish_id}")
+        return {'deleted': wish_id, 'state_at_purge': wish.get('state')}
 
     # ── the plan ask + assignment (the controller asks, never computes) ──
 
