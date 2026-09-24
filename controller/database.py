@@ -468,6 +468,38 @@ class MetadataDatabaseRepository:
         execute_query(db_config, query)
         logger.info("Ensured steerwish tables exist")
 
+    def update_steerwish_terms(self, wish_id, band, limits, budget):
+        """Holder correction: restate the terms on the same identity.
+
+        The band is the promise's current translation; the correction
+        itself is an event (stamped by the caller) - this only moves
+        the terms columns.
+        """
+        db_config = self._get_db_config()
+        band_json = "'" + json.dumps(band).replace("'", "''") + "'::jsonb"
+        limits_json = "'" + json.dumps(limits).replace("'", "''") + "'::jsonb" if limits else 'NULL'
+        budget_sql = str(int(budget)) if budget is not None else 'NULL'
+        wid = str(wish_id).replace("'", "''")
+        query = f"""
+        UPDATE {self.steerwishes_table_name}
+        SET band = {band_json}, limits = {limits_json}, budget = {budget_sql}
+        WHERE id = '{wid}';
+        """
+        execute_query(db_config, query)
+        logger.info(f"Steerwish terms updated: {wish_id}")
+
+    def delete_steerwish(self, wish_id):
+        """Administrative purge: remove the registry row; events cascade.
+
+        Callers close first (unassign + dial revert) - deletion is
+        forgetting, not stopping.
+        """
+        db_config = self._get_db_config()
+        wid = str(wish_id).replace("'", "''")
+        query = f"DELETE FROM {self.steerwishes_table_name} WHERE id = '{wid}';"
+        execute_query(db_config, query)
+        logger.info(f"Steerwish purged from registry: {wish_id}")
+
     def insert_steerwish(self, wish_id, outcome, band, limits, budget, regime):
         """Insert a declared steerwish (the 'declared' event is appended by the caller)"""
         db_config = self._get_db_config()
