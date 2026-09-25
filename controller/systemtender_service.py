@@ -366,7 +366,7 @@ class SystemtenderService:
             # This validates that the systemtender supports all parameters in the config
             # (semantic validation that controller can't do)
             logger.info(f"Running preflight check for systemtender type: {systemtender_type}")
-            preflight_script_path = f"f/systemtender/{systemtender_type}/preflight"
+            preflight_script_path = f"f/systemtender/strains/{systemtender_type}/preflight"
 
             try:
                 preflight_result = wmill.run_script_by_path(
