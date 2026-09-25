@@ -133,6 +133,65 @@ class ArchiveDatabaseRepository:
             return float(rows[0][0]), interval
         return None
 
+    def read_state_verdict(self, systemtender_db_name):
+        """The tender's declared end plus its pulse, one read.
+
+        finished: the tender stamped its own walk's end (declared fact).
+        age/interval: the heartbeat, for the reader's presumed-dead
+        fallback (silence itself is undeclarable — a dead process can
+        not announce it). Returns None when the row or db is absent.
+        """
+        db_config = self.base_config.copy()
+        db_config['database'] = systemtender_db_name
+        try:
+            rows = execute_query(
+                db_config,
+                "SELECT finished_at IS NOT NULL, "
+                "EXTRACT(EPOCH FROM (now() - updated_at)), "
+                "beat_interval_secs FROM systemtender_state LIMIT 1",
+                with_result=True,
+            )
+        except Exception as e:
+            # rollouts where a column does not exist yet: read the two
+            # older shapes (age + interval, then age only)
+            if 'finished_at' in str(e) and 'does not exist' in str(e):
+                try:
+                    rows = execute_query(
+                        db_config,
+                        "SELECT FALSE, "
+                        "EXTRACT(EPOCH FROM (now() - updated_at)), "
+                        "beat_interval_secs FROM systemtender_state LIMIT 1",
+                        with_result=True,
+                    )
+                except Exception as e2:
+                    if 'beat_interval_secs' in str(e2) and 'does not exist' in str(e2):
+                        rows = execute_query(
+                            db_config,
+                            "SELECT FALSE, "
+                            "EXTRACT(EPOCH FROM (now() - updated_at)), NULL "
+                            "FROM systemtender_state LIMIT 1",
+                            with_result=True,
+                        )
+                    else:
+                        raise
+            elif 'beat_interval_secs' in str(e) and 'does not exist' in str(e):
+                rows = execute_query(
+                    db_config,
+                    "SELECT FALSE, "
+                    "EXTRACT(EPOCH FROM (now() - updated_at)), NULL "
+                    "FROM systemtender_state LIMIT 1",
+                    with_result=True,
+                )
+            else:
+                raise
+        if rows and rows[0][0] is not None:
+            return {
+                'finished': bool(rows[0][0]),
+                'age_secs': float(rows[0][1]) if rows[0][1] is not None else None,
+                'interval_secs': float(rows[0][2]) if rows[0][2] is not None else None,
+            }
+        return None
+
     def write_wish_assignment(self, systemtender_db_name, wish_id):
         """Plant the wish assignment row in the tender's own archive DB -
         the same DB the shutdown flag lives in. The tender's pulse (its
