@@ -242,8 +242,10 @@ class ArchiveDatabaseRepository:
 
     def get_connection_url(self, systemtender_id):
         """Get PostgreSQL connection URL for a systemtender database"""
+        # dialect pinned explicitly: sqlalchemy>=2.1 (2026-09-24) resolves
+        # bare postgresql:// to psycopg(3), which the env does not ship.
         return (
-            f"postgresql://{self.base_config['user']}:"
+            f"postgresql+psycopg2://{self.base_config['user']}:"
             f"{self.base_config['password']}@"
             f"{self.base_config['host']}:"
             f"{self.base_config['port']}/"
