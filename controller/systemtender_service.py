@@ -620,12 +620,36 @@ class SystemtenderService:
                 }
 
             # Row structure: [id, name, creation_ts, definition]
+            # Status verdict: the tender's declared end (finished stamp
+            # in its own state table) wins; silence falls back to the
+            # heartbeat age — presumed dead past 3x the beat interval
+            # (same constant as the liveness door), fresh otherwise.
+            db_name = f"systemtender_{systemtender_id.replace('-', '_')}"
+            status = 'unknown'
+            liveness = None
+            state = self.archive_repo.read_state_verdict(db_name)
+            if state:
+                interval = state['interval_secs'] if state['interval_secs'] else 60
+                threshold = 3 * interval
+                if state['finished']:
+                    status = 'finished'
+                elif state['age_secs'] is not None and state['age_secs'] > threshold:
+                    status = 'presumed_dead'
+                else:
+                    status = 'running'
+                liveness = {
+                    'age_secs': state['age_secs'],
+                    'interval_secs': state['interval_secs'],
+                    'stale_threshold_secs': threshold,
+                }
+
             return {
                 "result": "SUCCESS",
                 "data": {
                     "id": systemtender_meta_data_row[0][0],
                     "name": systemtender_meta_data_row[0][1],
-                    "status": "active",
+                    "status": status,
+                    "liveness": liveness,
                     "createdAt": systemtender_meta_data_row[0][2].isoformat(),
                     "config": systemtender_meta_data_row[0][3]
                 }
