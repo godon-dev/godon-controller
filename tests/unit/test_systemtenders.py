@@ -20,6 +20,7 @@
 import pytest
 import sys
 import os
+import datetime
 from unittest.mock import MagicMock, Mock, patch
 import uuid
 
@@ -32,6 +33,7 @@ from controller.systemtender_create import main as create_systemtender
 from controller.systemtender_delete import main as delete_systemtender
 from controller.systemtender_stop import main as stop_systemtender
 from controller.systemtender_start import main as start_systemtender
+from controller.systemtender_service import SystemtenderService
 
 
 class TestSystemtenderRetrieval:
@@ -504,3 +506,41 @@ class TestSystemtenderResponseFormats:
             if len(result['data']) > 0:
                 # Each item is a tuple (id, name, createdAt)
                 assert len(result['data'][0]) == 3
+
+
+class TestLivenessStalenessFloor:
+    """yb abort bursts silenced fresh-connection beats for ~30s while
+    the workers stayed alive and trialing: two living tenders were
+    stamped presumed_dead at 3x10s and the cell cleaned up mid-run
+    (run 36261279551, 2026-09-26). The verdict now rides a 90s floor."""
+
+    def _service_with_state(self, state):
+        service = SystemtenderService.__new__(SystemtenderService)
+        service.metadata_repo = Mock()
+        # row structure: [id, name, creation_ts, definition]
+        service.metadata_repo.fetch_meta_data.return_value = [
+            ('row-id', 'test-tender', datetime.datetime(2026, 9, 26, 18, 0, 0), '{}')]
+        service.archive_repo = Mock()
+        service.archive_repo.read_state_verdict.return_value = state
+        return service
+
+    def test_abort_burst_within_floor_reads_running(self):
+        service = self._service_with_state(
+            {'interval_secs': 10, 'age_secs': 45, 'finished': None})
+        out = service.get_systemtender('some-uuid')
+        assert out['result'] == 'SUCCESS'
+        assert out['data']['status'] == 'running'
+        assert out['data']['liveness']['stale_threshold_secs'] == 90
+
+    def test_true_death_past_floor_reads_presumed_dead(self):
+        service = self._service_with_state(
+            {'interval_secs': 10, 'age_secs': 300, 'finished': None})
+        out = service.get_systemtender('some-uuid')
+        assert out['data']['status'] == 'presumed_dead'
+
+    def test_finished_stamp_wins_over_liveness(self):
+        service = self._service_with_state(
+            {'interval_secs': 10, 'age_secs': 999,
+             'finished': datetime.datetime(2026, 9, 26, 18, 29, 36)})
+        out = service.get_systemtender('some-uuid')
+        assert out['data']['status'] == 'finished'

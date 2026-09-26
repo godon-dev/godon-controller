@@ -630,7 +630,14 @@ class SystemtenderService:
             state = self.archive_repo.read_state_verdict(db_name)
             if state:
                 interval = state['interval_secs'] if state['interval_secs'] else 60
-                threshold = 3 * interval
+                # yb abort bursts can silence fresh-connection beats for
+                # 30s+ while the worker stays alive and trialing (run
+                # 36261279551, 2026-09-26: two living workers stamped
+                # presumed_dead at 3x10s, cell cleaned up mid-run).
+                # 6x with a 90s floor lets the burst heal before the
+                # death verdict; true deaths cost the wait-loop seconds
+                # it never misses against a 5400s cell budget.
+                threshold = max(90, 6 * interval)
                 if state['finished']:
                     status = 'finished'
                 elif state['age_secs'] is not None and state['age_secs'] > threshold:
