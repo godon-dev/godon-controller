@@ -35,6 +35,59 @@ class SteerwishValidationError(Exception):
     """
 
 
+def _checked_band(band, where='band'):
+    """One band, door-checked - the same rules for sugar and claims.
+
+    The wish-shape stays free; the door keeps one law for every band
+    it accepts (sealed with wish-v1: lo below hi, finite, target
+    finite when present).
+    """
+    if not isinstance(band, dict) or 'lo' not in band or 'hi' not in band:
+        raise SteerwishValidationError(
+            f'{where} requires lo and hi (in the outcome measurement units)')
+    try:
+        lo, hi = float(band['lo']), float(band['hi'])
+    except (TypeError, ValueError):
+        raise SteerwishValidationError(f'{where} lo and hi must be numbers')
+    if not lo < hi:
+        raise SteerwishValidationError(f'{where} lo must be below hi')
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        raise SteerwishValidationError(f'{where} lo and hi must be finite')
+    target = band.get('target')
+    if target is not None:
+        try:
+            t = float(target)
+        except (TypeError, ValueError):
+            raise SteerwishValidationError(f'{where} target must be a number')
+        if not math.isfinite(t):
+            raise SteerwishValidationError(f'{where} target must be finite')
+    return band
+
+
+def _checked_claim(claim, where='claim'):
+    """One claim or term at the door: the atom the gavel judges.
+
+    The shape is identical for aims and price - the role (dial or
+    never-actuate) is a compile-time fact, not a grammar one.
+    """
+    if not isinstance(claim, dict):
+        raise SteerwishValidationError(
+            f'{where} must be an object (outcome, band)')
+    if claim.get('direction') is not None:
+        raise SteerwishValidationError(
+            f'{where}.direction is refused: the direction rung is not '
+            'built - declare a band')
+    name = claim.get('outcome')
+    if not isinstance(name, str) or not name.strip():
+        raise SteerwishValidationError(
+            f'{where}.outcome is required: the plain name of one '
+            'measured value')
+    return {
+        'outcome': name.strip(),
+        'band': _checked_band(claim.get('band'), f'{where}.band'),
+    }
+
+
 class SteerwishService:
     """Registry + lifecycle for steerwishes.
 
@@ -64,33 +117,39 @@ class SteerwishService:
         self.repo.create_steerwish_tables()
 
     def create_steerwish(self, payload):
-        """Validate at the door, insert, stamp 'declared', return the wish."""
-        payload = payload or {}
-        outcome = payload.get('outcome')
-        band = payload.get('band')
+        """Validate at the door, insert, stamp 'declared', return the wish.
 
-        if not isinstance(outcome, str) or not outcome.strip():
+        The wish speaks the stack (sealed 2026-09-21): claims N>=1 -
+        the aims the gavel judges - and terms M>=0, claims that carry
+        no dial: the price the wish pays. One verdict: kept = every
+        claim in band AND every term honored.
+        """
+        payload = payload or {}
+
+        if payload.get('outcome') is not None or payload.get('band') is not None:
             raise SteerwishValidationError(
-                'outcome is required: the plain name of one measured value')
-        if not isinstance(band, dict) or 'lo' not in band or 'hi' not in band:
+                'the sugar shape is retired - the wish speaks claims: '
+                '[{outcome, band}], terms: [{outcome, band}]')
+        claims_field = payload.get('claims')
+        if not isinstance(claims_field, list) or not claims_field:
             raise SteerwishValidationError(
-                'band requires lo and hi (in the outcome measurement units)')
-        try:
-            lo, hi = float(band['lo']), float(band['hi'])
-        except (TypeError, ValueError):
-            raise SteerwishValidationError('band lo and hi must be numbers')
-        if not lo < hi:
-            raise SteerwishValidationError('band lo must be below hi')
-        if not (math.isfinite(lo) and math.isfinite(hi)):
-            raise SteerwishValidationError('band lo and hi must be finite')
-        target = band.get('target')
-        if target is not None:
-            try:
-                t = float(target)
-            except (TypeError, ValueError):
-                raise SteerwishValidationError('band target must be a number')
-            if not math.isfinite(t):
-                raise SteerwishValidationError('band target must be finite')
+                'claims is required: a non-empty list of {outcome, band} '
+                'claims - the atom the gavel judges')
+        terms_field = payload.get('terms') or []
+
+        claims = [_checked_claim(c, f'claims[{i}]')
+                  for i, c in enumerate(claims_field)]
+        terms = [_checked_claim(t, f'terms[{i}]')
+                 for i, t in enumerate(terms_field)]
+        names = [c['outcome'] for c in claims + terms]
+        if len(set(names)) != len(names):
+            duplicated = sorted({n for n in names if names.count(n) > 1})[0]
+            raise SteerwishValidationError(
+                f'one claim per outcome per wish: {duplicated} appears '
+                'twice across claims and terms')
+
+        outcome = claims[0]['outcome']
+        band = claims[0]['band']
 
         budget = payload.get('budget')
         if budget is not None:
@@ -134,6 +193,8 @@ class SteerwishService:
             limits=limits,
             budget=budget,
             regime=regime,
+            claims=claims,
+            terms=terms,
         )
         self.repo.insert_steerwish_event(wish_id, 'declared', None)
         logger.info(f"Steerwish declared: {wish_id} (outcome: {outcome.strip()})")
@@ -144,7 +205,8 @@ class SteerwishService:
         # assignment row in the serving tender's archive DB, and the
         # tender's pulse does the rest. The budget rides along: causal
         # enforces the outer round total, the controller only declares it.
-        self._ask_causal_to_plan(wish_id, outcome.strip(), band, limits, budget)
+        self._ask_causal_to_plan(wish_id, claims=claims, terms=terms,
+                                 limits=limits, budget=budget)
 
         wish = self.get_steerwish(wish_id)
         if wish is None:
@@ -212,26 +274,25 @@ class SteerwishService:
         if wish['state'] == 'closed':
             raise SteerwishValidationError(
                 'wish is closed - corrections apply to living wishes')
-
-        band = payload.get('band')
-        if not isinstance(band, dict) or 'lo' not in band or 'hi' not in band:
+        if payload.get('band') is not None:
             raise SteerwishValidationError(
-                'band requires lo and hi (in the outcome measurement units)')
-        try:
-            lo, hi = float(band['lo']), float(band['hi'])
-        except (TypeError, ValueError):
-            raise SteerwishValidationError('band lo and hi must be numbers')
-        if not lo < hi or not (math.isfinite(lo) and math.isfinite(hi)):
+                'the sugar shape is retired - correct via claims: '
+                '[{outcome, band}], terms: [{outcome, band}]')
+        claims_field = payload.get('claims')
+        if not isinstance(claims_field, list) or not claims_field:
             raise SteerwishValidationError(
-                'band lo must be below hi, both finite')
-        target = band.get('target')
-        if target is not None:
-            try:
-                t = float(target)
-            except (TypeError, ValueError):
-                raise SteerwishValidationError('band target must be a number')
-            if not math.isfinite(t):
-                raise SteerwishValidationError('band target must be finite')
+                'corrections speak claims: a non-empty list of '
+                '{outcome, band} on the same identity')
+        claims = [_checked_claim(c, f'claims[{i}]')
+                  for i, c in enumerate(claims_field)]
+        terms = [_checked_claim(t, f'terms[{i}]')
+                 for i, t in enumerate(payload.get('terms') or [])]
+        names = [c['outcome'] for c in claims + terms]
+        if len(set(names)) != len(names):
+            duplicated = sorted({n for n in names if names.count(n) > 1})[0]
+            raise SteerwishValidationError(
+                f'one claim per outcome per wish: {duplicated} appears '
+                'twice across claims and terms')
 
         limits = payload.get('limits')
         if limits is not None and not isinstance(limits, dict):
@@ -247,20 +308,22 @@ class SteerwishService:
 
         self._ensure_registry()
         self.repo.update_steerwish_terms(
-            wish_id=wish_id, band=band, limits=limits, budget=budget)
+            wish_id=wish_id, band=claims[0]['band'], limits=limits,
+            budget=budget, claims=claims, terms=terms)
         self.repo.insert_steerwish_event(
             wish_id, 'corrected',
             json.dumps({'reason': reason, 'previous_band': old_band}))
         logger.info(
             f"Steerwish corrected: {wish_id} "
-            f"-> band [{band.get('lo')}, {band.get('hi')}]")
+            f"-> {len(claims)} claim(s), {len(terms)} term(s)")
 
         # the world moved. The plan ask decides the assignment's fate:
         # a plan with moves re-plants the note (new dial); a zero-move
         # hold keeps the existing note and dial untouched. Tearing the
         # note out before the ask would release a wish the corrected
         # terms already satisfy.
-        self._ask_causal_to_plan(wish_id, wish['outcome'], band, limits, budget)
+        self._ask_causal_to_plan(wish_id, claims=claims, terms=terms,
+                                 limits=limits, budget=budget)
         return self.get_steerwish(wish_id)
 
     def delete_steerwish(self, wish_id):
@@ -357,17 +420,35 @@ class SteerwishService:
                 logger.debug(f"Wish {wish_id}: fold-in of {event} skipped: {ex}")
         return mirrored
 
-    def _ask_causal_to_plan(self, wish_id, outcome, band, limits, budget=None):
-        plan_request = {
-            'wish_id': wish_id,
-            'outcome': outcome,
-            'band': {
-                'lo': float(band['lo']),
-                'hi': float(band['hi']),
-                **({'target': float(band['target'])}
-                   if band.get('target') is not None else {}),
-            },
-        }
+    def _ask_causal_to_plan(self, wish_id, outcome=None, band=None, limits=None,
+                            budget=None, claims=None, terms=None):
+        """One HTTP ask seeds causal's book. A single claim with no
+        terms rides the engine's current wire shape (outcome + band);
+        a multi-claim or terms-carrying wish rides the stack shape
+        (claims + terms) - the engine compiles it jointly. Paired
+        engine change; the controller only declares, never computes."""
+        if claims is None:
+            claims = ([{'outcome': outcome, 'band': band}]
+                      if outcome and band else [])
+        if len(claims) == 1 and not terms:
+            first = claims[0]
+            first_band = first['band']
+            plan_request = {
+                'wish_id': wish_id,
+                'outcome': first['outcome'],
+                'band': {
+                    'lo': float(first_band['lo']),
+                    'hi': float(first_band['hi']),
+                    **({'target': float(first_band['target'])}
+                       if first_band.get('target') is not None else {}),
+                },
+            }
+        else:
+            plan_request = {
+                'wish_id': wish_id,
+                'claims': claims,
+                'terms': terms or [],
+            }
         if budget is not None:
             plan_request['budget'] = int(budget)
         if limits:
@@ -488,11 +569,19 @@ class SteerwishService:
         }
 
     def _format_wish(self, row, events):
-        # row: id, outcome, band, limits, budget, regime, created_at, state
+        # row: id, outcome, band, limits, budget, regime, created_at,
+        # state, claims, terms (stored; NULL on rows older than the
+        # grammar - legacy rows read back as their single claim)
+        stored_claims = row[8] if len(row) > 8 else None
+        stored_terms = row[9] if len(row) > 9 else None
+        claims = stored_claims or [{'outcome': row[1], 'band': row[2]}]
+        terms = stored_terms or []
         return {
             'id': str(row[0]),
             'outcome': row[1],
             'band': row[2],
+            'claims': claims,
+            'terms': terms,
             'limits': row[3],
             'budget': row[4],
             'regime': row[5],

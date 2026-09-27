@@ -520,6 +520,9 @@ class MetadataDatabaseRepository:
         regime VARCHAR(50) NOT NULL DEFAULT 'standing',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        ALTER TABLE {self.steerwishes_table_name}
+        ADD COLUMN IF NOT EXISTS claims JSONB,
+        ADD COLUMN IF NOT EXISTS terms JSONB;
         """
         execute_query(db_config, query)
 
@@ -538,21 +541,29 @@ class MetadataDatabaseRepository:
         execute_query(db_config, query)
         logger.info("Ensured steerwish tables exist")
 
-    def update_steerwish_terms(self, wish_id, band, limits, budget):
+    def update_steerwish_terms(self, wish_id, band, limits, budget, claims=None,
+                               terms=None):
         """Holder correction: restate the terms on the same identity.
 
         The band is the promise's current translation; the correction
         itself is an event (stamped by the caller) - this only moves
-        the terms columns.
+        the terms columns. claims/terms rewrite only when the caller
+        carries them; NULL leaves the stored column untouched.
         """
         db_config = self._get_db_config()
         band_json = "'" + json.dumps(band).replace("'", "''") + "'::jsonb"
         limits_json = "'" + json.dumps(limits).replace("'", "''") + "'::jsonb" if limits else 'NULL'
         budget_sql = str(int(budget)) if budget is not None else 'NULL'
         wid = str(wish_id).replace("'", "''")
+        claims_set = ("'" + json.dumps(claims).replace("'", "''") + "'::jsonb"
+                      if claims is not None else 'NULL')
+        terms_set = ("'" + json.dumps(terms).replace("'", "''") + "'::jsonb"
+                     if terms is not None else 'NULL')
         query = f"""
         UPDATE {self.steerwishes_table_name}
-        SET band = {band_json}, limits = {limits_json}, budget = {budget_sql}
+        SET band = {band_json}, limits = {limits_json}, budget = {budget_sql},
+            claims = COALESCE({claims_set}, claims),
+            terms = COALESCE({terms_set}, terms)
         WHERE id = '{wid}';
         """
         execute_query(db_config, query)
@@ -570,7 +581,8 @@ class MetadataDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Steerwish purged from registry: {wish_id}")
 
-    def insert_steerwish(self, wish_id, outcome, band, limits, budget, regime):
+    def insert_steerwish(self, wish_id, outcome, band, limits, budget, regime,
+                         claims=None, terms=None):
         """Insert a declared steerwish (the 'declared' event is appended by the caller)"""
         db_config = self._get_db_config()
         band_json = "'" + json.dumps(band).replace("'", "''") + "'"
@@ -578,11 +590,13 @@ class MetadataDatabaseRepository:
         budget_sql = str(int(budget)) if budget is not None else 'NULL'
         outcome_sql = outcome.replace("'", "''")
         regime_sql = regime.replace("'", "''")
+        claims_json = "'" + json.dumps(claims).replace("'", "''") + "'::jsonb" if claims else 'NULL'
+        terms_json = "'" + json.dumps(terms).replace("'", "''") + "'::jsonb" if terms else 'NULL'
 
         query = f"""
         INSERT INTO {self.steerwishes_table_name}
-        (id, outcome, band, limits, budget, regime)
-        VALUES('{wish_id}', '{outcome_sql}', {band_json}::jsonb, {limits_json}, {budget_sql}, '{regime_sql}');
+        (id, outcome, band, limits, budget, regime, claims, terms)
+        VALUES('{wish_id}', '{outcome_sql}', {band_json}::jsonb, {limits_json}, {budget_sql}, '{regime_sql}', {claims_json}, {terms_json});
         """
         execute_query(db_config, query)
         logger.info(f"Inserted steerwish {wish_id} for outcome: {outcome}")
@@ -597,7 +611,8 @@ class MetadataDatabaseRepository:
                COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
                          WHERE e.wish_id = w.id
                          AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
-                         ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state
+                         ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state,
+               w.claims, w.terms
         FROM {self.steerwishes_table_name} w
         WHERE w.id = '{wish_id_sql}';
         """
