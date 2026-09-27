@@ -192,26 +192,35 @@ class ArchiveDatabaseRepository:
             }
         return None
 
-    def write_wish_assignment(self, systemtender_db_name, wish_id):
+    def write_wish_assignment(self, systemtender_db_name, wish_id, role='sender'):
         """Plant the wish assignment row in the tender's own archive DB -
         the same DB the shutdown flag lives in. The tender's pulse (its
-        trial boundary) picks the row up and adopts the wish."""
+        trial boundary) picks the row up and adopts the wish. role:
+        'sender' owns the dial move; 'receiver' parks and publishes the
+        wished reading (the judge watches that node)."""
         db_config = self.base_config.copy()
         db_config['database'] = systemtender_db_name
 
         wish_id_sql = str(wish_id).replace("'", "''")
+        role_sql = str(role).replace("'", "''")
 
         create_query = (
             "CREATE TABLE IF NOT EXISTS wish_assignments ("
             "wish_id TEXT PRIMARY KEY, assigned_tsz DOUBLE PRECISION NOT NULL);"
         )
+        alter_query = (
+            "ALTER TABLE wish_assignments "
+            "ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'sender';"
+        )
         insert_query = (
-            "INSERT INTO wish_assignments (wish_id, assigned_tsz) "
-            f"VALUES ('{wish_id_sql}', EXTRACT(EPOCH FROM NOW()));"
+            "INSERT INTO wish_assignments (wish_id, assigned_tsz, role) "
+            f"VALUES ('{wish_id_sql}', EXTRACT(EPOCH FROM NOW()), '{role_sql}');"
         )
         execute_query(db_config, create_query)
+        execute_query(db_config, alter_query)
         execute_query(db_config, insert_query)
-        logger.info(f"Wish assignment written into archive DB {systemtender_db_name} (wish: {wish_id})")
+        logger.info(f"Wish assignment written into archive DB {systemtender_db_name} "
+                    f"(wish: {wish_id}, role: {role})")
 
     def delete_wish_assignment(self, systemtender_db_name, wish_id):
         """Remove the assignment row - the tender's pulse reverts the dial

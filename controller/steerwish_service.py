@@ -255,9 +255,11 @@ class SteerwishService:
             f"Steerwish corrected: {wish_id} "
             f"-> band [{band.get('lo')}, {band.get('hi')}]")
 
-        # the world moved: the planted note points at a stale plan.
-        # Out with it, then the same door as declare.
-        self._unassign_wish(wish)
+        # the world moved. The plan ask decides the assignment's fate:
+        # a plan with moves re-plants the note (new dial); a zero-move
+        # hold keeps the existing note and dial untouched. Tearing the
+        # note out before the ask would release a wish the corrected
+        # terms already satisfy.
         self._ask_causal_to_plan(wish_id, wish['outcome'], band, limits, budget)
         return self.get_steerwish(wish_id)
 
@@ -390,6 +392,8 @@ class SteerwishService:
                 wish_id, 'planned', json.dumps(plan_response))
             moves = plan_response.get('moves') or []
             sender = (moves[0] or {}).get('sender') if moves else None
+            path = plan_response.get('path') or []
+            receiver = path[-1] if path else None
             if sender and self.archive_repo is not None:
                 # The door check: never plant into a house that is not
                 # breathing. Flight 9 planted into a torn-down cell's db
@@ -405,7 +409,7 @@ class SteerwishService:
                 else:
                     db_name = f"systemtender_{str(sender).replace('-', '_')}"
                     try:
-                        self.archive_repo.write_wish_assignment(db_name, wish_id)
+                        self.archive_repo.write_wish_assignment(db_name, wish_id, role='sender')
                         self.repo.insert_steerwish_event(
                             wish_id, 'assigned',
                             json.dumps({'sender': sender, 'db': db_name}))
@@ -416,6 +420,28 @@ class SteerwishService:
                         self.repo.insert_steerwish_event(
                             wish_id, 'plan_error',
                             json.dumps({'error': f'assignment write failed: {e}'}))
+                    # The receiver is told too: its reading is the wish.
+                    # Without its own note the receiver never parks - it
+                    # keeps walking, swinging the promised reading, and
+                    # the judge watches a moving target forever (found
+                    # live Sep 27: every wish froze at planned because
+                    # only the sender's house ever got a note).
+                    if receiver and receiver != sender:
+                        receiver_db = f"systemtender_{str(receiver).replace('-', '_')}"
+                        try:
+                            self.archive_repo.write_wish_assignment(
+                                receiver_db, wish_id, role='receiver')
+                            self.repo.insert_steerwish_event(
+                                wish_id, 'assigned',
+                                json.dumps({'receiver': receiver, 'db': receiver_db,
+                                            'role': 'receiver'}))
+                            logger.info(f"Wish {wish_id} receiver note in {receiver_db}")
+                        except Exception as e:
+                            logger.warning(
+                                f"Wish {wish_id}: receiver note failed: {e}")
+                            self.repo.insert_steerwish_event(
+                                wish_id, 'plan_error',
+                                json.dumps({'error': f'receiver note failed: {e}'}))
             elif sender is None:
                 logger.warning(f"Wish {wish_id}: planned but no move named")
             else:
