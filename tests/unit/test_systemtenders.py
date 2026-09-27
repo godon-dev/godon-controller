@@ -21,6 +21,7 @@ import pytest
 import sys
 import os
 import datetime
+import json
 from unittest.mock import MagicMock, Mock, patch
 import uuid
 
@@ -34,6 +35,7 @@ from controller.systemtender_delete import main as delete_systemtender
 from controller.systemtender_stop import main as stop_systemtender
 from controller.systemtender_start import main as start_systemtender
 from controller.systemtender_service import SystemtenderService
+from controller.steerwish_service import SteerwishService
 
 
 class TestSystemtenderRetrieval:
@@ -544,3 +546,73 @@ class TestLivenessStalenessFloor:
              'finished': datetime.datetime(2026, 9, 26, 18, 29, 36)})
         out = service.get_systemtender('some-uuid')
         assert out['data']['status'] == 'finished'
+
+
+class TestReceiverNotePlanted:
+    """The wish's reading lives on the receiver, but only the sender's
+    house ever got a note - the receiver never adopted, never parked,
+    and every wish froze at planned (five flights, found Sep 27, run
+    36307488912). The door now plants a receiver note too."""
+
+    def _service(self):
+        service = SteerwishService.__new__(SteerwishService)
+        service.repo = Mock()
+        service.archive_repo = Mock()
+        service._causal_url = lambda: "http://127.0.0.1:9091"
+        service._sender_alive = lambda sid: (True, '')
+        return service
+
+    def _plan_response(self):
+        return {
+            'status': 'planned',
+            'moves': [{'param': 'param_1', 'sender':
+                       'f0e0fb34-aaaa-bbbb-cccc-ddddeeeeffff', 'setting': 50.0,
+                       'bars': 0.02}],
+            'path': ['f0e0fb34-aaaa-bbbb-cccc-ddddeeeeffff',
+                     '92a33fa9-1111-2222-3333-444455556666'],
+            'predicted': {'value': 1.85, 'bars': 0.02},
+        }
+
+    def test_sender_and_receiver_notes_planted(self):
+        service = self._service()
+        with patch('controller.steerwish_service.urllib.request.urlopen') as ur:
+            resp = Mock()
+            resp.read.return_value = json.dumps(self._plan_response()).encode()
+            ur.return_value.__enter__.return_value = resp
+            service._ask_causal_to_plan(
+                'wish-1', 'rcv/objective_0',
+                {'lo': 1.7, 'hi': 2.0, 'target': 1.85}, limits=None)
+        calls = service.archive_repo.write_wish_assignment.call_args_list
+        planted = [(c.args[0], c.args[1], c.kwargs.get('role')) for c in calls]
+        assert ('systemtender_f0e0fb34_aaaa_bbbb_cccc_ddddeeeeffff',
+                'wish-1', 'sender') in planted
+        assert ('systemtender_92a33fa9_1111_2222_3333_444455556666',
+                'wish-1', 'receiver') in planted
+
+    def test_write_wish_assignment_defaults_to_sender_role(self):
+        service = self._service()
+        with patch('controller.steerwish_service.urllib.request.urlopen') as ur:
+            resp = Mock()
+            resp.read.return_value = json.dumps(self._plan_response()).encode()
+            ur.return_value.__enter__.return_value = resp
+            service._ask_causal_to_plan(
+                'wish-2', 'rcv/objective_0',
+                {'lo': 1.7, 'hi': 2.0, 'target': 1.85}, limits=None)
+        sender_call = service.archive_repo.write_wish_assignment.call_args_list[0]
+        assert sender_call.kwargs.get('role', 'sender') == 'sender'
+
+    def test_no_receiver_note_when_self_wish(self):
+        # a self-wish (sender == receiver) must not plant twice
+        plan = self._plan_response()
+        plan['path'] = [plan['path'][0]]
+        plan['moves'][0]['sender'] = plan['path'][0]
+        service = self._service()
+        with patch('controller.steerwish_service.urllib.request.urlopen') as ur:
+            resp = Mock()
+            resp.read.return_value = json.dumps(plan).encode()
+            ur.return_value.__enter__.return_value = resp
+            service._ask_causal_to_plan(
+                'wish-3', 'rcv/objective_0',
+                {'lo': 1.7, 'hi': 2.0, 'target': 1.85}, limits=None)
+        calls = service.archive_repo.write_wish_assignment.call_args_list
+        assert len(calls) == 1
