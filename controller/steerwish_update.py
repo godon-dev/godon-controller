@@ -6,9 +6,10 @@ def main(request_data=None):
     wish_id = data.get('wish_id')
     if not wish_id:
         return {"result": "FAILURE", "error": "Missing wish_id"}
-    band = data.get('band')
-    if not band:
-        return {"result": "FAILURE", "error": "Missing band (lo/hi/target)"}
+    claims = data.get('claims')
+    if not claims:
+        return {"result": "FAILURE", "error": (
+            "Missing claims ([{outcome, band}]) - the sugar shape is retired")}
 
     service = SteerwishService(
         archive_db_config=DatabaseConfig.ARCHIVE_DB,
@@ -16,11 +17,11 @@ def main(request_data=None):
     )
     try:
         return service.update_steerwish(wish_id, {
-            'band': band,
+            'claims': claims,
+            'terms': data.get('terms'),
             'limits': data.get('limits'),
             'budget': data.get('budget'),
             'reason': data.get('reason'),
-            'claims': data.get('claims'),
         })
     except Exception as e:
         return {"result": "FAILURE", "error": str(e)}
