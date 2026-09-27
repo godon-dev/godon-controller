@@ -9,7 +9,9 @@ def main(request_data=None):
     """Declare a steerwish: validate at the door, stamp 'declared', return it.
 
     Malformed wishes are rejected before anything plans on them;
-    the FAILURE error names what was wrong.
+    the FAILURE error names what was wrong. The wish speaks claims
+    (outcome/band is the N=1 sugar for claims[0]); today the door
+    serves exactly one claim.
     """
     try:
         service = SteerwishService(DatabaseConfig.META_DB, DatabaseConfig.ARCHIVE_DB)

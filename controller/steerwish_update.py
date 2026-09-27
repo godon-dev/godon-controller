@@ -20,6 +20,7 @@ def main(request_data=None):
             'limits': data.get('limits'),
             'budget': data.get('budget'),
             'reason': data.get('reason'),
+            'claims': data.get('claims'),
         })
     except Exception as e:
         return {"result": "FAILURE", "error": str(e)}

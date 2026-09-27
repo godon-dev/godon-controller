@@ -151,6 +151,130 @@ class TestSteerwishCreation:
         assert 'lo must be below hi' in result['error']
 
 
+class TestClaimsGrammar:
+    """The wish object speaks claims[] (sealed 2026-09-21): N=1 is
+    exactly the sugar shape; more is refused naming the rung it waits on."""
+
+    def _create(self, payload):
+        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        with patch.object(service.repo, 'fetch_steerwish_by_id',
+                          return_value=_wish_row()), \
+             patch.object(service.repo, 'fetch_steerwish_events',
+                          return_value=_events('declared')), \
+             patch.object(service.repo, 'create_steerwish_tables'), \
+             patch.object(service.repo, 'insert_steerwish') as insert, \
+             patch.object(service.repo, 'insert_steerwish_event'), \
+             patch.object(service, '_ask_causal_to_plan') as ask:
+            wish = service.create_steerwish(payload)
+        return wish, insert, ask
+
+    def test_claims_one_accepted_and_stored(self):
+        wish, insert, ask = self._create({'claims': [
+            {'outcome': ' chainend.shift ',
+             'band': {'lo': -0.14, 'hi': -0.06, 'target': -0.10}}]})
+        kwargs = insert.call_args.kwargs if insert.call_args else {}
+        assert kwargs['claims'] == [
+            {'outcome': 'chainend.shift',
+             'band': {'lo': -0.14, 'hi': -0.06, 'target': -0.10}}], \
+            'claim names are trimmed like the sugar outcome'
+        assert kwargs['outcome'] == 'chainend.shift'
+        ask.assert_called_once()
+        assert ask.call_args[0][1] == 'chainend.shift', \
+            'the plan ask rides claims[0] unchanged'
+        assert wish is not None
+        assert wish['claims'][0]['outcome'] == 'chainend.shift'
+
+    def test_sugar_declare_carries_claims_too(self):
+        _, insert, _ = self._create({
+            'outcome': 'chainend.shift',
+            'band': {'lo': -0.14, 'hi': -0.06}})
+        assert insert.call_args.kwargs['claims'] == [
+            {'outcome': 'chainend.shift',
+             'band': {'lo': -0.14, 'hi': -0.06}}], \
+            'the sugar is claims[0] - one object, one grammar'
+
+    def test_two_claims_refused_naming_the_rung(self):
+        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+            self._create({'claims': [
+                {'outcome': 'a/x', 'band': {'lo': 0, 'hi': 1}},
+                {'outcome': 'b/y', 'band': {'lo': 0, 'hi': 1}}]})
+        assert 'joint compile rung' in str(err.value)
+
+    def test_duplicate_outcome_refused_before_the_rung(self):
+        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+            self._create({'claims': [
+                {'outcome': 'a/x', 'band': {'lo': 0, 'hi': 1}},
+                {'outcome': 'a/x', 'band': {'lo': 2, 'hi': 3}}]})
+        assert 'distinct outcomes' in str(err.value)
+
+    def test_claim_direction_refused(self):
+        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+            self._create({'claims': [
+                {'outcome': 'a/x', 'band': {'lo': 0, 'hi': 1},
+                 'direction': 'minimize'}]})
+        assert 'direction rung' in str(err.value)
+
+    def test_claims_mixed_with_sugar_refused(self):
+        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+            self._create({'claims': [
+                {'outcome': 'a/x', 'band': {'lo': 0, 'hi': 1}}],
+                'outcome': 'a/x'})
+        assert 'choose one shape' in str(err.value)
+
+    def test_claims_not_a_list_refused(self):
+        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+            self._create({'claims': 'a/x'})
+        assert 'non-empty list' in str(err.value)
+
+    def test_claim_band_gets_the_door_law(self):
+        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+            self._create({'claims': [
+                {'outcome': 'a/x', 'band': {'lo': 1, 'hi': 0}}]})
+        assert 'claims[0].band lo must be below hi' in str(err.value)
+
+    def test_read_back_synthesizes_claims_for_legacy_rows(self):
+        service, _ = _service_with_repo(_wish_row(), _events('declared'))
+        wish = service.get_steerwish(WISH_ID)
+        assert wish['claims'] == [
+            {'outcome': 'chainend.shift',
+             'band': {'lo': -0.14, 'hi': -0.06, 'target': -0.10}}], \
+            'rows older than the grammar read back as their N=1 sugar'
+
+    def test_read_back_exposes_stored_claims(self):
+        row = _wish_row() + ([{'outcome': 'other.shift',
+                               'band': {'lo': 0, 'hi': 1}}],)
+        service, _ = _service_with_repo(row, _events('declared'))
+        wish = service.get_steerwish(WISH_ID)
+        assert wish['claims'] == [{'outcome': 'other.shift',
+                                   'band': {'lo': 0, 'hi': 1}}]
+
+    def _update(self, payload, state='missed'):
+        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        with patch.object(service.repo, 'fetch_steerwish_by_id',
+                          return_value=_wish_row(state=state)), \
+             patch.object(service.repo, 'fetch_steerwish_events',
+                          return_value=_events('declared', 'missed')), \
+             patch.object(service.repo, 'create_steerwish_tables'), \
+             patch.object(service.repo, 'update_steerwish_terms') as terms, \
+             patch.object(service.repo, 'insert_steerwish_event'), \
+             patch.object(service, '_ask_causal_to_plan'):
+            service.update_steerwish(WISH_ID, payload)
+        return terms
+
+    def test_update_refuses_claims_payload(self):
+        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+            self._update({'claims': [
+                {'outcome': 'a/x', 'band': {'lo': 0, 'hi': 1}}]})
+        assert 'compile rung' in str(err.value)
+
+    def test_update_rewrites_claims_consistently(self):
+        terms = self._update({'band': {'lo': 0.2, 'hi': 0.4}})
+        assert terms.call_args.kwargs['claims'] == [
+            {'outcome': 'chainend.shift',
+             'band': {'lo': 0.2, 'hi': 0.4}}], \
+            'a corrected wish carries its claims forward, same identity'
+
+
 class TestSteerwishGetAndList:
     def test_get_unknown_wish_maps_to_not_found(self):
         with patch('controller.steerwish_get.SteerwishService') as svc_cls:
