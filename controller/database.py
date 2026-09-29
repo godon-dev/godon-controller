@@ -214,7 +214,9 @@ class ArchiveDatabaseRepository:
         )
         insert_query = (
             "INSERT INTO wish_assignments (wish_id, assigned_tsz, role) "
-            f"VALUES ('{wish_id_sql}', EXTRACT(EPOCH FROM NOW()), '{role_sql}');"
+            f"VALUES ('{wish_id_sql}', EXTRACT(EPOCH FROM NOW()), '{role_sql}') "
+            "ON CONFLICT (wish_id) DO UPDATE SET "
+            "assigned_tsz = EXCLUDED.assigned_tsz, role = EXCLUDED.role;"
         )
         execute_query(db_config, create_query)
         execute_query(db_config, alter_query)
