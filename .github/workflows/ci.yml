@@ -57,6 +57,10 @@ jobs:
           # Mock run_script_by_path_async to return fake job ID (for worker job tracking)
           import uuid
           mock_wmill.run_script_by_path_async.return_value = str(uuid.uuid4())
+          # After a force cancel a worker job reads Canceled in real
+          # Windmill - the delete waits for exactly that (fail closed
+          # before dropping). The harness models the contract.
+          mock_wmill.Windmill.return_value.get.return_value = {'status': 'Canceled'}
           sys.modules['wmill'] = mock_wmill
 
           # Mock optuna.storages before imports (schema initialization uses it)

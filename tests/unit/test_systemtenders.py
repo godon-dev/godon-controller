@@ -289,6 +289,101 @@ class TestSystemtenderDeletion:
             assert result['data']['workers_cancelled'] == 3
 
 
+class TestDeleteQuiesce:
+    """The delete must not drop the archive DB while a worker job can
+    still hold a connection: a drop racing a live pool is what poisons
+    YB's relcache ("database may have been dropped and recreated"),
+    first seen live on 2026-09-30 (#399). Cancel is async in Windmill
+    (Canceling only becomes Canceled when the process dies), so the
+    delete fails closed until every job is terminal."""
+
+    def _service_with_jobs(self, job_ids):
+        service = SystemtenderService.__new__(SystemtenderService)
+        service.metadata_repo = Mock()
+        service.metadata_repo.create_table.return_value = None
+        definition = {
+            'worker_job_ids': list(job_ids),
+            'interference_detection': {'group': 'bench'},
+        }
+        service.metadata_repo.fetch_meta_data.return_value = [
+            ('row-id', 'bench-tender', datetime.datetime(2026, 9, 30, 18, 0, 0), definition)]
+        service.archive_repo = Mock()
+        return service
+
+    class _FakeClock:
+        """time.monotonic/sleep pair so the bounded wait costs nothing."""
+        def __init__(self):
+            self.now = 0.0
+        def monotonic(self):
+            return self.now
+        def sleep(self, s):
+            self.now += s
+
+    def test_delete_fails_closed_when_cancel_request_fails(self):
+        service = self._service_with_jobs(['job-1'])
+        with patch('controller.systemtender_service.cancel_job_by_id', return_value=False), \
+             patch('controller.systemtender_service.time', self._FakeClock()):
+            result = service.delete_systemtender('bench-tender', force=True)
+        assert result['result'] == 'FAILURE'
+        assert 'could not be cancelled' in result['error']
+        service.archive_repo.drop_database.assert_not_called()
+
+    def test_delete_waits_for_terminal_jobs_before_drop(self):
+        service = self._service_with_jobs(['job-1', 'job-2'])
+        clock = self._FakeClock()
+        with patch('controller.systemtender_service.cancel_job_by_id', return_value=True), \
+             patch('controller.systemtender_service.job_reached_terminal_state',
+                   side_effect=[False, False, True, False, True]), \
+             patch('controller.systemtender_service.time', clock):
+            result = service.delete_systemtender('bench-tender', force=True)
+        assert result['result'] == 'SUCCESS'
+        service.archive_repo.drop_database.assert_called_once()
+        # two poll rounds elapsed before both jobs read terminal
+        assert clock.now >= 2 * 2
+
+    def test_delete_fails_closed_when_job_never_quiesces(self):
+        service = self._service_with_jobs(['job-stuck'])
+        with patch('controller.systemtender_service.cancel_job_by_id', return_value=True), \
+             patch('controller.systemtender_service.job_reached_terminal_state',
+                   return_value=False), \
+             patch('controller.systemtender_service.time', self._FakeClock()):
+            result = service.delete_systemtender('bench-tender', force=True)
+        assert result['result'] == 'FAILURE'
+        assert 'job-stuck' in result['error']
+        service.archive_repo.drop_database.assert_not_called()
+
+    def test_delete_proceeds_when_job_history_is_gone(self):
+        """A job unknown to the queue (cleaned history) holds no
+        connection: the delete proceeds."""
+        service = self._service_with_jobs(['job-gone'])
+        with patch('controller.systemtender_service.cancel_job_by_id', return_value=True), \
+             patch('controller.systemtender_service.job_reached_terminal_state',
+                   return_value=True), \
+             patch('controller.systemtender_service.time', self._FakeClock()):
+            result = service.delete_systemtender('bench-tender', force=True)
+        assert result['result'] == 'SUCCESS'
+        service.archive_repo.drop_database.assert_called_once()
+
+    def test_job_reached_terminal_state_maps_status(self):
+        from controller.systemtender_service import job_reached_terminal_state
+        fake_client = Mock()
+        fake_client.workspace = 'godon'
+        fake_client.get.return_value = {'status': 'Canceled'}
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is True
+        fake_client.get.return_value = {'status': 'Canceling'}
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is False
+
+    def test_job_reached_terminal_state_counts_404_as_gone(self):
+        from controller.systemtender_service import job_reached_terminal_state
+        fake_client = Mock()
+        fake_client.workspace = 'godon'
+        fake_client.get.side_effect = Exception('404 Not Found')
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is True
+
+
 class TestSystemtenderStop:
     """Test systemtender stop functionality"""
 

@@ -3,6 +3,7 @@ import hashlib
 import datetime
 import copy
 import os
+import time
 from dateutil.parser import parse
 
 from f.controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository, execute_query
@@ -43,6 +44,47 @@ def cancel_job_by_id(job_id: str, reason: str = None) -> bool:
     except Exception as e:
         logger.error(f"Failed to cancel Windmill job {job_id}: {e}")
         return False
+
+# ── delete quiesce bounds ────────────────────────────────────────────
+# A Windmill cancel is async: the job only reaches a terminal state
+# when the worker process dies. Dropping the archive DB before that
+# races a live connection pool - the exact race that poisons YB's
+# relcache ("database may have been dropped and recreated"; live
+# evidence 2026-09-30, godon#399).
+JOB_QUIESCE_POLL_SECONDS = 2  # poll cadence: cancels normally land in seconds
+JOB_QUIESCE_TIMEOUT_SECONDS = 60  # outer bound: a slow drain must not hang the flow
+
+# A job in one of these states has no running process, hence no open
+# archive DB connection.
+TERMINAL_JOB_STATES = ('completed', 'canceled', 'failed')
+
+
+def job_reached_terminal_state(job_id):
+    """True when the Windmill job is terminal (no process, no connection)."""
+    try:
+        client = Windmill()
+        job = client.get(f"/w/{client.workspace}/jobs_u/get/{job_id}")
+        status = str((job or {}).get('status', '')).lower()
+        return status in TERMINAL_JOB_STATES
+    except Exception as e:
+        # A job unknown to the queue (cleaned history) cannot hold a
+        # connection; any other error stays non-terminal so the bounded
+        # wait decides.
+        text = str(e).lower()
+        return '404' in text or 'not found' in text
+
+
+def wait_for_jobs_to_quiesce(job_ids,
+                             timeout_seconds=JOB_QUIESCE_TIMEOUT_SECONDS):
+    """Bounded wait until every job is terminal. Returns the stragglers."""
+    deadline = time.monotonic() + timeout_seconds
+    pending = list(job_ids)
+    while pending and time.monotonic() < deadline:
+        pending = [j for j in pending if not job_reached_terminal_state(j)]
+        if pending:
+            time.sleep(JOB_QUIESCE_POLL_SECONDS)
+    return pending
+
 
 def determine_config_shard(run_id, target_id, targets_count, config, parallel_runs_count):
     """Determine configuration shard for parallel runs using hash-based assignment with overlap
@@ -855,7 +897,6 @@ class SystemtenderService:
             self.archive_repo.set_shutdown_requested(__uuid_common_name, value=True)
 
             # Cancel all running worker jobs before dropping database
-            import time
             if worker_job_ids:
                 if not force:
                     # Future: Check if graceful shutdown was requested
@@ -883,7 +924,32 @@ class SystemtenderService:
 
                 logger.info(f"Cancelled {canceled_count}/{len(worker_job_ids)} worker jobs")
                 if failed_count > 0:
-                    logger.warning(f"{failed_count} worker jobs could not be cancelled")
+                    # Fail closed: a cancel that did not land leaves a live
+                    # worker connection, and dropping now is the race that
+                    # poisons the archive DB's relcache. The tender stays
+                    # visible; the delete can be retried.
+                    return {
+                        "result": "FAILURE",
+                        "error": (
+                            f"{failed_count} worker job(s) could not be cancelled - "
+                            "nothing dropped; retry the delete"
+                        ),
+                        "workers_cancelled": canceled_count
+                    }
+
+                # A landed cancel is still async: the job reaches a terminal
+                # state only when the worker process actually dies. Wait,
+                # bounded, before touching the database.
+                stragglers = wait_for_jobs_to_quiesce(worker_job_ids)
+                if stragglers:
+                    return {
+                        "result": "FAILURE",
+                        "error": (
+                            f"worker job(s) not terminal within "
+                            f"{JOB_QUIESCE_TIMEOUT_SECONDS}s - nothing dropped: "
+                            + ", ".join(stragglers)
+                        )
+                    }
 
             # Read group before metadata is removed
             det_cfg = systemtender_config.get('interference_detection', systemtender_config.get('detection', {}))
