@@ -383,6 +383,48 @@ class TestDeleteQuiesce:
         with patch('controller.systemtender_service.Windmill', return_value=fake_client):
             assert job_reached_terminal_state('job-x') is True
 
+    def test_job_reached_terminal_state_falls_back_to_completed_on_endpoint_error(self):
+        """The queue endpoint hard-errored (400-class) live 10-02 for a
+        job whose completed row existed; the completed-jobs probe must
+        see it terminal instead of wedging the delete closed."""
+        from controller.systemtender_service import job_reached_terminal_state
+        fake_client = Mock()
+        fake_client.workspace = 'godon'
+
+        def url_aware_get(url):
+            if 'get_result_maybe' not in url:
+                raise Exception('HTTP Error 400: Bad Request')
+            return {'completed': True, 'success': False,
+                    'result': {'result': 'FAILURE'}, 'started': True}
+
+        fake_client.get.side_effect = url_aware_get
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is True
+
+    def test_job_reached_terminal_state_fails_closed_when_probe_has_no_result(self):
+        """A completed-probe answer without a result (queued job) or an
+        erroring probe keeps the job non-terminal: the bounded wait
+        decides, never a guessed terminal."""
+        from controller.systemtender_service import job_reached_terminal_state
+        fake_client = Mock()
+        fake_client.workspace = 'godon'
+
+        def queued_answer(url):
+            if 'get_result_maybe' not in url:
+                raise Exception('HTTP Error 400: Bad Request')
+            return {'completed': False, 'started': False}
+
+        fake_client.get.side_effect = queued_answer
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is False
+
+        def probing_error(url):
+            raise Exception('HTTP Error 500: Internal Server Error')
+
+        fake_client.get.side_effect = probing_error
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is False
+
 
 class TestSystemtenderStop:
     """Test systemtender stop functionality"""
