@@ -71,7 +71,26 @@ def job_reached_terminal_state(job_id):
         # connection; any other error stays non-terminal so the bounded
         # wait decides.
         text = str(e).lower()
-        return '404' in text or 'not found' in text
+        if '404' in text or 'not found' in text:
+            return True
+        # The queue endpoint can hard-error (400-class, seen live 10-02)
+        # for a job whose completed row already exists - the poller then
+        # reports a straggler forever while the job is long dead. Probe
+        # the completed-jobs endpoint the wmill SDK itself uses for sync
+        # waits; its answer is {completed, result, success, started}
+        # (GetCompletedJobResultMaybe200Response) - completed=True is the
+        # terminal receipt. Fail closed on anything else.
+        logger.warning(
+            f"jobs_u/get error polling {job_id}: {e} - probing completed endpoint")
+        try:
+            client2 = Windmill()
+            res = client2.get(
+                f"/w/{client2.workspace}"
+                f"/jobs_u/completed/get_result_maybe/{job_id}?get_started=true")
+            return isinstance(res, dict) and res.get('completed') is True
+        except Exception as e2:
+            logger.warning(f"completed-probe error for {job_id}: {e2}")
+            return False
 
 
 def wait_for_jobs_to_quiesce(job_ids,
