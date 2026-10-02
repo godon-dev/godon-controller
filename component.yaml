@@ -9,5 +9,6 @@ scripts:
       summary: "Godon Controller API"
       description: "Controller logic for managing Godon systemtender lifecycles"
       tag: "controller"  # Routes to controller worker group
+      timeout: 300  # cap, not duration; the delete's 60s quiesce guard raced the ~60s runtime default (10-02 smoke receipts)
 
 flows: []
