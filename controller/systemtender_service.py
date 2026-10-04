@@ -52,7 +52,12 @@ def cancel_job_by_id(job_id: str, reason: str = None) -> bool:
 # relcache ("database may have been dropped and recreated"; live
 # evidence 2026-09-30, godon#399).
 JOB_QUIESCE_POLL_SECONDS = 2  # poll cadence: cancels normally land in seconds
-JOB_QUIESCE_TIMEOUT_SECONDS = 60  # outer bound: a slow drain must not hang the flow
+# Outer bound for the cooperative exit wait. The worker polls
+# shutdown_requested at its checkpoints; observed exit latency is
+# phase-dependent and exceeded 60s live (10-03: six deletes refused at
+# 62.7s on a clean estate). 180 covers the worst observed checkpoint
+# latency; the drop still happens only after confirmed death.
+JOB_QUIESCE_TIMEOUT_SECONDS = 180
 
 # A job in one of these states has no running process, hence no open
 # archive DB connection.
