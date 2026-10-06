@@ -635,7 +635,86 @@ class MetadataDatabaseRepository:
         ON {self.steerwish_events_table_name}(wish_id, at);
         """
         execute_query(db_config, query)
+
+        query = """
+        CREATE TABLE IF NOT EXISTS steerwish_lifecycle
+        (
+        wish_id uuid PRIMARY KEY,
+        state VARCHAR(32) NOT NULL,
+        reason TEXT,
+        claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+        execute_query(db_config, query)
+
         logger.info("Ensured steerwish tables exist")
+
+    def claim_wish_deletion(self, wish_id, stale_after_seconds=300):
+        """Atomically claim the steerwish deletion executor slot.
+
+        Same single-flight idiom as the systemtender lifecycle
+        (designs/2026-10-03, lifted to wishes): exactly one executor per
+        wish. Takeover on re-DELETE via a stale claim (executor dead —
+        the component timeout bounds every run) or a deletion-failed
+        state (its executor already returned, retry is free).
+        """
+        db_config = self._get_db_config()
+
+        query = f"""
+        INSERT INTO steerwish_lifecycle (wish_id, state, reason, claimed_at)
+        VALUES ('{wish_id}', 'deleting', NULL, NOW())
+        ON CONFLICT (wish_id) DO UPDATE
+        SET state = 'deleting', reason = NULL, claimed_at = NOW()
+        WHERE steerwish_lifecycle.state = 'deletion-failed'
+           OR steerwish_lifecycle.claimed_at < NOW() - INTERVAL '{int(stale_after_seconds)} seconds'
+        RETURNING wish_id;
+        """
+
+        rows = execute_query(db_config, query, with_result=True)
+        claimed = bool(rows)
+        if claimed:
+            logger.info(f"Deletion claim taken for steerwish: {wish_id}")
+        return claimed
+
+    def get_wish_lifecycle(self, wish_id):
+        """Deletion state for one wish, or None when no marker stands."""
+        db_config = self._get_db_config()
+
+        query = f"SELECT state, reason FROM steerwish_lifecycle WHERE wish_id = '{wish_id}';"
+        rows = execute_query(db_config, query, with_result=True) or []
+        if not rows:
+            return None
+        return {"state": rows[0][0], "reason": rows[0][1]}
+
+    def get_all_wish_lifecycle(self):
+        """Deletion states for all wishes: {id_str: state}."""
+        db_config = self._get_db_config()
+
+        query = "SELECT wish_id, state FROM steerwish_lifecycle;"
+        rows = execute_query(db_config, query, with_result=True) or []
+        return {str(r[0]): r[1] for r in rows}
+
+    def set_wish_lifecycle(self, wish_id, state, reason=None):
+        """Record a lifecycle transition (executor-provided state + reason)."""
+        db_config = self._get_db_config()
+        reason_escaped = (reason or "").replace("'", "''")
+
+        query = f"""
+        INSERT INTO steerwish_lifecycle (wish_id, state, reason, claimed_at)
+        VALUES ('{wish_id}', '{state}', '{reason_escaped}', NOW())
+        ON CONFLICT (wish_id) DO UPDATE
+        SET state = '{state}', reason = '{reason_escaped}', claimed_at = NOW();
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Lifecycle '{state}' for steerwish: {wish_id}")
+
+    def remove_wish_lifecycle(self, wish_id):
+        """Remove the lifecycle row (wish gone, or was never there)."""
+        db_config = self._get_db_config()
+
+        query = f"DELETE FROM steerwish_lifecycle WHERE wish_id = '{wish_id}';"
+        execute_query(db_config, query)
 
     def update_steerwish_terms(self, wish_id, band, limits, budget, claims=None,
                                terms=None):

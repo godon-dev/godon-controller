@@ -229,7 +229,16 @@ class SteerwishService:
             # the mirror moved: the derived state may have moved with it
             row = self.repo.fetch_steerwish_by_id(wish_id)
         events = self.repo.fetch_steerwish_events(wish_id)
-        return self._format_wish(row, events)
+        wish = self._format_wish(row, events)
+
+        # Deletion state machine overrides the derived state (the same
+        # lift the tenders run): while the marker stands, the wish IS
+        # deleting (or deletion-failed with its reason). Poll until 404.
+        lifecycle = self.repo.get_wish_lifecycle(wish_id)
+        if lifecycle:
+            wish['state'] = lifecycle['state']
+            wish['deletion_reason'] = lifecycle.get('reason')
+        return wish
 
     def list_steerwishes(self):
         """Summaries (no event history), newest first. The fold-in runs
@@ -240,7 +249,13 @@ class SteerwishService:
             if row[2] != 'closed':
                 self._fold_in_book(str(row[0]))
         rows = self.repo.fetch_steerwishes_list()
-        return [self._format_summary(row) for row in rows]
+        # Deletion markers ride on top of the derived state.
+        markers = self.repo.get_all_wish_lifecycle()
+        summaries = [self._format_summary(row) for row in rows]
+        for summary in summaries:
+            if summary.get('id') in markers:
+                summary['state'] = markers[summary['id']]
+        return summaries
 
     def close_steerwish(self, wish_id):
         """Append the 'closed' event; idempotent on already-closed wishes.
@@ -327,17 +342,83 @@ class SteerwishService:
         return self.get_steerwish(wish_id)
 
     def delete_steerwish(self, wish_id):
-        """Administrative purge, holder's act. Closes first (unassign +
-        dial revert), then removes the registry rows - events cascade.
-        Deletion is forgetting, not stopping; the causal book page is
-        purged by its own delete path (paired change)."""
-        wish = self.get_steerwish(wish_id)
-        if wish is None:
-            return None
-        self.close_steerwish(wish_id)
-        self.repo.delete_steerwish(wish_id)
-        logger.info(f"Steerwish purged: {wish_id}")
-        return {'deleted': wish_id, 'state_at_purge': wish.get('state')}
+        """Mark-and-forget: the async executor behind DELETE's 202.
+
+        The api enqueues this script and answers 202 immediately; THIS
+        run is the deletion executor. Idempotent, single-flight — the
+        same state machine the tenders run (designs/2026-10-03, lifted
+        to wishes 10-06):
+
+        - claim the executor slot; a live claim means another executor
+          is mid-flight — re-DELETE rides along, the client polls
+        - close first: the owner's act (unassign + dial revert) —
+          idempotent on already-closed wishes, so retries are free;
+          causal unreachable -> deletion-failed, the client retries
+        - remove the registry rows LAST (events cascade): the row is
+          the finalizer, the wish stays visible in "deleting" until
+          it goes. The book page is purged by causal's own paired
+          delete path.
+
+        GET answers the state machine ("deleting" / "deletion-failed"
+        with the reason); 404 is the deletion-done receipt.
+        """
+        try:
+            self._ensure_registry()
+            if self.repo.fetch_steerwish_by_id(wish_id) is None:
+                # gone — purged by an earlier executor, or never was
+                self.repo.remove_wish_lifecycle(wish_id)
+                logger.info(f"Delete of steerwish {wish_id}: already gone")
+                return {
+                    "result": "SUCCESS",
+                    "data": {"wish_id": wish_id, "delete_type": "already-gone"},
+                }
+
+            # Single-flight claim: exactly one executor per wish.
+            if not self.repo.claim_wish_deletion(wish_id):
+                lifecycle = self.repo.get_wish_lifecycle(wish_id) or {}
+                return {
+                    "result": "SUCCESS",
+                    "data": {
+                        "wish_id": wish_id,
+                        "status": lifecycle.get("state", "deleting"),
+                        "reason": lifecycle.get("reason"),
+                        "note": "deletion already in progress",
+                    }
+                }
+
+            def _fail(reason):
+                logger.error(f"Steerwish deletion failed for {wish_id}: {reason}")
+                self.repo.set_wish_lifecycle(wish_id, 'deletion-failed', reason)
+                return {
+                    "result": "FAILURE",
+                    "error": reason,
+                    "data": {"wish_id": wish_id, "status": "deletion-failed"},
+                }
+
+            # Close first — the owner's act, idempotent on already-closed.
+            try:
+                closed = self.close_steerwish(wish_id)
+                if closed is None:
+                    return _fail("wish vanished mid-deletion; retry the delete")
+            except Exception as e:
+                return _fail(
+                    f"causal close failed: {e} - nothing forgotten; retry the delete"
+                )
+
+            # The registry row is the finalizer: removed last, so the
+            # wish stays visible in "deleting" until everything has
+            # landed. From the client's side, GET answering 404 is the
+            # deletion-done receipt.
+            self.repo.delete_steerwish(wish_id)
+            self.repo.remove_wish_lifecycle(wish_id)
+            logger.info(f"Steerwish purged: {wish_id}")
+            return {
+                "result": "SUCCESS",
+                "data": {"wish_id": wish_id, "delete_type": "executed"},
+            }
+        except Exception as e:
+            logger.error(f"Failed to delete steerwish {wish_id}: {e}")
+            return {"result": "FAILURE", "error": str(e)}
 
     # ── the plan ask + assignment (the controller asks, never computes) ──
 
