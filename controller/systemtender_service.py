@@ -70,11 +70,21 @@ TERMINAL_JOB_STATES = ('completed', 'canceled', 'failed')
 
 
 def job_reached_terminal_state(job_id):
-    """True when the Windmill job is terminal (no process, no connection)."""
+    """True when the Windmill job is terminal (no process, no connection).
+
+    Shape-proof across windmill generations: pre-v2 jobs_u/get returns
+    {status: "completed"|"canceled"|"failed"|"running"|...}; v2 (1.623+)
+    returns {type: "CompletedJob"|"CanceledJob"|...} with NO status
+    field — a clean 200 the old reader parsed as forever-running (live
+    receipt 10-06: eight orphan markers flagged deletion-failed while
+    every target job lay completed). Read status, then type, strip the
+    v2 'Job' suffix, and match the terminal set.
+    """
     try:
         client = Windmill()
         job = client.get(f"/w/{client.workspace}/jobs_u/get/{job_id}")
-        status = str((job or {}).get('status', '')).lower()
+        raw = (job or {}).get('status') or (job or {}).get('type') or ''
+        status = str(raw).lower().removesuffix('job')
         return status in TERMINAL_JOB_STATES
     except Exception as e:
         # A job unknown to the queue (cleaned history) cannot hold a
