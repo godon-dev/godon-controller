@@ -37,6 +37,19 @@ WISH_ID = '550e8400-e29b-41d4-a716-446655440000'
 CREATED_AT = datetime(2026, 9, 10, 10, 30, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _no_wish_deletion_markers(monkeypatch):
+    """No deletion markers unless a test plants one: the lifecycle reads
+    must never reach a real database in unit tests. Tests that want a
+    marker patch the instance methods (instance attrs shadow these)."""
+    monkeypatch.setattr(
+        'controller.steerwish_service.MetadataDatabaseRepository.get_wish_lifecycle',
+        lambda self, wish_id: None)
+    monkeypatch.setattr(
+        'controller.steerwish_service.MetadataDatabaseRepository.get_all_wish_lifecycle',
+        lambda self, wish_id=None: {})
+
+
 def _wish_row(state='declared'):
     return (
         WISH_ID,
@@ -56,6 +69,10 @@ def _service_with_repo(wish_row, events):
         repo = repo_cls.return_value
         repo.fetch_steerwish_by_id.return_value = wish_row
         repo.fetch_steerwish_events.return_value = events
+        # the repo is a bare Mock: give the lifecycle reads inert answers
+        # (the autouse fixture guards the real class, not this mock)
+        repo.get_wish_lifecycle.return_value = None
+        repo.get_all_wish_lifecycle.return_value = {}
         service = steerwish_service.SteerwishService({'database': 'meta_data'})
     return service, repo
 
@@ -562,6 +579,7 @@ class TestSteerwishService:
             repo = repo_cls.return_value
             repo.fetch_steerwish_by_id.side_effect = [open_row, closed_row]
             repo.fetch_steerwish_events.return_value = _events('declared', 'landed', 'closed')
+            repo.get_wish_lifecycle.return_value = None
             service = steerwish_service.SteerwishService({'database': 'meta_data'})
 
             wish = service.close_steerwish(WISH_ID)
@@ -958,3 +976,70 @@ class TestSenderLivenessAtTheDoor:
         write_a.assert_not_called()
         errors = self._stamped(event)
         assert any('unreachable' in e for e in errors), errors
+
+
+class TestSteerwishDeletion:
+    """The wish deletion state machine (designs/2026-10-03, lifted to
+    wishes): single-flight claim, close before forgetting, registry
+    row as finalizer, deletion-failed on causal trouble."""
+
+    def _service(self):
+        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service.repo = Mock()
+        service.repo.fetch_steerwish_by_id.return_value = _wish_row()
+        service.repo.claim_wish_deletion.return_value = True
+        service.repo.get_wish_lifecycle.return_value = None
+        # close rides the folded view; keep it inert, the executor
+        # tests target the deletion machinery, not the book mirror
+        service.get_steerwish = Mock(return_value={
+            'id': WISH_ID, 'state': 'declared'})
+        service.close_steerwish = Mock(return_value={
+            'id': WISH_ID, 'state': 'closed'})
+        return service
+
+    def test_purge_closes_then_removes_rows_last(self):
+        service = self._service()
+        result = service.delete_steerwish(WISH_ID)
+        assert result['result'] == 'SUCCESS'
+        assert result['data']['delete_type'] == 'executed'
+        # the owner's act ran, then the finalizer row went last
+        service.close_steerwish.assert_called_once_with(WISH_ID)
+        service.repo.delete_steerwish.assert_called_once_with(WISH_ID)
+        service.repo.remove_wish_lifecycle.assert_called_once_with(WISH_ID)
+
+    def test_purge_is_idempotent_when_wish_already_gone(self):
+        service = self._service()
+        service.repo.fetch_steerwish_by_id.return_value = None
+        result = service.delete_steerwish(WISH_ID)
+        assert result['result'] == 'SUCCESS'
+        assert result['data']['delete_type'] == 'already-gone'
+        # the stale lifecycle row is swept with it
+        service.repo.remove_wish_lifecycle.assert_called_once_with(WISH_ID)
+        service.close_steerwish.assert_not_called()
+        service.repo.delete_steerwish.assert_not_called()
+
+    def test_purge_rides_along_when_an_executor_holds_the_claim(self):
+        service = self._service()
+        service.repo.claim_wish_deletion.return_value = False
+        service.repo.get_wish_lifecycle.return_value = {
+            'state': 'deleting', 'reason': None}
+        result = service.delete_steerwish(WISH_ID)
+        assert result['result'] == 'SUCCESS'
+        assert result['data']['status'] == 'deleting'
+        service.close_steerwish.assert_not_called()
+        service.repo.delete_steerwish.assert_not_called()
+
+    def test_purge_fails_closed_when_causal_close_fails(self):
+        service = self._service()
+        service.close_steerwish = Mock(
+            side_effect=RuntimeError('causal unreachable'))
+        result = service.delete_steerwish(WISH_ID)
+        assert result['result'] == 'FAILURE'
+        assert 'causal close failed' in result['error']
+        # deletion-failed flags the state machine; nothing forgotten
+        service.repo.set_wish_lifecycle.assert_called_once()
+        call_args = service.repo.set_wish_lifecycle.call_args.args
+        assert call_args[1] == 'deletion-failed'
+        assert 'causal' in call_args[2]
+        service.repo.delete_steerwish.assert_not_called()
+        service.repo.remove_wish_lifecycle.assert_not_called()
