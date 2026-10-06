@@ -408,6 +408,26 @@ class TestDeleteQuiesce:
         with patch('controller.systemtender_service.Windmill', return_value=fake_client):
             assert job_reached_terminal_state('job-x') is False
 
+    def test_job_reached_terminal_state_reads_v2_type_shape(self):
+        """Windmill 1.623+ v2 shape: jobs_u/get returns type
+        'CompletedJob' with NO status field (live receipt 10-06: eight
+        orphans read as forever-running under the old reader)."""
+        from controller.systemtender_service import job_reached_terminal_state
+        fake_client = Mock()
+        fake_client.workspace = 'godon'
+        fake_client.get.return_value = {'type': 'CompletedJob', 'workspace_id': 'godon'}
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is True
+        fake_client.get.return_value = {'type': 'CanceledJob'}
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is True
+        fake_client.get.return_value = {'type': 'RunningJob'}
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is False
+        fake_client.get.return_value = {'type': 'QueuedJob'}
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is False
+
     def test_job_reached_terminal_state_counts_404_as_gone(self):
         from controller.systemtender_service import job_reached_terminal_state
         fake_client = Mock()
