@@ -52,7 +52,17 @@ def cancel_job_by_id(job_id: str, reason: str = None) -> bool:
 # relcache ("database may have been dropped and recreated"; live
 # evidence 2026-09-30, godon#399).
 JOB_QUIESCE_POLL_SECONDS = 2  # poll cadence: cancels normally land in seconds
-JOB_QUIESCE_TIMEOUT_SECONDS = 60  # outer bound: a slow drain must not hang the flow
+# Outer bound for the death wait. Windmill ENFORCES cancels against
+# running jobs — the worker polls queue.canceled every 500ms (2s on
+# agent workers) and escalates SIGTERM (5s) -> SIGKILL + reap, so
+# expected cancel->death is ~8s (designs/2026-10-03, source-verified).
+# This bound exists to catch a wedged windmill, not a slow worker;
+# crossing it flags deletion-failed instead of waiting longer.
+JOB_QUIESCE_TIMEOUT_SECONDS = 30
+# A deletion claim older than this proves its executor dead: every
+# executor run is bounded by the script's component timeout (300s),
+# so no live owner can exist past this age. Re-DELETE takes over.
+JOB_CLAIM_STALE_SECONDS = 300
 
 # A job in one of these states has no running process, hence no open
 # archive DB connection.
@@ -414,13 +424,25 @@ class SystemtenderService:
                 eb_name = eb.get('name') if isinstance(eb, dict) else (eb[1] if isinstance(eb, (list, tuple)) and len(eb) > 1 else None)
                 eb_id = eb.get('id') if isinstance(eb, dict) else (eb[0] if isinstance(eb, (list, tuple)) else None)
                 if eb_name == systemtender_instance_name and eb_id:
-                    logger.info(f"Systemtender '{systemtender_instance_name}' already exists: {eb_id}. Skipping creation to prevent duplicate workers.")
+                    # Answer from the visible state, never a bare
+                    # "already exists" the caller can't parse
+                    # (receipt 10-03): a deleting tender says so, a
+                    # deletion-failed one points at the retry.
+                    existing_lifecycle = self.metadata_repo.get_lifecycle(str(eb_id))
+                    dup_status = existing_lifecycle['state'] if existing_lifecycle else "active"
+                    if dup_status == 'deleting':
+                        dup_message = "Systemtender is still deleting; poll GET until 404, then retry create"
+                    elif dup_status == 'deletion-failed':
+                        dup_message = "Systemtender deletion failed; re-DELETE to retry, or GET for the reason"
+                    else:
+                        dup_message = "Systemtender already exists, skipping duplicate creation"
+                    logger.info(f"Systemtender '{systemtender_instance_name}' already exists: {eb_id} (status: {dup_status}). Skipping creation to prevent duplicate workers.")
                     return {
                         "result": "SUCCESS",
                         "systemtender_id": eb_id,
                         "name": systemtender_instance_name,
-                        "status": "active",
-                        "message": "Systemtender already exists, skipping duplicate creation"
+                        "status": dup_status,
+                        "message": dup_message
                     }
 
             # Call systemtender preflight check synchronously before launching workers
@@ -711,12 +733,24 @@ class SystemtenderService:
                     'stale_threshold_secs': threshold,
                 }
 
+            # Deletion state machine overrides the liveness verdict:
+            # while the marker stands, the tender IS deleting (or
+            # deletion-failed, with its reason). GET is how the client
+            # watches the state machine (designs/2026-10-03): poll
+            # until this resource is gone entirely.
+            lifecycle = self.metadata_repo.get_lifecycle(systemtender_id)
+            deletion_reason = None
+            if lifecycle:
+                status = lifecycle['state']
+                deletion_reason = lifecycle.get('reason')
+
             return {
                 "result": "SUCCESS",
                 "data": {
                     "id": systemtender_meta_data_row[0][0],
                     "name": systemtender_meta_data_row[0][1],
                     "status": status,
+                    "deletion_reason": deletion_reason,
                     "liveness": liveness,
                     "createdAt": systemtender_meta_data_row[0][2].isoformat(),
                     "config": systemtender_meta_data_row[0][3]
@@ -882,25 +916,57 @@ class SystemtenderService:
             return {"result": "FAILURE", "error": str(e)}
 
     def delete_systemtender(self, systemtender_id, force=False):
-        """Delete a systemtender instance
+        """Mark-and-destroy: the async executor behind DELETE's 202.
 
-        Args:
-            systemtender_id: UUID of the systemtender to delete
-            force: If True, cancel workers immediately (for smoke test/cleanup)
-                   If False, check if shutdown flag is set first
+        The api enqueues this script and answers 202 immediately; THIS
+        run is the deletion executor. Idempotent, single-flight
+        (designs/2026-10-03):
 
-        For now: force=True for smoke test, force=False reserved for future graceful shutdown
+        - claim the executor slot; a live claim means another executor
+          is mid-flight — re-DELETE rides along, the client polls
+        - cancel worker jobs once: windmill ENFORCES death against
+          running processes (poll 500ms/2s, SIGTERM 5s, SIGKILL+reap;
+          ~8s bounded, source-verified 10-05)
+        - wait bounded for terminal job states; past the bound windmill
+          itself is wedged -> deletion-failed, the client retries
+        - drop the archive database ONLY after confirmed death — the
+          relcache race (#399) is the one non-negotiable
+        - remove the metadata row LAST: the row is the finalizer, the
+          tender stays visible in "deleting" until it goes
+
+        `force` is legacy: accepted for CLI compatibility, no longer
+        branches — there is no graceful-delete path left to bypass,
+        and shutdown_requested stays the graceful STOP mechanism.
         """
         try:
-            # Check if systemtender exists first
             self.metadata_repo.create_table()
             systemtender_meta_data_row = self.metadata_repo.fetch_meta_data(systemtender_id)
 
             if not systemtender_meta_data_row or len(systemtender_meta_data_row) == 0:
-                logger.warning(f"Systemtender with ID '{systemtender_id}' not found")
+                # The tender is gone — deleted by an earlier executor,
+                # or never existed. Both are a completed delete.
+                self.metadata_repo.remove_lifecycle(systemtender_id)
+                logger.info(f"Delete of systemtender {systemtender_id}: already gone")
                 return {
-                    "result": "FAILURE",
-                    "error": f"Systemtender with ID '{systemtender_id}' not found"
+                    "result": "SUCCESS",
+                    "data": {
+                        "systemtender_id": systemtender_id,
+                        "delete_type": "already-gone",
+                    }
+                }
+
+            # Single-flight claim: exactly one executor per tender.
+            if not self.metadata_repo.claim_for_deletion(
+                    systemtender_id, stale_after_seconds=JOB_CLAIM_STALE_SECONDS):
+                lifecycle = self.metadata_repo.get_lifecycle(systemtender_id) or {}
+                return {
+                    "result": "SUCCESS",
+                    "data": {
+                        "systemtender_id": systemtender_id,
+                        "status": lifecycle.get("state", "deleting"),
+                        "reason": lifecycle.get("reason"),
+                        "note": "deletion already in progress",
+                    }
                 }
 
             # Extract worker job IDs from metadata (4th column is definition/JSONB)
@@ -909,80 +975,54 @@ class SystemtenderService:
 
             __uuid_common_name = f"systemtender_{systemtender_id.replace('-', '_')}"
 
-            # Signal workers to stop heartbeating BEFORE anything else.
-            # Workers check this flag before registering in coordination tables.
-            # This prevents the race where a worker re-registers between
-            # coordination cleanup and actual job termination.
-            self.archive_repo.set_shutdown_requested(__uuid_common_name, value=True)
-
-            # Cancel all running worker jobs before dropping database
-            if worker_job_ids:
-                if not force:
-                    # Future: Check if graceful shutdown was requested
-                    shutdown_requested = self.archive_repo.get_shutdown_requested(__uuid_common_name)
-                    if not shutdown_requested:
-                        return {
-                            "result": "FAILURE",
-                            "error": "Systemtender has active workers. Use force=True to cancel immediately",
-                            "active_workers": len(worker_job_ids),
-                            "note": "Future: call stop_systemtender() for graceful shutdown first"
-                        }
-                    logger.info(f"Shutdown flag set, proceeding with delete for systemtender {systemtender_id}")
-
-                # Cancel workers (forced or graceful-shutdown-complete)
-                logger.info(f"Cancelling {len(worker_job_ids)} worker jobs for systemtender {systemtender_id}")
-                canceled_count = 0
-                failed_count = 0
-
-                for job_id in worker_job_ids:
-                    if cancel_job_by_id(job_id, reason=f"Deleting systemtender {systemtender_id}"):
-                        canceled_count += 1
-                    else:
-                        failed_count += 1
-                        logger.warning(f"Failed to cancel worker job {job_id}")
-
-                logger.info(f"Cancelled {canceled_count}/{len(worker_job_ids)} worker jobs")
-                if failed_count > 0:
-                    # Fail closed: a cancel that did not land leaves a live
-                    # worker connection, and dropping now is the race that
-                    # poisons the archive DB's relcache. The tender stays
-                    # visible; the delete can be retried.
-                    return {
-                        "result": "FAILURE",
-                        "error": (
-                            f"{failed_count} worker job(s) could not be cancelled - "
-                            "nothing dropped; retry the delete"
-                        ),
-                        "workers_cancelled": canceled_count
+            def _fail(reason):
+                """Flag deletion-failed and stop. The client (or a human)
+                retries with re-DELETE, which takes a fresh claim."""
+                logger.error(f"Deletion failed for systemtender {systemtender_id}: {reason}")
+                self.metadata_repo.set_lifecycle(systemtender_id, 'deletion-failed', reason)
+                return {
+                    "result": "FAILURE",
+                    "error": reason,
+                    "data": {
+                        "systemtender_id": systemtender_id,
+                        "status": "deletion-failed",
                     }
+                }
 
-                # A landed cancel is still async: the job reaches a terminal
-                # state only when the worker process actually dies. Wait,
-                # bounded, before touching the database.
-                stragglers = wait_for_jobs_to_quiesce(worker_job_ids)
-                if stragglers:
-                    return {
-                        "result": "FAILURE",
-                        "error": (
-                            f"worker job(s) not terminal within "
-                            f"{JOB_QUIESCE_TIMEOUT_SECONDS}s - nothing dropped: "
-                            + ", ".join(stragglers)
-                        )
-                    }
+            # Cancel once. A cancel that did not LAND (API error) leaves
+            # a live worker behind — dropping now is the relcache race
+            # (#399). Fail closed into deletion-failed.
+            canceled_count = 0
+            for job_id in worker_job_ids:
+                if not cancel_job_by_id(job_id, reason=f"Deleting systemtender {systemtender_id}"):
+                    return _fail(
+                        f"cancel refused by windmill API for job {job_id} - "
+                        "nothing dropped; retry the delete"
+                    )
+                canceled_count += 1
+            logger.info(f"Cancelled {canceled_count}/{len(worker_job_ids)} worker jobs for systemtender {systemtender_id}")
+
+            # Bounded wait for confirmed death. Expected ~8s (windmill
+            # SIGTERM->SIGKILL); past the bound, windmill is wedged.
+            stragglers = wait_for_jobs_to_quiesce(worker_job_ids)
+            if stragglers:
+                return _fail(
+                    f"worker job(s) not terminal within "
+                    f"{JOB_QUIESCE_TIMEOUT_SECONDS}s - windmill wedged, "
+                    "nothing dropped: " + ", ".join(stragglers)
+                )
 
             # Read group before metadata is removed
             det_cfg = systemtender_config.get('interference_detection', systemtender_config.get('detection', {}))
             group_id = det_cfg.get('group', systemtender_config.get('group', 'default'))
 
-            # Drop the archive database first — kills the worker's DB connection
-            # so it can't re-register in coordination tables after cleanup
+            # Drop the archive database — IF EXISTS, so a retry that
+            # already dropped is a no-op. Death is confirmed above: the
+            # relcache race (#399) is behind us from here on.
             self.archive_repo.drop_database(__uuid_common_name)
 
-            # Remove metadata
-            self.metadata_repo.remove_systemtender_meta(systemtender_id)
-
-            # Clean coordination state — safe now because workers already
-            # saw the shutdown flag and stopped heartbeating
+            # Clean coordination state — safe now because the worker
+            # processes are confirmed dead (canceled + reaped above).
             self.archive_repo.cleanup_coordination_state(systemtender_id)
 
             # Curves follow the systemtender: clear causal's in-memory registry
@@ -1010,13 +1050,20 @@ class SystemtenderService:
                 self.archive_repo.cleanup_group_lease(group_id)
                 logger.info(f"Purged group lease — last systemtender in group '{group_id}' deleted")
 
+            # The metadata row is the finalizer: removed LAST, so the
+            # tender stays visible in "deleting" until everything above
+            # has landed. From the client's side, GET answering 404 is
+            # the deletion-done receipt.
+            self.metadata_repo.remove_systemtender_meta(systemtender_id)
+            self.metadata_repo.remove_lifecycle(systemtender_id)
+
             logger.info(f"Successfully deleted systemtender: {systemtender_id}")
             return {
                 "result": "SUCCESS",
                 "data": {
                     "systemtender_id": systemtender_id,
-                    "delete_type": "force" if force else "graceful",
-                    "workers_cancelled": len(worker_job_ids)
+                    "delete_type": "executed",
+                    "workers_cancelled": canceled_count
                 }
             }
         except Exception as e:
@@ -1037,6 +1084,11 @@ class SystemtenderService:
                     "data": []
                 }
 
+            # Deletion markers ride on top: a tender being deleted (or
+            # deletion-failed) shows its state machine status, not the
+            # hardcoded "active" (designs/2026-10-03).
+            lifecycle_states = self.metadata_repo.get_all_lifecycle()
+
             configured_systemtenders = []
             for row in systemtender_meta_data_list:
                 systemtender_id = row[0]
@@ -1051,7 +1103,7 @@ class SystemtenderService:
                 configured_systemtenders.append({
                     "id": systemtender_id,
                     "name": name,
-                    "status": "active",
+                    "status": lifecycle_states.get(str(systemtender_id), "active"),
                     "createdAt": created_at
                 })
 

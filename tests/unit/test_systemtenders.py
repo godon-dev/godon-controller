@@ -301,6 +301,9 @@ class TestDeleteQuiesce:
         service = SystemtenderService.__new__(SystemtenderService)
         service.metadata_repo = Mock()
         service.metadata_repo.create_table.return_value = None
+        # the executor owns the claim; no marker stands at entry
+        service.metadata_repo.claim_for_deletion.return_value = True
+        service.metadata_repo.get_lifecycle.return_value = None
         definition = {
             'worker_job_ids': list(job_ids),
             'interference_detection': {'group': 'bench'},
@@ -325,7 +328,37 @@ class TestDeleteQuiesce:
              patch('controller.systemtender_service.time', self._FakeClock()):
             result = service.delete_systemtender('bench-tender', force=True)
         assert result['result'] == 'FAILURE'
-        assert 'could not be cancelled' in result['error']
+        assert 'cancel refused' in result['error']
+        # the state machine flags deletion-failed with the reason...
+        service.metadata_repo.set_lifecycle.assert_called_once()
+        call_args = service.metadata_repo.set_lifecycle.call_args.args
+        assert call_args[1] == 'deletion-failed'
+        assert 'job-1' in call_args[2]
+        # ...and nothing was dropped: the relcache race stays shut (#399)
+        service.archive_repo.drop_database.assert_not_called()
+        service.metadata_repo.remove_systemtender_meta.assert_not_called()
+
+    def test_delete_is_idempotent_when_tender_already_gone(self):
+        """Re-DELETE after a completed delete is a SUCCESS, not a 404."""
+        service = self._service_with_jobs(['job-1'])
+        service.metadata_repo.fetch_meta_data.return_value = []
+        result = service.delete_systemtender('bench-tender', force=True)
+        assert result['result'] == 'SUCCESS'
+        assert result['data']['delete_type'] == 'already-gone'
+        # the stale lifecycle row is swept with it
+        service.metadata_repo.remove_lifecycle.assert_called_once()
+
+    def test_delete_rides_along_when_an_executor_holds_the_claim(self):
+        """Single-flight: a live claim means another executor is running;
+        the re-DELETE answers the visible state and spawns nothing."""
+        service = self._service_with_jobs(['job-1'])
+        service.metadata_repo.claim_for_deletion.return_value = False
+        service.metadata_repo.get_lifecycle.return_value = {
+            'state': 'deleting', 'reason': None}
+        with patch('controller.systemtender_service.cancel_job_by_id', return_value=True):
+            result = service.delete_systemtender('bench-tender', force=True)
+        assert result['result'] == 'SUCCESS'
+        assert result['data']['status'] == 'deleting'
         service.archive_repo.drop_database.assert_not_called()
 
     def test_delete_waits_for_terminal_jobs_before_drop(self):
@@ -656,6 +689,8 @@ class TestLivenessStalenessFloor:
     def _service_with_state(self, state):
         service = SystemtenderService.__new__(SystemtenderService)
         service.metadata_repo = Mock()
+        # no deletion marker: the liveness verdict decides alone
+        service.metadata_repo.get_lifecycle.return_value = None
         # row structure: [id, name, creation_ts, definition]
         service.metadata_repo.fetch_meta_data.return_value = [
             ('row-id', 'test-tender', datetime.datetime(2026, 9, 26, 18, 0, 0), '{}')]

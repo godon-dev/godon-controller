@@ -359,7 +359,7 @@ jobs:
           # Delete with force=true
           result = delete_systemtender(request_data=dict(systemtender_id=systemtender_id_3, force=True))
           assert result['result'] == 'SUCCESS', f'Force delete failed: {result}'
-          assert result['data']['delete_type'] == 'force'
+          assert result['data']['delete_type'] == 'executed'
           print('✓ Force deleted systemtender')
 
           # Test 11: Test delete with force=false (safe mode)

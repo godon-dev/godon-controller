@@ -356,6 +356,100 @@ class MetadataDatabaseRepository:
 
         execute_query(db_config, query)
         logger.info(f"Ensured metadata table exists: {self.systemtender_table_name}")
+        self.ensure_lifecycle_table()
+
+    def ensure_lifecycle_table(self):
+        """Create the systemtender lifecycle table.
+
+        Deletion state machine bookkeeping (designs/2026-10-03): one row
+        per tender being deleted. 'deleting' while the executor runs,
+        'deletion-failed' when it could not finish. Rows are transient —
+        they vanish with the tender, whose metadata row is the
+        finalizer.
+        """
+        db_config = self._get_db_config()
+
+        query = """
+        CREATE TABLE IF NOT EXISTS systemtender_lifecycle
+        (
+        systemtender_id uuid PRIMARY KEY,
+        state VARCHAR(32) NOT NULL,
+        reason TEXT,
+        claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+
+        execute_query(db_config, query)
+        logger.info("Ensured lifecycle table exists: systemtender_lifecycle")
+
+    def claim_for_deletion(self, systemtender_id, stale_after_seconds=300):
+        """Atomically claim the deletion executor slot.
+
+        Single-flight: exactly one executor per tender. Returns True
+        when this run owns the deletion. Two takeover paths keep the
+        machine live on re-DELETE: a stale claim (its executor died —
+        the component timeout bounds every run, so claim age past the
+        bound proves death) and a deletion-failed state (its executor
+        already returned, retry is free). A live claim returns False:
+        the re-DELETE rides along and the client keeps polling.
+        """
+        db_config = self._get_db_config()
+
+        query = f"""
+        INSERT INTO systemtender_lifecycle (systemtender_id, state, reason, claimed_at)
+        VALUES ('{systemtender_id}', 'deleting', NULL, NOW())
+        ON CONFLICT (systemtender_id) DO UPDATE
+        SET state = 'deleting', reason = NULL, claimed_at = NOW()
+        WHERE systemtender_lifecycle.state = 'deletion-failed'
+           OR systemtender_lifecycle.claimed_at < NOW() - INTERVAL '{int(stale_after_seconds)} seconds'
+        RETURNING systemtender_id;
+        """
+
+        rows = execute_query(db_config, query, with_result=True)
+        claimed = bool(rows)
+        if claimed:
+            logger.info(f"Deletion claim taken for systemtender: {systemtender_id}")
+        return claimed
+
+    def get_lifecycle(self, systemtender_id):
+        """Deletion state for one tender, or None when no marker stands."""
+        db_config = self._get_db_config()
+
+        query = f"SELECT state, reason FROM systemtender_lifecycle WHERE systemtender_id = '{systemtender_id}';"
+        rows = execute_query(db_config, query, with_result=True) or []
+        if not rows:
+            return None
+        return {"state": rows[0][0], "reason": rows[0][1]}
+
+    def get_all_lifecycle(self):
+        """Deletion states for all tenders: {id_str: state}."""
+        db_config = self._get_db_config()
+
+        query = "SELECT systemtender_id, state FROM systemtender_lifecycle;"
+        rows = execute_query(db_config, query, with_result=True) or []
+        return {str(r[0]): r[1] for r in rows}
+
+    def set_lifecycle(self, systemtender_id, state, reason=None):
+        """Record a lifecycle transition (executor-provided state + reason)."""
+        db_config = self._get_db_config()
+        reason_escaped = (reason or "").replace("'", "''")
+
+        query = f"""
+        INSERT INTO systemtender_lifecycle (systemtender_id, state, reason, claimed_at)
+        VALUES ('{systemtender_id}', '{state}', '{reason_escaped}', NOW())
+        ON CONFLICT (systemtender_id) DO UPDATE
+        SET state = '{state}', reason = '{reason_escaped}', claimed_at = NOW();
+        """
+
+        execute_query(db_config, query)
+        logger.info(f"Lifecycle '{state}' for systemtender: {systemtender_id}")
+
+    def remove_lifecycle(self, systemtender_id):
+        """Remove the lifecycle row (tender gone, or was never there)."""
+        db_config = self._get_db_config()
+
+        query = f"DELETE FROM systemtender_lifecycle WHERE systemtender_id = '{systemtender_id}';"
+        execute_query(db_config, query)
 
     def create_credentials_table(self):
         """Create the credentials catalog table"""
