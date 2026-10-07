@@ -482,6 +482,47 @@ class TestDeleteQuiesce:
         with patch('controller.systemtender_service.Windmill', return_value=fake_client):
             assert job_reached_terminal_state('job-x') is True
 
+    def test_job_reached_terminal_state_handles_raw_response_surface(self):
+        """The worker-image SDK returns raw httpx.Response objects, not
+        dicts (live receipt 10-07: "jobs_u/get error polling ...:
+        'Response' object has no attribute 'get'" - the reader misread
+        every answer and the deletion looped deletion-failed forever).
+        A 404 Response plus a started:false probe is the
+        cancelled-never-started receipt: terminal. A RunningJob body on
+        the same surface stays non-terminal."""
+        from controller.systemtender_service import job_reached_terminal_state
+
+        class FakeResponse:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                if self._payload is None:
+                    raise ValueError('no body')
+                return self._payload
+
+        fake_client = Mock()
+        fake_client.workspace = 'godon'
+
+        def gone_response(url):
+            if 'get_result_maybe' not in url:
+                return FakeResponse(404, None)
+            return FakeResponse(200, {'completed': False, 'started': False})
+
+        fake_client.get.side_effect = gone_response
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is True
+
+        def running_response(url):
+            if 'get_result_maybe' not in url:
+                return FakeResponse(200, {'type': 'RunningJob'})
+            return FakeResponse(200, {'completed': False, 'started': True})
+
+        fake_client.get.side_effect = running_response
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is False
+
     def test_job_reached_terminal_state_fails_closed_when_running_or_probe_errors(self):
         """A completed-probe answer with started:true but no completed
         receipt (job running or mid-death), or an erroring probe, keeps
