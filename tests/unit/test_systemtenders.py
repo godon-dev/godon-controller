@@ -454,20 +454,49 @@ class TestDeleteQuiesce:
         with patch('controller.systemtender_service.Windmill', return_value=fake_client):
             assert job_reached_terminal_state('job-x') is True
 
-    def test_job_reached_terminal_state_fails_closed_when_probe_has_no_result(self):
-        """A completed-probe answer without a result (queued job) or an
-        erroring probe keeps the job non-terminal: the bounded wait
-        decides, never a guessed terminal."""
+    def test_job_reached_terminal_state_counts_cancelled_never_started_as_gone(self):
+        """Post-cancel, started:false means the job never ran and never
+        will: an accepted windmill cancel removes queued job rows
+        outright (10-05 source receipt; live 10-07: smoke stress
+        deletions left jobs_u/get gone - 404 - and the probe answering
+        started:false, completed:false, so the old fail-closed looped
+        deletion-failed forever and re-DELETE repeated the miss
+        deterministically). Nothing that never ran can hold an
+        archive-DB connection: terminal. The falsy-body shape (the SDK
+        surfacing the missing row as an empty answer) is the same
+        receipt, terminal for the same reason."""
         from controller.systemtender_service import job_reached_terminal_state
         fake_client = Mock()
         fake_client.workspace = 'godon'
 
         def queued_answer(url):
             if 'get_result_maybe' not in url:
-                raise Exception('HTTP Error 400: Bad Request')
+                raise Exception('HTTP Error 404: Not Found')
             return {'completed': False, 'started': False}
 
         fake_client.get.side_effect = queued_answer
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is True
+
+        fake_client.get = Mock(return_value=None)
+        with patch('controller.systemtender_service.Windmill', return_value=fake_client):
+            assert job_reached_terminal_state('job-x') is True
+
+    def test_job_reached_terminal_state_fails_closed_when_running_or_probe_errors(self):
+        """A completed-probe answer with started:true but no completed
+        receipt (job running or mid-death), or an erroring probe, keeps
+        the job non-terminal: the bounded wait decides, never a guessed
+        terminal."""
+        from controller.systemtender_service import job_reached_terminal_state
+        fake_client = Mock()
+        fake_client.workspace = 'godon'
+
+        def running_answer(url):
+            if 'get_result_maybe' not in url:
+                raise Exception('HTTP Error 400: Bad Request')
+            return {'completed': False, 'started': True}
+
+        fake_client.get.side_effect = running_answer
         with patch('controller.systemtender_service.Windmill', return_value=fake_client):
             assert job_reached_terminal_state('job-x') is False
 

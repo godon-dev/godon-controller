@@ -83,6 +83,15 @@ def job_reached_terminal_state(job_id):
     try:
         client = Windmill()
         job = client.get(f"/w/{client.workspace}/jobs_u/get/{job_id}")
+        if not job:
+            # No job row at all: an accepted cancel removes queued jobs
+            # outright (10-05 source receipt; live 10-07: smoke stress
+            # deletions - row gone, probe started:false). Nothing that
+            # never ran can hold an archive-DB connection. The old code
+            # fell through to status='' -> non-terminal here and looped
+            # deletion-failed forever; re-DELETE repeated the miss
+            # deterministically.
+            return True
         raw = (job or {}).get('status') or (job or {}).get('type') or ''
         status = str(raw).lower().removesuffix('job')
         return status in TERMINAL_JOB_STATES
@@ -107,7 +116,19 @@ def job_reached_terminal_state(job_id):
             res = client2.get(
                 f"/w/{client2.workspace}"
                 f"/jobs_u/completed/get_result_maybe/{job_id}?get_started=true")
-            return isinstance(res, dict) and res.get('completed') is True
+            if isinstance(res, dict):
+                if res.get('completed') is True:
+                    return True
+                if res.get('started') is False:
+                    # Post-cancel started:false: the job never ran and,
+                    # the cancel being accepted, never will - windmill
+                    # removes queued jobs on cancel (10-05 source
+                    # receipt; live 10-07: smoke stress deletions looped
+                    # deletion-failed here and re-DELETE repeated the
+                    # miss deterministically). No process ever existed,
+                    # hence no archive-DB connection.
+                    return True
+            return False
         except Exception as e2:
             logger.warning(f"completed-probe error for {job_id}: {e2}")
             return False
