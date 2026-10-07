@@ -69,6 +69,35 @@ JOB_CLAIM_STALE_SECONDS = 300
 TERMINAL_JOB_STATES = ('completed', 'canceled', 'failed')
 
 
+def _unwrap_wmill(resp):
+    """Normalize the wmill SDK surface to a dict or None.
+
+    The SDK differs across images: some return parsed JSON dicts, the
+    worker image (windmill-full) returns raw httpx.Response objects -
+    live receipt 10-07: "jobs_u/get error polling ...: 'Response'
+    object has no attribute 'get'" - the reader then misread every
+    answer and the deletion looped deletion-failed forever.
+    """
+    if resp is None:
+        return None
+    if isinstance(resp, dict):
+        return resp
+    body = getattr(resp, "json", None)
+    if body is None:
+        return None
+    try:
+        data = body()
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _wmill_status(resp):
+    """HTTP status off a raw Response surface (None for dict surfaces)."""
+    status = getattr(resp, "status_code", None)
+    return status if isinstance(status, int) else None
+
+
 def job_reached_terminal_state(job_id):
     """True when the Windmill job is terminal (no process, no connection).
 
@@ -78,21 +107,23 @@ def job_reached_terminal_state(job_id):
     field — a clean 200 the old reader parsed as forever-running (live
     receipt 10-06: eight orphan markers flagged deletion-failed while
     every target job lay completed). Read status, then type, strip the
-    v2 'Job' suffix, and match the terminal set.
+    v2 'Job' suffix, and match the terminal set. The SDK surface itself
+    also varies: the worker image hands back raw httpx.Response objects
+    (live receipt 10-07) - _unwrap_wmill normalizes before any read.
     """
     try:
         client = Windmill()
-        job = client.get(f"/w/{client.workspace}/jobs_u/get/{job_id}")
+        resp = client.get(f"/w/{client.workspace}/jobs_u/get/{job_id}")
+        if _wmill_status(resp) == 404:
+            resp = None  # no job row: normalized to the gone receipt
+        job = _unwrap_wmill(resp)
         if not job:
             # No job row at all: an accepted cancel removes queued jobs
             # outright (10-05 source receipt; live 10-07: smoke stress
             # deletions - row gone, probe started:false). Nothing that
-            # never ran can hold an archive-DB connection. The old code
-            # fell through to status='' -> non-terminal here and looped
-            # deletion-failed forever; re-DELETE repeated the miss
-            # deterministically.
+            # never ran can hold an archive-DB connection.
             return True
-        raw = (job or {}).get('status') or (job or {}).get('type') or ''
+        raw = job.get('status') or job.get('type') or ''
         status = str(raw).lower().removesuffix('job')
         return status in TERMINAL_JOB_STATES
     except Exception as e:
@@ -113,9 +144,10 @@ def job_reached_terminal_state(job_id):
             f"jobs_u/get error polling {job_id}: {e} - probing completed endpoint")
         try:
             client2 = Windmill()
-            res = client2.get(
+            res2 = client2.get(
                 f"/w/{client2.workspace}"
                 f"/jobs_u/completed/get_result_maybe/{job_id}?get_started=true")
+            res = _unwrap_wmill(res2)
             if isinstance(res, dict):
                 if res.get('completed') is True:
                     return True
