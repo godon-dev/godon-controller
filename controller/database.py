@@ -139,7 +139,24 @@ class ArchiveDatabaseRepository:
         finished: the tender stamped its own walk's end (declared fact).
         age/interval: the heartbeat, for the reader's presumed-dead
         fallback (silence itself is undeclarable — a dead process can
-        not announce it). Returns None when the row or db is absent.
+        not announce it).
+
+        No verdict when the table cannot be read: 'does not exist'
+        covers the create window (executor still building the table,
+        including YB's per-backend DDL-visibility blur) and the
+        create-failed rollback (database dropped) — the lifecycle row
+        speaks then.
+
+        The pre-10-10 column-shape fallback ladder is gone: it was
+        born in the same commit as the columns (dc38db9, 09-25) and
+        only guarded two days of schema drift; tables are per-tender
+        and born with the creating controller's schema, and the
+        estate's clean-slate reinstalls leave nothing older. An
+        ancient table, should one ever surface, reads as 'no liveness
+        detail' — coarse, visible, non-crashing; the cure for that
+        case is a migration, not a read ladder (live receipt 10-10:
+        the ladder's own fallback escaped and failed a live smoke
+        create).
         """
         db_config = self.base_config.copy()
         db_config['database'] = systemtender_db_name
@@ -152,50 +169,11 @@ class ArchiveDatabaseRepository:
                 with_result=True,
             )
         except Exception as e:
-            # rollouts where a column does not exist yet: read the two
-            # older shapes (age + interval, then age only)
-            if 'finished_at' in str(e) and 'does not exist' in str(e):
-                try:
-                    rows = execute_query(
-                        db_config,
-                        "SELECT FALSE, "
-                        "EXTRACT(EPOCH FROM (now() - updated_at)), "
-                        "beat_interval_secs FROM systemtender_state LIMIT 1",
-                        with_result=True,
-                    )
-                except Exception as e2:
-                    if 'beat_interval_secs' in str(e2) and 'does not exist' in str(e2):
-                        rows = execute_query(
-                            db_config,
-                            "SELECT FALSE, "
-                            "EXTRACT(EPOCH FROM (now() - updated_at)), NULL "
-                            "FROM systemtender_state LIMIT 1",
-                            with_result=True,
-                        )
-                    elif 'does not exist' in str(e2):
-                        # the database or its state table vanished between
-                        # reads - no table, no verdict
-                        return None
-                    else:
-                        raise
-            elif 'beat_interval_secs' in str(e) and 'does not exist' in str(e):
-                rows = execute_query(
-                    db_config,
-                    "SELECT FALSE, "
-                    "EXTRACT(EPOCH FROM (now() - updated_at)), NULL "
-                    "FROM systemtender_state LIMIT 1",
-                    with_result=True,
-                )
-            elif 'does not exist' in str(e):
-                # The archive database (or its state table) is absent:
-                # a row still in `creating` (the executor has not made
-                # it yet), or a create-failed one whose rollback dropped
-                # it. No table, no verdict - the lifecycle row speaks
-                # (designs/2026-10-10; live receipt: controller CI,
-                # integration job, 2026-10-10).
+            if 'does not exist' in str(e):
+                # database, table, or column absent - nothing to read,
+                # no verdict
                 return None
-            else:
-                raise
+            raise
         if rows and rows[0][0] is not None:
             return {
                 'finished': bool(rows[0][0]),
