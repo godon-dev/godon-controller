@@ -32,9 +32,11 @@ from controller.systemtender_get import main as get_systemtender
 from controller.systemtenders_get import main as list_systemtenders
 from controller.systemtender_create import main as create_systemtender
 from controller.systemtender_delete import main as delete_systemtender
+from controller.systemtender_create_executor import main as create_systemtender_executor_script
 from controller.systemtender_stop import main as stop_systemtender
 from controller.systemtender_start import main as start_systemtender
 from controller.systemtender_service import SystemtenderService
+from controller.database import MetadataDatabaseRepository
 from controller.steerwish_service import SteerwishService
 
 
@@ -878,3 +880,244 @@ class TestReceiverNotePlanted:
                 {'lo': 1.7, 'hi': 2.0, 'target': 1.85}, limits=None)
         calls = service.archive_repo.write_wish_assignment.call_args_list
         assert len(calls) == 1
+
+class TestAsyncCreate:
+    """The async create contract (designs/2026-10-10): the create path
+    plants a row in `creating` and answers; the executor owns the
+    heavy half. The caller's wait is a view over durable state — an
+    aborted wait owns nothing."""
+
+    def _fast_service(self):
+        service = SystemtenderService.__new__(SystemtenderService)
+        service.metadata_repo = Mock()
+        service.metadata_repo.fetch_systemtenders_list.return_value = []
+        service.archive_repo = Mock()
+        return service
+
+    def _config(self):
+        return {
+            'systemtender': {'type': 'linux_performance'},
+            'run': {'parallel': 1},
+            'effectuation': {'targets': [{'id': 't1', 'type': 'ssh_host', 'address': 'host-a'}]},
+            'cooperation': {'active': True},
+        }
+
+    def test_create_plants_row_creating_and_dispatches_executor(self):
+        """202 path: row + `creating` marker go in, the executor is
+        dispatched async, the caller gets the row back at once — and
+        no archive work happens on the caller's connection."""
+        service = self._fast_service()
+        with patch.object(service, '_resolve_target_refs'), \
+             patch.object(service, '_normalize_constraints'), \
+             patch.object(service, '_assign_watermark_slot'), \
+             patch('controller.systemtender_service.SystemtenderConfig.validate_minimal'), \
+             patch('controller.systemtender_service.wmill') as mock_wmill:
+            mock_wmill.run_script_by_path_async.return_value = 'executor-job'
+
+            result = service.create_systemtender(self._config(), 'bench-tender')
+
+        assert result['result'] == 'SUCCESS'
+        assert result['data']['status'] == 'creating'
+        assert result['data']['name'] == 'bench-tender'
+        # a real uuid, greppable
+        uuid.UUID(result['data']['id'])
+        # row planted before dispatch, in creating
+        service.metadata_repo.insert_systemtender_meta.assert_called_once()
+        lifecycle_args = service.metadata_repo.set_lifecycle.call_args.args
+        assert lifecycle_args[1] == 'creating'
+        assert lifecycle_args[0] == result['data']['id']
+        # the executor is its own job, keyed by the row id only
+        dispatch_args = mock_wmill.run_script_by_path_async.call_args.kwargs
+        assert dispatch_args['path'] == 'f/controller/systemtender_create_executor'
+        assert dispatch_args['args']['request_data']['systemtender_id'] == result['data']['id']
+        # fast path holds nothing heavy: no archive database touched
+        service.archive_repo.create_database.assert_not_called()
+        assert 'duplicate' not in result
+
+    def test_create_dispatch_failure_rolls_the_row_back(self):
+        """The executor dispatch never landed: row and marker are
+        undone — nothing half-lives under the name, no 409 trap."""
+        service = self._fast_service()
+        with patch.object(service, '_resolve_target_refs'), \
+             patch.object(service, '_normalize_constraints'), \
+             patch.object(service, '_assign_watermark_slot'), \
+             patch('controller.systemtender_service.SystemtenderConfig.validate_minimal'), \
+             patch('controller.systemtender_service.wmill') as mock_wmill:
+            mock_wmill.run_script_by_path_async.side_effect = Exception('windmill unreachable')
+
+            result = service.create_systemtender(self._config(), 'bench-tender')
+
+        assert result['result'] == 'FAILURE'
+        service.metadata_repo.remove_systemtender_meta.assert_called_once()
+        service.metadata_repo.remove_lifecycle.assert_called_once()
+        service.archive_repo.drop_database.assert_called_once()
+
+    def test_duplicate_name_answers_the_visible_state(self):
+        """A name clash (incl. a tender still creating, or failed to
+        create) answers the existing row + its state — never a second
+        create."""
+        for state in ('creating', 'create-failed', 'deleting', 'deletion-failed', 'active'):
+            service = self._fast_service()
+            existing_id = str(uuid.uuid4())
+            service.metadata_repo.fetch_systemtenders_list.return_value = [
+                {'id': existing_id, 'name': 'bench-tender'}]
+            service.metadata_repo.get_lifecycle.return_value = {
+                'state': state, 'reason': None}
+            service.metadata_repo.fetch_meta_data.return_value = [
+                (existing_id, 'bench-tender', datetime.datetime(2026, 10, 10, 9, 0, 0), {})]
+
+            with patch.object(service, '_resolve_target_refs'), \
+                 patch('controller.systemtender_service.SystemtenderConfig.validate_minimal'):
+                result = service.create_systemtender(self._config(), 'bench-tender')
+
+            assert result['result'] == 'SUCCESS'
+            assert result['duplicate'] is True
+            assert result['data']['id'] == existing_id
+            assert result['data']['status'] == state
+            assert result['data']['message']
+            service.metadata_repo.insert_systemtender_meta.assert_not_called()
+
+    def _executor_service(self):
+        service = SystemtenderService.__new__(SystemtenderService)
+        service.metadata_repo = Mock()
+        service.archive_repo = Mock()
+        row_id = str(uuid.uuid4())
+        definition = {
+            'systemtender': {'type': 'linux_performance'},
+            'run': {'parallel': 1},
+            'effectuation': {'targets': [{'id': 't1', 'type': 'ssh_host', 'address': 'host-a'}]},
+            'cooperation': {'active': True},
+        }
+        service.metadata_repo.fetch_meta_data.return_value = [
+            (row_id, 'bench-tender', datetime.datetime(2026, 10, 10, 9, 0, 0), definition)]
+        return service, row_id
+
+    def test_executor_flips_the_row_live(self):
+        """The executor does the heavy half with no caller, stores the
+        worker job ids, and drops the marker — the row reads active
+        from its own state table."""
+        service, row_id = self._executor_service()
+        with patch.object(service, '_await_state_table'), \
+             patch.object(service, '_init_optuna_schema'), \
+             patch('controller.systemtender_service.wmill') as mock_wmill, \
+             patch('controller.systemtender_service.start_optimization_flow',
+                   return_value=('bench-tender_0_0', 'job-1')) as mock_start:
+            mock_wmill.run_script_by_path.return_value = {'result': 'SUCCESS'}
+
+            result = service.create_systemtender_executor(row_id)
+
+        assert result['result'] == 'SUCCESS'
+        assert result['data']['status'] == 'active'
+        assert result['data']['id'] == row_id
+        # heavy half ran: db + table + schema + one worker launch
+        service.archive_repo.create_database.assert_called_once()
+        service.archive_repo.create_systemtender_state_table.assert_called_once()
+        mock_start.assert_called_once()
+        # job ids persisted for the delete path
+        stored = service.metadata_repo.update_systemtender_meta.call_args.kwargs
+        assert stored['meta_state']['worker_job_ids'] == ['job-1']
+        # live: the marker drops
+        service.metadata_repo.remove_lifecycle.assert_called_once_with(row_id)
+        service.metadata_repo.set_lifecycle.assert_not_called()
+
+    def test_executor_failure_flags_create_failed_and_keeps_the_row(self):
+        """A failed create cancels launched workers, drops the
+        half-made archive DB, and keeps the row as the receipt:
+        create-failed + reason, visible to the client's poll."""
+        service, row_id = self._executor_service()
+        with patch.object(service, '_await_state_table'), \
+             patch.object(service, '_init_optuna_schema'), \
+             patch('controller.systemtender_service.wmill') as mock_wmill, \
+             patch('controller.systemtender_service.start_optimization_flow',
+                   side_effect=Exception('worker refused')), \
+             patch('controller.systemtender_service.cancel_job_by_id', return_value=True):
+            mock_wmill.run_script_by_path.return_value = {'result': 'SUCCESS'}
+
+            result = service.create_systemtender_executor(row_id)
+
+        assert result['result'] == 'FAILURE'
+        assert result['data']['status'] == 'create-failed'
+        call_args = service.metadata_repo.set_lifecycle.call_args.args
+        assert call_args[0] == row_id
+        assert call_args[1] == 'create-failed'
+        assert 'worker refused' in call_args[2]
+        # half-made archive db gone, row stays
+        service.archive_repo.drop_database.assert_called_once()
+        service.metadata_repo.remove_systemtender_meta.assert_not_called()
+        service.metadata_repo.remove_lifecycle.assert_not_called()
+
+    def test_executor_missing_row(self):
+        """Row vanished before the executor ran (deleted mid-create):
+        honest FAILURE, no lifecycle written."""
+        service, row_id = self._executor_service()
+        service.metadata_repo.fetch_meta_data.return_value = []
+        result = service.create_systemtender_executor(row_id)
+        assert result['result'] == 'FAILURE'
+        service.metadata_repo.set_lifecycle.assert_not_called()
+
+    def test_executor_script_passthrough(self):
+        with patch('controller.systemtender_create_executor.SystemtenderService') as mock_class:
+            mock_class.return_value.create_systemtender_executor.return_value = {
+                'result': 'SUCCESS', 'data': {'status': 'active'}}
+            result = create_systemtender_executor_script(
+                request_data={'systemtender_id': 'x'})
+            assert result['result'] == 'SUCCESS'
+            mock_class.return_value.create_systemtender_executor.assert_called_once_with('x')
+        # missing id is a plain FAILURE
+        assert create_systemtender_executor_script(request_data=None)['result'] == 'FAILURE'
+
+    def test_get_answers_creating_with_creation_reason(self):
+        service = SystemtenderService.__new__(SystemtenderService)
+        service.metadata_repo = Mock()
+        row_id = str(uuid.uuid4())
+        service.metadata_repo.fetch_meta_data.return_value = [
+            (row_id, 'bench-tender', datetime.datetime(2026, 10, 10, 9, 0, 0), {})]
+        service.archive_repo = Mock()
+        service.archive_repo.read_state_verdict.return_value = None
+
+        # create-failed carries its reason on the creation axis only
+        service.metadata_repo.get_lifecycle.return_value = {
+            'state': 'create-failed', 'reason': 'Optuna init failed'}
+        data = service.get_systemtender(row_id)['data']
+        assert data['status'] == 'create-failed'
+        assert data['creation_reason'] == 'Optuna init failed'
+        assert data['deletion_reason'] is None
+
+        # no marker + no state table yet: the post-create window reads
+        # active — terminal-for-create
+        service.metadata_repo.get_lifecycle.return_value = None
+        data = service.get_systemtender(row_id)['data']
+        assert data['status'] == 'active'
+        assert data['creation_reason'] is None
+
+    def test_deletion_claim_takes_over_create_failed_rows(self):
+        """A create-failed row is deletable: its executor already
+        returned (the rollback cancelled its workers) — the DELETE
+        claim is the cleanup path, not a conflict."""
+        captured = {}
+        repo = MetadataDatabaseRepository.__new__(MetadataDatabaseRepository)
+        with patch.object(MetadataDatabaseRepository, '_get_db_config', return_value={}), \
+             patch('controller.database.execute_query',
+                   side_effect=lambda cfg, query, with_result=False: captured.setdefault('query', query) or ['claimed']):
+            claimed = repo.claim_for_deletion(str(uuid.uuid4()))
+        assert claimed is True
+        assert "state = 'create-failed'" in captured['query']
+
+    def test_get_survives_a_missing_archive_db(self):
+        """A row in `creating` has no archive DB yet; a create-failed
+        one had it rolled back. The state-verdict read treats 'does
+        not exist' as NO verdict - the lifecycle row speaks, GET
+        never dies on it (live receipt: controller CI integration
+        job, 2026-10-10). Anything else (server down) still raises."""
+        from controller.database import ArchiveDatabaseRepository
+        repo = ArchiveDatabaseRepository.__new__(ArchiveDatabaseRepository)
+        repo.base_config = {'host': 'localhost', 'port': '5432', 'database': 'archive_db'}
+        missing_db = Exception(
+            'connection to server at "localhost" (::1), port 5432 failed: '
+            'FATAL:  database "systemtender_x" does not exist')
+        with patch('controller.database.execute_query', side_effect=missing_db):
+            assert repo.read_state_verdict('systemtender_x') is None
+        with patch('controller.database.execute_query',
+                   side_effect=Exception('connection refused')), \
+             pytest.raises(Exception):
+            repo.read_state_verdict('systemtender_x')
