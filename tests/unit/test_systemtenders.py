@@ -1121,3 +1121,25 @@ class TestAsyncCreate:
                    side_effect=Exception('connection refused')), \
              pytest.raises(Exception):
             repo.read_state_verdict('systemtender_x')
+
+    def test_get_survives_the_table_build_window(self):
+        """Live receipt 10-10, smoke rerun 15:09: during the create
+        executor's table-build, YB's per-backend DDL visibility
+        served a relation-missing (and column-shaped) error for the
+        fresh table - any 'does not exist' is NO verdict; anything
+        else still raises (infra is not a verdict either, but it must
+        be loud)."""
+        from controller.database import ArchiveDatabaseRepository
+        repo = ArchiveDatabaseRepository.__new__(ArchiveDatabaseRepository)
+        repo.base_config = {'host': 'localhost', 'port': '5433', 'database': 'archive_db'}
+        for unreadable in [
+            Exception('relation "systemtender_state" does not exist'),
+            Exception('column "finished_at" does not exist'),
+            Exception('database "systemtender_x" does not exist'),
+        ]:
+            with patch('controller.database.execute_query', side_effect=unreadable):
+                assert repo.read_state_verdict('systemtender_x') is None, str(unreadable)
+        with patch('controller.database.execute_query',
+                   side_effect=Exception('connection refused')), \
+             pytest.raises(Exception):
+            repo.read_state_verdict('systemtender_x')
