@@ -169,9 +169,16 @@ class ArchiveDatabaseRepository:
                 with_result=True,
             )
         except Exception as e:
-            if 'does not exist' in str(e):
-                # database, table, or column absent - nothing to read,
-                # no verdict
+            error_text = str(e)
+            if 'does not exist' in error_text or \
+                    'not found in raft group' in error_text.lower():
+                # Nothing readable, no verdict. Two live wordings for
+                # "the table is not there" (both receipted 10-10,
+                # during the executor's table-build): the pgsql shape
+                # (relation/column/database "does not exist") and
+                # YB's internal shape ("Table <...> not found in Raft
+                # group ..." - smoke reruns 15:09 and 18:51/18:57).
+                # The lifecycle row speaks.
                 return None
             raise
         if rows and rows[0][0] is not None:
