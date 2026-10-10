@@ -1136,6 +1136,10 @@ class TestAsyncCreate:
             Exception('relation "systemtender_state" does not exist'),
             Exception('column "finished_at" does not exist'),
             Exception('database "systemtender_x" does not exist'),
+            # YB's internal wording for the same fact, live 10-10
+            # (18:51:33, 18:57:30, both mid-create)
+            Exception('Table <unknown_table_name> (000040010000300080010000000004e1) '
+                      'not found in Raft group 0000000000000000000000000000000000'),
         ]:
             with patch('controller.database.execute_query', side_effect=unreadable):
                 assert repo.read_state_verdict('systemtender_x') is None, str(unreadable)
