@@ -163,6 +163,7 @@ jobs:
           from controller.systemtender_service import SystemtenderService
           from controller.database import execute_query, execute_ddl_query
           from controller.systemtender_create import main as create_systemtender
+          from controller.systemtender_create_executor import main as create_systemtender_executor
           from controller.systemtender_get import main as get_systemtender
           from controller.systemtender_delete import main as delete_systemtender
           from controller.systemtenders_get import main as list_systemtenders
@@ -260,7 +261,25 @@ jobs:
           result = create_systemtender(request_data=systemtender_config)
           assert result['result'] == 'SUCCESS', f'Create failed: {result}'
           systemtender_id = result['data']['id']
-          print(f'✓ Created systemtender with schema + data: {systemtender_id}')
+          print(f'✓ Created systemtender (fast path, row planted): {systemtender_id}')
+
+          # Async create contract (designs/2026-10-10): the 202 plants
+          # the row in `creating`; the heavy half is the executor's job
+          assert result['data']['status'] == 'creating', f'Expected creating, got: {result}'
+
+          # Test 1.5a: GET on a creating row answers from the lifecycle
+          # row - the archive DB does not exist yet, and that is fine
+          result = get_systemtender(request_data=dict(systemtender_id=systemtender_id))
+          assert result['result'] == 'SUCCESS', f'Get on creating row failed: {result}'
+          assert result['data']['status'] == 'creating', f'Expected creating, got: {result}'
+          print('✓ Creating row readable before the archive DB exists')
+
+          # Test 1.5b: the executor completes without a caller (CI has
+          # no windmill - the dispatch is mocked, so run it directly)
+          result = create_systemtender_executor(request_data=dict(systemtender_id=systemtender_id))
+          assert result['result'] == 'SUCCESS', f'Create executor failed: {result}'
+          assert result['data']['status'] == 'active', f'Expected active, got: {result}'
+          print('✓ Create executor landed the tender (active)')
 
           # Test 1.5: Verify archive database was created
           print('Testing archive database creation...')
@@ -292,6 +311,9 @@ jobs:
           result = create_systemtender(request_data=systemtender_config_2)
           assert result['result'] == 'SUCCESS', f'Create 2 failed: {result}'
           systemtender_id_2 = result['data']['id']
+          assert result['data']['status'] == 'creating', f'Expected creating, got: {result}'
+          result = create_systemtender_executor(request_data=dict(systemtender_id=systemtender_id_2))
+          assert result['result'] == 'SUCCESS', f'Create executor 2 failed: {result}'
           print(f'✓ Created second systemtender: {systemtender_id_2}')
 
           # Test 4: List systemtenders (tests listing with multiple records)
@@ -354,6 +376,8 @@ jobs:
           result = create_systemtender(request_data=systemtender_config_3)
           assert result['result'] == 'SUCCESS', f'Create 3 failed: {result}'
           systemtender_id_3 = result['data']['id']
+          result = create_systemtender_executor(request_data=dict(systemtender_id=systemtender_id_3))
+          assert result['result'] == 'SUCCESS', f'Create executor 3 failed: {result}'
           print(f'✓ Created third systemtender for force delete test: {systemtender_id_3}')
 
           # Delete with force=true
@@ -369,6 +393,8 @@ jobs:
           result = create_systemtender(request_data=systemtender_config_4)
           assert result['result'] == 'SUCCESS', f'Create 4 failed: {result}'
           systemtender_id_4 = result['data']['id']
+          result = create_systemtender_executor(request_data=dict(systemtender_id=systemtender_id_4))
+          assert result['result'] == 'SUCCESS', f'Create executor 4 failed: {result}'
           print(f'✓ Created fourth systemtender for safe delete test: {systemtender_id_4}')
 
           # Delete with force=false should fail (has active workers)

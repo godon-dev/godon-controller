@@ -62,7 +62,7 @@ for module_name in ['config', 'database', 'systemtender_service', 'credential_cr
                     'credential_get', 'credential_delete', 'credentials_get',
                     'target_create', 'target_get', 'targets_get', 'target_delete',
                     'steerwish_service', 'steerwish_create', 'steerwish_get',
-                    'steerwishes_get', 'steerwish_close']:
+                    'steerwishes_get', 'steerwish_close', 'systemtender_create_executor']:
     full_name = f'f.controller.{module_name}'
     stub = create_stub_module(full_name)
     sys.modules[full_name] = stub
@@ -123,3 +123,6 @@ populate_stub_module(sys.modules['f.controller.steerwishes_get'], steerwishes_ge
 
 import controller.steerwish_close as steerwish_close
 populate_stub_module(sys.modules['f.controller.steerwish_close'], steerwish_close)
+
+import controller.systemtender_create_executor as systemtender_create_executor
+populate_stub_module(sys.modules['f.controller.systemtender_create_executor'], systemtender_create_executor)

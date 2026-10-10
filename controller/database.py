@@ -172,6 +172,10 @@ class ArchiveDatabaseRepository:
                             "FROM systemtender_state LIMIT 1",
                             with_result=True,
                         )
+                    elif 'does not exist' in str(e2):
+                        # the database or its state table vanished between
+                        # reads - no table, no verdict
+                        return None
                     else:
                         raise
             elif 'beat_interval_secs' in str(e) and 'does not exist' in str(e):
@@ -182,6 +186,14 @@ class ArchiveDatabaseRepository:
                     "FROM systemtender_state LIMIT 1",
                     with_result=True,
                 )
+            elif 'does not exist' in str(e):
+                # The archive database (or its state table) is absent:
+                # a row still in `creating` (the executor has not made
+                # it yet), or a create-failed one whose rollback dropped
+                # it. No table, no verdict - the lifecycle row speaks
+                # (designs/2026-10-10; live receipt: controller CI,
+                # integration job, 2026-10-10).
+                return None
             else:
                 raise
         if rows and rows[0][0] is not None:
@@ -386,12 +398,15 @@ class MetadataDatabaseRepository:
         """Atomically claim the deletion executor slot.
 
         Single-flight: exactly one executor per tender. Returns True
-        when this run owns the deletion. Two takeover paths keep the
+        when this run owns the deletion. Three takeover paths keep the
         machine live on re-DELETE: a stale claim (its executor died —
         the component timeout bounds every run, so claim age past the
-        bound proves death) and a deletion-failed state (its executor
-        already returned, retry is free). A live claim returns False:
-        the re-DELETE rides along and the client keeps polling.
+        bound proves death), a deletion-failed state (its executor
+        already returned, retry is free), and a create-failed state
+        (its executor already returned — the rollback cancelled its
+        workers — and DELETE is the cleanup verb for the kept row,
+        designs/2026-10-10). A live claim returns False: the re-DELETE
+        rides along and the client keeps polling.
         """
         db_config = self._get_db_config()
 
@@ -401,6 +416,7 @@ class MetadataDatabaseRepository:
         ON CONFLICT (systemtender_id) DO UPDATE
         SET state = 'deleting', reason = NULL, claimed_at = NOW()
         WHERE systemtender_lifecycle.state = 'deletion-failed'
+           OR systemtender_lifecycle.state = 'create-failed'
            OR systemtender_lifecycle.claimed_at < NOW() - INTERVAL '{int(stale_after_seconds)} seconds'
         RETURNING systemtender_id;
         """

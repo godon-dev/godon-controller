@@ -452,7 +452,14 @@ class SystemtenderService:
         logger.info(f"Resolved {len(resolved_targets)} targets from {len(target_refs)} references")
 
     def create_systemtender(self, systemtender_config, name):
-        """Create a new systemtender instance
+        """Accept a create: validate, claim the name, plant the row in
+        `creating`, dispatch the executor, answer immediately.
+
+        The async create contract (designs/2026-10-10): the caller's
+        connection is held only for fast reads — the heavy half
+        (preflight, archive DB, Optuna schema, worker launches) is the
+        executor's own job. The row is the state machine; an aborted
+        caller wait owns nothing.
 
         Args:
             systemtender_config: The systemtender configuration
@@ -462,7 +469,6 @@ class SystemtenderService:
             dict with result status and either systemtender_id or error details
         """
         systemtender_uuid = None
-        systemtender_id = None
 
         try:
             self._resolve_target_refs(systemtender_config)
@@ -470,11 +476,6 @@ class SystemtenderService:
             SystemtenderConfig.validate_minimal(systemtender_config)
 
             systemtender_instance_name = name
-            systemtender_type = systemtender_config.get('systemtender', {}).get('type', 'unknown_systemtender')
-            parallel_runs = systemtender_config.get('run', {}).get('parallel', 1)
-            targets = systemtender_config.get('effectuation', {}).get('targets', [])
-            targets_count = len(targets)
-            is_cooperative = systemtender_config.get('cooperation', {}).get('active', False)
 
             # Ensure metadata table exists before querying it (idempotent check)
             self.metadata_repo.create_table()
@@ -490,27 +491,155 @@ class SystemtenderService:
                     # Answer from the visible state, never a bare
                     # "already exists" the caller can't parse
                     # (receipt 10-03): a deleting tender says so, a
-                    # deletion-failed one points at the retry.
+                    # deletion-failed one points at the retry — and a
+                    # tender still creating, or failed to create, says
+                    # that too (receipt 10-10).
                     existing_lifecycle = self.metadata_repo.get_lifecycle(str(eb_id))
                     dup_status = existing_lifecycle['state'] if existing_lifecycle else "active"
-                    if dup_status == 'deleting':
+                    if dup_status == 'creating':
+                        dup_message = "Systemtender is still being created; poll GET until active or create-failed"
+                    elif dup_status == 'create-failed':
+                        dup_message = "Systemtender creation failed; GET for the reason, DELETE to clear, then retry create"
+                    elif dup_status == 'deleting':
                         dup_message = "Systemtender is still deleting; poll GET until 404, then retry create"
                     elif dup_status == 'deletion-failed':
                         dup_message = "Systemtender deletion failed; re-DELETE to retry, or GET for the reason"
                     else:
                         dup_message = "Systemtender already exists, skipping duplicate creation"
                     logger.info(f"Systemtender '{systemtender_instance_name}' already exists: {eb_id} (status: {dup_status}). Skipping creation to prevent duplicate workers.")
+                    existing_row = self.metadata_repo.fetch_meta_data(str(eb_id))
+                    dup_created_at = existing_row[0][2].isoformat() if existing_row else None
                     return {
                         "result": "SUCCESS",
-                        "systemtender_id": eb_id,
-                        "name": systemtender_instance_name,
-                        "status": dup_status,
-                        "message": dup_message
+                        "duplicate": True,
+                        "data": {
+                            "id": str(eb_id),
+                            "name": systemtender_instance_name,
+                            "status": dup_status,
+                            "createdAt": dup_created_at,
+                            "message": dup_message
+                        }
                     }
 
-            # Call systemtender preflight check synchronously before launching workers
+            # Fast, bounded work only: everything past this point that
+            # can take seconds belongs to the executor.
+            self._normalize_constraints(systemtender_config)
+
+            systemtender_uuid = str(uuid.uuid4())
+            systemtender_config['systemtender']['uuid'] = systemtender_uuid
+
+            # Assign collision-free watermark slot for interference detection
+            self._assign_watermark_slot(systemtender_config)
+            creation_ts = datetime.datetime.now()
+
+            # The row goes in BEFORE the executor dispatch, planted in
+            # `creating`: the visible state owns the wait, and a
+            # re-create under this name clashes against the live row.
+            self.metadata_repo.insert_systemtender_meta(
+                systemtender_id=systemtender_uuid,
+                name=systemtender_instance_name,
+                creation_ts=creation_ts,
+                meta_state=systemtender_config
+            )
+            self.metadata_repo.set_lifecycle(systemtender_uuid, 'creating')
+
+            wmill.run_script_by_path_async(
+                path="f/controller/systemtender_create_executor",
+                args={'request_data': {'systemtender_id': systemtender_uuid}}
+            )
+
+            logger.info(f"Create accepted for systemtender '{systemtender_instance_name}' ({systemtender_uuid}); executor dispatched, row in creating")
+            return {
+                "result": "SUCCESS",
+                "data": {
+                    "id": systemtender_uuid,
+                    "name": systemtender_instance_name,
+                    "status": "creating",
+                    "createdAt": creation_ts.isoformat()
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to accept systemtender create: {e}")
+            # The dispatch never landed: undo row and marker so nothing
+            # half-lives under this name.
+            if systemtender_uuid:
+                try:
+                    self._rollback_systemtender_creation(
+                        systemtender_uuid,
+                        f"systemtender_{systemtender_uuid.replace('-', '_')}"
+                    )
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup after systemtender create failure: {cleanup_error}")
+
+            return {
+                "result": "FAILURE",
+                "error": str(e)
+            }
+
+    def create_systemtender_executor(self, systemtender_id):
+        """The async executor behind create's 202 (designs/2026-10-10).
+
+        Runs as its own windmill job; no caller is waiting. Reads the
+        row the fast path planted in `creating` and does the heavy
+        half: preflight, archive DB + state table, Optuna schema,
+        worker launches.
+
+        Success drops the lifecycle marker — the row reads active from
+        its own state table (running once the workers heartbeat). Any
+        failure flags `create-failed` + reason on the KEPT row (the
+        receipt for the client's poll); launched workers are cancelled
+        and the half-made archive DB dropped, so a failed create holds
+        nothing but its row. DELETE claims a create-failed row like
+        any other — cleanup stays one verb.
+        """
+        systemtender_db_name = f"systemtender_{systemtender_id.replace('-', '_')}"
+        launched_job_ids = []
+
+        def _fail(reason):
+            """Flag create-failed and stop. The row stays as the
+            receipt; GET answers state + reason. Launched workers die,
+            the half-made archive DB goes."""
+            logger.error(f"Create executor failed for systemtender {systemtender_id}: {reason}")
+            for job_id in launched_job_ids:
+                if not cancel_job_by_id(job_id, reason=f"Create failed for systemtender {systemtender_id}"):
+                    logger.error(f"Failed to cancel launched worker {job_id}; cancel it manually before retrying")
+            try:
+                self.archive_repo.drop_database(systemtender_db_name)
+            except Exception as drop_error:
+                logger.error(f"Failed to drop half-made archive database {systemtender_db_name}: {drop_error}")
+            self.metadata_repo.set_lifecycle(systemtender_id, 'create-failed', reason)
+            return {
+                "result": "FAILURE",
+                "error": reason,
+                "data": {
+                    "id": systemtender_id,
+                    "status": "create-failed"
+                }
+            }
+
+        try:
+            self.metadata_repo.create_table()
+            meta_row = self.metadata_repo.fetch_meta_data(systemtender_id)
+            if not meta_row or len(meta_row) == 0:
+                return {
+                    "result": "FAILURE",
+                    "error": "Systemtender not found"
+                }
+
+            systemtender_instance_name = meta_row[0][1]
+            creation_ts = meta_row[0][2]
+            systemtender_config = meta_row[0][3]
+            systemtender_type = systemtender_config.get('systemtender', {}).get('type', 'unknown_systemtender')
+            parallel_runs = systemtender_config.get('run', {}).get('parallel', 1)
+            targets = systemtender_config.get('effectuation', {}).get('targets', [])
+            targets_count = len(targets)
+            is_cooperative = systemtender_config.get('cooperation', {}).get('active', False)
+
+            # Call systemtender preflight check before launching workers
             # This validates that the systemtender supports all parameters in the config
-            # (semantic validation that controller can't do)
+            # (semantic validation that controller can't do; moved here
+            # from the synchronous path — it runs a script)
             logger.info(f"Running preflight check for systemtender type: {systemtender_type}")
             preflight_script_path = f"f/systemtender/strains/{systemtender_type}/preflight"
 
@@ -523,10 +652,7 @@ class SystemtenderService:
                 if preflight_result.get('result') != 'SUCCESS':
                     error_msg = preflight_result.get('error', 'Unknown preflight error')
                     logger.error(f"Preflight validation failed: {error_msg}")
-                    return {
-                        "result": "FAILURE",
-                        "error": f"Preflight validation failed: {error_msg}"
-                    }
+                    return _fail(f"Preflight validation failed: {error_msg}")
 
                 logger.info("Preflight validation passed")
 
@@ -535,104 +661,19 @@ class SystemtenderService:
                 # (for backwards compatibility with systemtenders that don't have preflight yet)
                 logger.warning(f"Preflight check failed or not found: {e}. Continuing with worker launch.")
 
-            # Normalize constraint formats for workers
-            # Convert dict format {"values": [...]} to list format [{"values": [...]}]
-            # This ensures systemtender_workers receive consistent constraint structure
-            self._normalize_constraints(systemtender_config)
-
-            systemtender_uuid = str(uuid.uuid4())
-            systemtender_config['systemtender']['uuid'] = systemtender_uuid
-
-            # Assign collision-free watermark slot for interference detection
-            self._assign_watermark_slot(systemtender_config)
-            creation_ts = datetime.datetime.now()
-
-            __uuid_common_name = f"systemtender_{systemtender_uuid.replace('-', '_')}"
-            systemtender_id = f'{__uuid_common_name}'
-
             # Create database and metadata records
-            self.archive_repo.create_database(systemtender_id)
+            self.archive_repo.create_database(systemtender_db_name)
 
             # Create systemtender state table for shutdown signaling in the archive DB
-            self.archive_repo.create_systemtender_state_table(systemtender_id)
+            self.archive_repo.create_systemtender_state_table(systemtender_db_name)
 
             # Wait for the systemtender_state table to be fully committed and accessible
-            # This prevents YugabyteDB serialization conflicts when Optuna starts its DDL operations
-            from f.controller.database import get_db_connection
-            max_wait = 10  # seconds
-            check_interval = 0.5  # seconds
-            import time
-            table_ready = False
-
-            for attempt in range(int(max_wait / check_interval)):
-                try:
-                    # Try to query the table - if it succeeds, the transaction is fully committed
-                    db_config = self.archive_repo.base_config.copy()
-                    db_config['database'] = systemtender_id
-                    with get_db_connection(db_config) as conn:
-                        with conn.cursor() as cursor:
-                            cursor.execute("SELECT COUNT(*) FROM systemtender_state;")
-                            count = cursor.fetchone()[0]
-                            table_ready = True
-                            logger.info(f"Systemtender state table is ready for {systemtender_uuid}")
-                            break
-                except Exception as e:
-                    if attempt < (max_wait / check_interval) - 1:
-                        logger.debug(f"Waiting for systemtender_state table to be ready... (attempt {attempt + 1})")
-                        time.sleep(check_interval)
-                    else:
-                        logger.error(f"Systemtender state table still not ready after {max_wait}s: {e}")
-                        raise
-
-            if not table_ready:
-                raise Exception(f"Systemtender state table did not become ready within {max_wait}s")
+            # (prevents YugabyteDB serialization conflicts when Optuna starts its DDL)
+            self._await_state_table(systemtender_db_name)
 
             # Initialize Optuna schema to prevent race conditions during worker startup
-            # Multiple workers starting simultaneously would otherwise conflict trying to create tables
-            # Retry logic for YugabyteDB serialization failures and timeouts
-            max_retries = 5
-            storage = None
-            last_error = None
-
-            for attempt in range(max_retries):
-                try:
-                    db_url = self.archive_repo.get_connection_url(systemtender_id)
-                    storage = optuna.storages.RDBStorage(url=db_url)
-                    logger.info(f"Initialized Optuna schema for systemtender {systemtender_uuid}")
-                    break
-                except Exception as e:
-                    last_error = e
-                    error_str = str(e)
-                    # Check for YugabyteDB-specific errors that should be retried
-                    is_retryable = (
-                        'SerializationFailure' in error_str or
-                        '40001' in error_str or
-                        'Transaction aborted' in error_str or
-                        'Timed out waiting' in error_str or
-                        'InternalError_' in error_str
-                    )
-
-                    if attempt < max_retries - 1 and is_retryable:
-                        wait_time = 2 ** attempt  # Exponential backoff: 2s, 4s, 8s, 16s
-                        logger.warning(f"Optuna schema initialization attempt {attempt + 1}/{max_retries} failed for systemtender {systemtender_uuid}: {e}")
-                        logger.info(f"Retrying in {wait_time} seconds...")
-                        time.sleep(wait_time)
-                    else:
-                        logger.error(f"Failed to initialize Optuna schema for systemtender {systemtender_uuid} after {max_retries} attempts: {e}")
-                        # Clean up database if schema initialization fails
-                        try:
-                            self.archive_repo.drop_database(systemtender_id)
-                        except Exception as drop_error:
-                            logger.error(f"Failed to cleanup database after Optuna init failure: {drop_error}")
-                        raise
-
-            self.metadata_repo.create_table()
-            self.metadata_repo.insert_systemtender_meta(
-                systemtender_id=systemtender_uuid,
-                name=systemtender_instance_name,
-                creation_ts=creation_ts,
-                meta_state=systemtender_config
-            )
+            # (retries on YugabyteDB serialization failures and timeouts)
+            self._init_optuna_schema(systemtender_db_name)
 
             # Launch worker scripts with error handling
             worker_launch_failures = []
@@ -662,10 +703,11 @@ class SystemtenderService:
                             shard_config=flow_config,
                             run_id=run_id,
                             target_id=target_count,
-                            systemtender_id=systemtender_uuid
+                            systemtender_id=systemtender_id
                         )
                         # Collect job ID for this worker
                         worker_job_ids.append(job_id)
+                        launched_job_ids.append(job_id)
                     except Exception as e:
                         # Collect worker launch failures but continue trying others
                         error_details = {
@@ -684,30 +726,31 @@ class SystemtenderService:
             if worker_job_ids:
                 systemtender_config['worker_job_ids'] = worker_job_ids
                 self.metadata_repo.update_systemtender_meta(
-                    systemtender_id=systemtender_uuid,
+                    systemtender_id=systemtender_id,
                     meta_state=systemtender_config
                 )
-                logger.info(f"Stored {len(worker_job_ids)} worker job IDs for systemtender {systemtender_uuid}")
+                logger.info(f"Stored {len(worker_job_ids)} worker job IDs for systemtender {systemtender_id}")
 
-            # If any workers failed to launch, clean up and raise error
+            # If any workers failed to launch, the create failed:
+            # cancel the launched siblings, drop the half-made DB,
+            # flag the row — the receipt stands (first underlying
+            # error in the reason; the poller sees the cause, not a
+            # count).
             if worker_launch_failures:
-                logger.error(f"Failed to launch {len(worker_launch_failures)} workers for systemtender {systemtender_uuid}")
-                # Attempt cleanup
-                try:
-                    self._rollback_systemtender_creation(systemtender_uuid, systemtender_id)
-                except Exception as cleanup_error:
-                    logger.error(f"Failed to cleanup after worker launch failures: {cleanup_error}")
+                first_error = worker_launch_failures[0]['error']
+                return _fail(
+                    f"Failed to launch {len(worker_launch_failures)} worker(s): {first_error}"
+                )
 
-                return {
-                    "result": "FAILURE",
-                    "error": f"Failed to launch {len(worker_launch_failures)} worker(s)"
-                }
+            # Live: the marker drops, the row stands on its own state
+            # table (active until the first heartbeat refines it).
+            self.metadata_repo.remove_lifecycle(systemtender_id)
 
-            logger.info(f"Successfully created systemtender: {systemtender_uuid}")
+            logger.info(f"Successfully created systemtender: {systemtender_id}")
             return {
                 "result": "SUCCESS",
                 "data": {
-                    "id": systemtender_uuid,
+                    "id": systemtender_id,
                     "name": systemtender_instance_name,
                     "status": "active",
                     "createdAt": creation_ts.isoformat()
@@ -716,17 +759,7 @@ class SystemtenderService:
 
         except Exception as e:
             logger.error(f"Failed to create systemtender: {e}")
-            # Attempt cleanup if we had created the systemtender
-            if systemtender_uuid and systemtender_id:
-                try:
-                    self._rollback_systemtender_creation(systemtender_uuid, systemtender_id)
-                except Exception as cleanup_error:
-                    logger.error(f"Failed to cleanup after systemtender creation failure: {cleanup_error}")
-
-            return {
-                "result": "FAILURE",
-                "error": str(e)
-            }
+            return _fail(f"create executor error: {e}")
 
     def _rollback_systemtender_creation(self, systemtender_uuid: str, systemtender_id: str):
         """Rollback systemtender creation by cleaning up database records
@@ -744,12 +777,92 @@ class SystemtenderService:
         except Exception as e:
             logger.error(f"Failed to delete metadata for systemtender {systemtender_uuid}: {e}")
 
+        # Sweep the lifecycle marker (creating) with it — a rolled-back
+        # create must not 409 the next attempt under the same name
+        try:
+            self.metadata_repo.remove_lifecycle(systemtender_uuid)
+        except Exception as e:
+            logger.error(f"Failed to remove lifecycle marker for systemtender {systemtender_uuid}: {e}")
+
         # Delete archive database
         try:
             self.archive_repo.drop_database(systemtender_id)
             logger.info(f"Deleted archive database for systemtender: {systemtender_uuid}")
         except Exception as e:
             logger.error(f"Failed to delete archive database for systemtender {systemtender_uuid}: {e}")
+
+    def _await_state_table(self, systemtender_db_name):
+        """Wait for the systemtender_state table to be fully committed
+        and accessible.
+
+        This prevents YugabyteDB serialization conflicts when Optuna
+        starts its DDL operations. Executor-side step
+        (designs/2026-10-10): the wait lives where no caller holds a
+        connection for it.
+        """
+        from f.controller.database import get_db_connection
+        max_wait = 10  # seconds
+        check_interval = 0.5  # seconds
+        table_ready = False
+
+        for attempt in range(int(max_wait / check_interval)):
+            try:
+                # Try to query the table - if it succeeds, the transaction is fully committed
+                db_config = self.archive_repo.base_config.copy()
+                db_config['database'] = systemtender_db_name
+                with get_db_connection(db_config) as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM systemtender_state;")
+                        cursor.fetchone()
+                        table_ready = True
+                        logger.info(f"Systemtender state table is ready in {systemtender_db_name}")
+                        break
+            except Exception as e:
+                if attempt < (max_wait / check_interval) - 1:
+                    logger.debug(f"Waiting for systemtender_state table to be ready... (attempt {attempt + 1})")
+                    time.sleep(check_interval)
+                else:
+                    logger.error(f"Systemtender state table still not ready after {max_wait}s: {e}")
+                    raise
+
+        if not table_ready:
+            raise Exception(f"Systemtender state table did not become ready within {max_wait}s")
+
+    def _init_optuna_schema(self, systemtender_db_name):
+        """Initialize Optuna schema to prevent race conditions during
+        worker startup: multiple workers starting simultaneously would
+        otherwise conflict trying to create tables.
+
+        Retry logic for YugabyteDB serialization failures and timeouts.
+        Executor-side step (designs/2026-10-10).
+        """
+        max_retries = 5
+
+        for attempt in range(max_retries):
+            try:
+                db_url = self.archive_repo.get_connection_url(systemtender_db_name)
+                optuna.storages.RDBStorage(url=db_url)
+                logger.info(f"Initialized Optuna schema in {systemtender_db_name}")
+                return
+            except Exception as e:
+                error_str = str(e)
+                # Check for YugabyteDB-specific errors that should be retried
+                is_retryable = (
+                    'SerializationFailure' in error_str or
+                    '40001' in error_str or
+                    'Transaction aborted' in error_str or
+                    'Timed out waiting' in error_str or
+                    'InternalError_' in error_str
+                )
+
+                if attempt < max_retries - 1 and is_retryable:
+                    wait_time = 2 ** attempt  # Exponential backoff: 2s, 4s, 8s, 16s
+                    logger.warning(f"Optuna schema initialization attempt {attempt + 1}/{max_retries} failed for {systemtender_db_name}: {e}")
+                    logger.info(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Failed to initialize Optuna schema for {systemtender_db_name} after {max_retries} attempts: {e}")
+                    raise
 
     def get_systemtender(self, systemtender_id):
         """Get systemtender information"""
@@ -770,8 +883,11 @@ class SystemtenderService:
             # in its own state table) wins; silence falls back to the
             # heartbeat age — presumed dead past 3x the beat interval
             # (same constant as the liveness door), fresh otherwise.
+            # A row with no state table yet answers `active` — the
+            # post-create window where workers are still booting
+            # (designs/2026-10-10: `active` is terminal-for-create).
             db_name = f"systemtender_{systemtender_id.replace('-', '_')}"
-            status = 'unknown'
+            status = 'active'
             liveness = None
             state = self.archive_repo.read_state_verdict(db_name)
             if state:
@@ -796,16 +912,21 @@ class SystemtenderService:
                     'stale_threshold_secs': threshold,
                 }
 
-            # Deletion state machine overrides the liveness verdict:
-            # while the marker stands, the tender IS deleting (or
-            # deletion-failed, with its reason). GET is how the client
-            # watches the state machine (designs/2026-10-03): poll
-            # until this resource is gone entirely.
+            # Lifecycle state machine overrides the liveness verdict:
+            # while the marker stands, the tender IS its state —
+            # deleting/deletion-failed (designs/2026-10-03) or
+            # creating/create-failed (designs/2026-10-10). GET is how
+            # the client watches the state machine: poll until the
+            # resource is live (active/running) or gone (404).
             lifecycle = self.metadata_repo.get_lifecycle(systemtender_id)
             deletion_reason = None
+            creation_reason = None
             if lifecycle:
                 status = lifecycle['state']
-                deletion_reason = lifecycle.get('reason')
+                if status in ('deleting', 'deletion-failed'):
+                    deletion_reason = lifecycle.get('reason')
+                elif status in ('creating', 'create-failed'):
+                    creation_reason = lifecycle.get('reason')
 
             return {
                 "result": "SUCCESS",
@@ -814,6 +935,7 @@ class SystemtenderService:
                     "name": systemtender_meta_data_row[0][1],
                     "status": status,
                     "deletion_reason": deletion_reason,
+                    "creation_reason": creation_reason,
                     "liveness": liveness,
                     "createdAt": systemtender_meta_data_row[0][2].isoformat(),
                     "config": systemtender_meta_data_row[0][3]
