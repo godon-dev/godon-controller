@@ -419,7 +419,7 @@ class SystemtenderConfig:
         - Positive value validation
         - Target field validation
         - Objective and guardrail reconnaissance validation
-        - Run section validation: dead budget spellings refused at the door
+        - Run and cooperation sections refused at the door (optimizer-era config)
         - Strict/permissive mode for unknown parameters
         """
         errors = []
@@ -551,15 +551,6 @@ class SystemtenderConfig:
         except ValueError as e:
             errors.append(str(e))
 
-        # Validate cooperation configuration
-        if systemtender_config.get('cooperation', {}).get('active', False):
-            parallel_workers = systemtender_config.get('run', {}).get('parallel', 1)
-            if parallel_workers <= 1:
-                errors.append(
-                    f"Cooperation enabled but run.parallel={parallel_workers}. "
-                    "Cooperation requires parallel > 1 for multiple workers to share trials."
-                )
-
         # Validate targetRefs
         systemtender_type = systemtender_config.get('systemtender', {}).get('type')
         target_refs = systemtender_config.get('effectuation', {}).get('targetRefs', [])
@@ -640,18 +631,20 @@ class SystemtenderConfig:
                             f"Objective {idx} ({obj_name}): 'interval' must be an integer >= 1"
                         )
 
-        # Budgets are not tender config (hard cutover, 2026-10-11): a
-        # tender ends by walk-complete, the stop flag, or wish release.
-        # Both old spellings are refused at the door — config that
-        # passes unread is how the silent 1000-trial default hid.
+        # Optimizer-era config is not tender config (hard cutover,
+        # 2026-10-11): budgets, worker fan-out, and trial sharing all
+        # left. The run section and the cooperation section are refused
+        # at the door — config that passes unread is how the silent
+        # 1000-trial default hid.
         run_config = systemtender_config.get('run', {})
-        for dead_key in ('completion', 'completion_criteria'):
-            if dead_key in run_config:
-                errors.append(
-                    f"'run.{dead_key}' is not a tender config key — "
-                    f"budgets left the tender config; a tender ends by "
-                    f"walk-complete, the stop flag, or wish release"
-                )
+        if run_config:
+            errors.append(
+                "'run' is not a valid systemtender config section"
+            )
+        if 'cooperation' in systemtender_config:
+            errors.append(
+                "'cooperation' is not a valid systemtender config section"
+            )
 
         if errors:
             # Numbered error list for better readability

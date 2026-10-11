@@ -237,11 +237,9 @@ jobs:
                   'systemtender': {
                       'type': 'linux_performance'
                   },
-                  'run': {'parallel': 1},
                   'effectuation': {
                       'targetRefs': [test_target_id]
                   },
-                  'cooperation': {'active': False},
                   'objectives': [{'name': 'test_metric', 'goal': 'MINIMIZE'}],
                   'settings': {
                       'sysctl': {
