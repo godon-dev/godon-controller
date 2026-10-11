@@ -419,7 +419,7 @@ class SystemtenderConfig:
         - Positive value validation
         - Target field validation
         - Objective and guardrail reconnaissance validation
-        - Run completion criteria validation
+        - Run section validation: dead budget spellings refused at the door
         - Strict/permissive mode for unknown parameters
         """
         errors = []
@@ -640,42 +640,18 @@ class SystemtenderConfig:
                             f"Objective {idx} ({obj_name}): 'interval' must be an integer >= 1"
                         )
 
-        # Validate run completion criteria
+        # Budgets are not tender config (hard cutover, 2026-10-11): a
+        # tender ends by walk-complete, the stop flag, or wish release.
+        # Both old spellings are refused at the door — config that
+        # passes unread is how the silent 1000-trial default hid.
         run_config = systemtender_config.get('run', {})
-        if 'completion' in run_config:
-            completion = run_config['completion']
-
-            if not isinstance(completion, dict):
+        for dead_key in ('completion', 'completion_criteria'):
+            if dead_key in run_config:
                 errors.append(
-                    f"'run.completion' must be a dict, got {type(completion).__name__}"
+                    f"'run.{dead_key}' is not a tender config key — "
+                    f"budgets left the tender config; a tender ends by "
+                    f"walk-complete, the stop flag, or wish release"
                 )
-            else:
-                # Validate iterations criteria
-                if 'iterations' in completion:
-                    iterations = completion['iterations']
-
-                    if not isinstance(iterations, dict):
-                        errors.append(
-                            f"'run.completion.iterations' must be a dict, got {type(iterations).__name__}"
-                        )
-                    else:
-                        # Check min <= max
-                        iterations_min = iterations.get('min')
-                        iterations_max = iterations.get('max')
-
-                        if iterations_min is not None and iterations_max is not None:
-                            if not isinstance(iterations_min, int) or iterations_min < 1:
-                                errors.append(
-                                    f"'run.completion.iterations.min' must be an integer >= 1"
-                                )
-                            elif not isinstance(iterations_max, int) or iterations_max < 1:
-                                errors.append(
-                                    f"'run.completion.iterations.max' must be an integer >= 1"
-                                )
-                            elif iterations_min > iterations_max:
-                                errors.append(
-                                    f"'run.completion.iterations.min' ({iterations_min}) must be <= 'max' ({iterations_max})"
-                                )
 
         if errors:
             # Numbered error list for better readability

@@ -237,12 +237,7 @@ jobs:
                   'systemtender': {
                       'type': 'linux_performance'
                   },
-                  'run': {
-                      'parallel': 1,
-                      'completion': {
-                          'iterations': {'min': 10, 'max': 100}
-                      }
-                  },
+                  'run': {'parallel': 1},
                   'effectuation': {
                       'targetRefs': [test_target_id]
                   },

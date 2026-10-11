@@ -438,12 +438,13 @@ class TestObjectiveReconnaissanceValidation:
         assert "non-negative" in error_msg.lower()
 
 
-class TestRunCompletionValidation:
-    """Test run completion criteria validation"""
+class TestRunBudgetDoorRefusal:
+    """Budgets left the tender config (hard cutover, 2026-10-11): both
+    old spellings are refused at the door; a tender ends by
+    walk-complete, the stop flag, or wish release."""
 
-    def test_iterations_min_greater_than_max_fails(self):
-        """Test that iterations.min > iterations.max fails validation"""
-        config = {
+    def _base_config(self):
+        return {
             'meta': {'configVersion': '0.3'},
             'systemtender': {'type': 'linux_performance'},
             'objectives': [{'name': 'tcp_rtt'}],
@@ -457,23 +458,36 @@ class TestRunCompletionValidation:
                     }
                 }
             },
-            'run': {
-                'completion': {
-                    'iterations': {
-                        'min': 100,
-                        'max': 50
-                    }
-                }
-            }
+        }
+
+    def test_run_completion_refused(self):
+        config = self._base_config()
+        config['run'] = {
+            'completion': {'iterations': {'min': 10, 'max': 50}}
         }
 
         with pytest.raises(ValueError) as exc_info:
             SystemtenderConfig.validate_minimal(config)
 
-        error_msg = str(exc_info.value)
-        assert "min" in error_msg.lower()
-        assert "max" in error_msg.lower()
-        assert "must be <=" in error_msg.lower()
+        assert "'run.completion' is not a tender config key" in str(exc_info.value)
+
+    def test_run_completion_criteria_refused(self):
+        config = self._base_config()
+        config['run'] = {
+            'completion_criteria': {'iterations': {'min': 10, 'max': 50}}
+        }
+
+        with pytest.raises(ValueError) as exc_info:
+            SystemtenderConfig.validate_minimal(config)
+
+        assert "'run.completion_criteria' is not a tender config key" in str(exc_info.value)
+
+    def test_run_without_budget_keys_passes(self):
+        config = self._base_config()
+        config['run'] = {'parallel': 1}
+
+        result = SystemtenderConfig.validate_minimal(config)
+        assert result['success'] is True
 
 
 class TestGuardrailsValidation:
