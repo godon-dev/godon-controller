@@ -438,10 +438,11 @@ class TestObjectiveReconnaissanceValidation:
         assert "non-negative" in error_msg.lower()
 
 
-class TestRunBudgetDoorRefusal:
-    """Budgets left the tender config (hard cutover, 2026-10-11): both
-    old spellings are refused at the door; a tender ends by
-    walk-complete, the stop flag, or wish release."""
+class TestOptimizerEraConfigDoorRefusal:
+    """Optimizer-era config left the tender config (hard cutover,
+    2026-10-11): the run section (budgets, worker fan-out) and the
+    cooperation section (trial sharing) are refused at the door; a
+    tender ends by walk-complete, the stop flag, or wish release."""
 
     def _base_config(self):
         return {
@@ -460,7 +461,16 @@ class TestRunBudgetDoorRefusal:
             },
         }
 
-    def test_run_completion_refused(self):
+    def test_run_section_refused(self):
+        config = self._base_config()
+        config['run'] = {'parallel': 1}
+
+        with pytest.raises(ValueError) as exc_info:
+            SystemtenderConfig.validate_minimal(config)
+
+        assert "'run' is not a valid systemtender config section" in str(exc_info.value)
+
+    def test_run_budget_spelling_refused(self):
         config = self._base_config()
         config['run'] = {
             'completion': {'iterations': {'min': 10, 'max': 50}}
@@ -469,22 +479,19 @@ class TestRunBudgetDoorRefusal:
         with pytest.raises(ValueError) as exc_info:
             SystemtenderConfig.validate_minimal(config)
 
-        assert "'run.completion' is not a tender config key" in str(exc_info.value)
+        assert "'run' is not a valid systemtender config section" in str(exc_info.value)
 
-    def test_run_completion_criteria_refused(self):
+    def test_cooperation_section_refused(self):
         config = self._base_config()
-        config['run'] = {
-            'completion_criteria': {'iterations': {'min': 10, 'max': 50}}
-        }
+        config['cooperation'] = {'active': False}
 
         with pytest.raises(ValueError) as exc_info:
             SystemtenderConfig.validate_minimal(config)
 
-        assert "'run.completion_criteria' is not a tender config key" in str(exc_info.value)
+        assert "'cooperation' is not a valid systemtender config section" in str(exc_info.value)
 
-    def test_run_without_budget_keys_passes(self):
+    def test_config_without_run_or_cooperation_passes(self):
         config = self._base_config()
-        config['run'] = {'parallel': 1}
 
         result = SystemtenderConfig.validate_minimal(config)
         assert result['success'] is True
