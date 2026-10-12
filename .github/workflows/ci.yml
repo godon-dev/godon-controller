@@ -122,7 +122,7 @@ jobs:
           import controller.systemtender_get as systemtender_get
           populate_stub_module(sys.modules['f.controller.systemtender_get'], systemtender_get)
 
-          import controller.systemtender_delete as systemtender_delete
+          import controller.executors.systemtender_delete as systemtender_delete
           populate_stub_module(sys.modules['f.controller.systemtender_delete'], systemtender_delete)
 
           import controller.systemtenders_get as systemtenders_get
@@ -163,9 +163,9 @@ jobs:
           from controller.systemtender_service import SystemtenderService
           from controller.database import execute_query, execute_ddl_query
           from controller.systemtender_create import main as create_systemtender
-          from controller.systemtender_create_executor import main as create_systemtender_executor
+          from controller.executors.systemtender_create_executor import main as create_systemtender_executor
           from controller.systemtender_get import main as get_systemtender
-          from controller.systemtender_delete import main as delete_systemtender
+          from controller.executors.systemtender_delete import main as delete_systemtender
           from controller.systemtenders_get import main as list_systemtenders
           from controller.systemtender_stop import main as stop_systemtender
           from controller.systemtender_start import main as start_systemtender
@@ -488,7 +488,7 @@ jobs:
           import controller.systemtender_get as systemtender_get
           populate_stub_module(sys.modules['f.controller.systemtender_get'], systemtender_get)
 
-          import controller.systemtender_delete as systemtender_delete
+          import controller.executors.systemtender_delete as systemtender_delete
           populate_stub_module(sys.modules['f.controller.systemtender_delete'], systemtender_delete)
 
           import controller.systemtenders_get as systemtenders_get

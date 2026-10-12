@@ -3,12 +3,29 @@ target: controller
 workspace: godon
 
 scripts:
+  # Fast lane: the door and the reads - seconds-work only. Routed to the
+  # controller-fast worker group so a long executor can never block a
+  # request path (receipt 2026-10-12: fourth concurrent create queued 64s
+  # behind three executors on one shared lane). 60s matches the api's sync
+  # budget: once the caller has given up, a hung job frees its worker -
+  # a longer cap only leaves zombie runs no caller awaits.
   - pattern: "*.py"
     path: "controller"
     settings:
       summary: "Godon Controller API"
       description: "Controller logic for managing Godon systemtender lifecycles"
-      tag: "controller"  # Routes to controller worker group
-      timeout: 300  # cap, not duration; the delete's 60s quiesce guard raced the ~60s runtime default (10-02 smoke receipts)
+      tag: "controller-fast"
+      timeout: 60
+
+  # Slow lane: the heavy halves - the create executor's table builds and
+  # the delete's quiesce guard. Same windmill paths as before (paths
+  # derive from filenames); only the routing tag differs.
+  - pattern: "*.py"
+    path: "controller/executors"
+    settings:
+      summary: "Godon Controller Executors"
+      description: "Slow halves of lifecycle operations - archive-DB table builds, quiesce-guarded deletes"
+      tag: "controller-slow"
+      timeout: 600
 
 flows: []

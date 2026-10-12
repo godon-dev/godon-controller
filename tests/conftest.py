@@ -124,5 +124,5 @@ populate_stub_module(sys.modules['f.controller.steerwishes_get'], steerwishes_ge
 import controller.steerwish_close as steerwish_close
 populate_stub_module(sys.modules['f.controller.steerwish_close'], steerwish_close)
 
-import controller.systemtender_create_executor as systemtender_create_executor
+import controller.executors.systemtender_create_executor as systemtender_create_executor
 populate_stub_module(sys.modules['f.controller.systemtender_create_executor'], systemtender_create_executor)
