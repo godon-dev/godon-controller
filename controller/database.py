@@ -264,6 +264,88 @@ class ArchiveDatabaseRepository:
         execute_ddl_query(db_config, query)
         logger.info(f"Dropped archive database: {systemtender_id}")
 
+    def export_systemtender_state(self, systemtender_id):
+        """Snapshot a tender's ledger and curves BEFORE its deletion.
+
+        The rider's rule: nothing is dropped unexported. The ledger
+        (trials + ledger_state) lives in the tender's own database —
+        readable only until the drop; the curves live in archive_db's
+        curve_points — readable only until cleanup_coordination_state
+        deletes them. Both land in systemtender_exports, which the
+        drop cannot touch. A tender database that no longer exists
+        (a retry after a partial delete) skips its snapshot honestly;
+        a database that exists but cannot be read raises — the caller
+        fails the deletion rather than drop unsnapshotted work.
+
+        Returns {'ledger_trials': n, 'ledger_state': n, 'curve_points': n}.
+        """
+        counts = {'ledger_trials': 0, 'ledger_state': 0, 'curve_points': 0}
+        db_config = self.base_config.copy()
+        db_config['database'] = "archive_db"
+
+        # The exports table is ensured at its point of use — the
+        # delete path must not depend on the wish registry's ensure.
+        execute_query(db_config, """
+        CREATE TABLE IF NOT EXISTS systemtender_exports
+        (
+        id SERIAL PRIMARY KEY,
+        systemtender_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        payload JSONB NOT NULL,
+        exported_ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_systemtender_exports_id
+        ON systemtender_exports(systemtender_id);
+        """)
+
+        tender_db = f"systemtender_{str(systemtender_id).replace('-', '_')}"
+
+        # The ledger snapshot: the tender's own database. Absent
+        # database = already dropped (a retry) — skip honestly.
+        ledger_config = self.base_config.copy()
+        ledger_config['database'] = tender_db
+        try:
+            trials = execute_query(
+                ledger_config, 'SELECT * FROM trials ORDER BY number;',
+                with_result=True) or []
+            state_rows = execute_query(
+                ledger_config, 'SELECT * FROM ledger_state ORDER BY key;',
+                with_result=True) or []
+        except Exception as e:
+            if 'does not exist' in str(e):
+                trials, state_rows = [], []
+            else:
+                raise
+        if trials or state_rows:
+            payload = json.dumps({'trials': trials, 'ledger_state': state_rows})
+            execute_query(db_config, (
+                "INSERT INTO systemtender_exports "
+                "(systemtender_id, kind, payload) "
+                f"VALUES('{systemtender_id}', 'ledger', "
+                f"'{payload.replace(chr(39), chr(39)*2)}'::jsonb);"))
+            counts['ledger_trials'] = len(trials)
+            counts['ledger_state'] = len(state_rows)
+
+        # The curves snapshot: archive_db rows for this sender.
+        curves = execute_query(db_config, (
+            'SELECT * FROM curve_points '
+            f"WHERE sender_id = '{systemtender_id}';"),
+            with_result=True) or []
+        if curves:
+            payload = json.dumps({'curve_points': curves})
+            execute_query(db_config, (
+                'INSERT INTO systemtender_exports '
+                '(systemtender_id, kind, payload) '
+                f"VALUES('{systemtender_id}', 'curves', "
+                f"'{payload.replace(chr(39), chr(39)*2)}'::jsonb);"))
+            counts['curve_points'] = len(curves)
+
+        logger.info(
+            f"Exported systemtender {systemtender_id} before deletion: "
+            f"{counts['ledger_trials']} trials, {counts['ledger_state']} "
+            f"state rows, {counts['curve_points']} curve points")
+        return counts
+
     def cleanup_coordination_state(self, systemtender_id):
         """Remove a systemtender's rows from coordination tables in archive_db.
 
@@ -619,7 +701,8 @@ class MetadataDatabaseRepository:
         );
         ALTER TABLE {self.steerwishes_table_name}
         ADD COLUMN IF NOT EXISTS claims JSONB,
-        ADD COLUMN IF NOT EXISTS terms JSONB;
+        ADD COLUMN IF NOT EXISTS terms JSONB,
+        ADD COLUMN IF NOT EXISTS seek JSONB;
         """
         execute_query(db_config, query)
 
@@ -758,7 +841,7 @@ class MetadataDatabaseRepository:
         logger.info(f"Steerwish purged from registry: {wish_id}")
 
     def insert_steerwish(self, wish_id, outcome, band, limits, budget, regime,
-                         claims=None, terms=None):
+                         claims=None, terms=None, seek=None):
         """Insert a declared steerwish (the 'declared' event is appended by the caller)"""
         db_config = self._get_db_config()
         band_json = "'" + json.dumps(band).replace("'", "''") + "'"
@@ -768,11 +851,12 @@ class MetadataDatabaseRepository:
         regime_sql = regime.replace("'", "''")
         claims_json = "'" + json.dumps(claims).replace("'", "''") + "'::jsonb" if claims else 'NULL'
         terms_json = "'" + json.dumps(terms).replace("'", "''") + "'::jsonb" if terms else 'NULL'
+        seek_json = "'" + json.dumps(seek).replace("'", "''") + "'::jsonb" if seek else 'NULL'
 
         query = f"""
         INSERT INTO {self.steerwishes_table_name}
-        (id, outcome, band, limits, budget, regime, claims, terms)
-        VALUES('{wish_id}', '{outcome_sql}', {band_json}::jsonb, {limits_json}, {budget_sql}, '{regime_sql}', {claims_json}, {terms_json});
+        (id, outcome, band, limits, budget, regime, claims, terms, seek)
+        VALUES('{wish_id}', '{outcome_sql}', {band_json}::jsonb, {limits_json}, {budget_sql}, '{regime_sql}', {claims_json}, {terms_json}, {seek_json});
         """
         execute_query(db_config, query)
         logger.info(f"Inserted steerwish {wish_id} for outcome: {outcome}")
@@ -788,7 +872,7 @@ class MetadataDatabaseRepository:
                          WHERE e.wish_id = w.id
                          AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
                          ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state,
-               w.claims, w.terms
+               w.claims, w.terms, w.seek
         FROM {self.steerwishes_table_name} w
         WHERE w.id = '{wish_id_sql}';
         """
@@ -801,7 +885,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT w.id, w.outcome,
+        SELECT w.id, w.outcome, w.regime,
                COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
                          WHERE e.wish_id = w.id
                          AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')

@@ -1159,6 +1159,22 @@ class SystemtenderService:
             det_cfg = systemtender_config.get('interference_detection', systemtender_config.get('detection', {}))
             group_id = det_cfg.get('group', systemtender_config.get('group', 'default'))
 
+            # Nothing is dropped unexported: the tender's ledger (its
+            # own DB) and its curves (archive_db) snapshot into
+            # systemtender_exports BEFORE the drop and the curve
+            # deletes. An unreadable-but-present database fails the
+            # deletion loudly — losing unsnapshotted work is the one
+            # outcome this rider exists to prevent.
+            try:
+                counts = self.archive_repo.export_systemtender_state(
+                    systemtender_id)
+                logger.info(
+                    f"Pre-drop export for {systemtender_id}: {counts}")
+            except Exception as e:
+                return _fail(
+                    f"export before drop failed - nothing dropped, the "
+                    f"work stays on the estate: {e}")
+
             # Drop the archive database — IF EXISTS, so a retry that
             # already dropped is a no-op. Death is confirmed above: the
             # relcache race (#399) is behind us from here on.
