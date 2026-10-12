@@ -31,8 +31,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from controller.systemtender_get import main as get_systemtender
 from controller.systemtenders_get import main as list_systemtenders
 from controller.systemtender_create import main as create_systemtender
-from controller.systemtender_delete import main as delete_systemtender
-from controller.systemtender_create_executor import main as create_systemtender_executor_script
+from controller.executors.systemtender_delete import main as delete_systemtender
+from controller.executors.systemtender_create_executor import main as create_systemtender_executor_script
 from controller.systemtender_stop import main as stop_systemtender
 from controller.systemtender_start import main as start_systemtender
 from controller.systemtender_service import SystemtenderService
@@ -176,7 +176,7 @@ class TestSystemtenderDeletion:
 
     def test_delete_systemtender_not_found(self):
         """Test deleting non-existent systemtender"""
-        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
+        with patch('controller.executors.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
             # Simulate deletion failure (systemtender doesn't exist)
@@ -193,7 +193,7 @@ class TestSystemtenderDeletion:
 
     def test_delete_systemtender_success(self):
         """Test successful systemtender deletion"""
-        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
+        with patch('controller.executors.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
@@ -209,7 +209,7 @@ class TestSystemtenderDeletion:
 
     def test_delete_systemtender_with_force_true(self):
         """Test deletion with force=true parameter"""
-        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
+        with patch('controller.executors.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
@@ -230,7 +230,7 @@ class TestSystemtenderDeletion:
 
     def test_delete_systemtender_with_force_false_default(self):
         """Test that force defaults to False (safe operation)"""
-        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
+        with patch('controller.executors.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
@@ -252,7 +252,7 @@ class TestSystemtenderDeletion:
 
     def test_delete_systemtender_requires_stop_when_not_forced(self):
         """Test that deletion without force requires graceful stop first"""
-        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
+        with patch('controller.executors.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
@@ -271,7 +271,7 @@ class TestSystemtenderDeletion:
 
     def test_delete_systemtender_cancels_worker_jobs(self):
         """Test that delete cancels all worker jobs before dropping database"""
-        with patch('controller.systemtender_delete.SystemtenderService') as mock_service_class:
+        with patch('controller.executors.systemtender_delete.SystemtenderService') as mock_service_class:
             mock_service = Mock()
             mock_service_class.return_value = mock_service
 
@@ -1056,7 +1056,7 @@ class TestAsyncCreate:
         service.metadata_repo.set_lifecycle.assert_not_called()
 
     def test_executor_script_passthrough(self):
-        with patch('controller.systemtender_create_executor.SystemtenderService') as mock_class:
+        with patch('controller.executors.systemtender_create_executor.SystemtenderService') as mock_class:
             mock_class.return_value.create_systemtender_executor.return_value = {
                 'result': 'SUCCESS', 'data': {'status': 'active'}}
             result = create_systemtender_executor_script(
