@@ -88,6 +88,95 @@ def _checked_claim(claim, where='claim'):
     }
 
 
+SEEK_SPECIES = ('cover_now', 'find_best')
+DIRECTION_WORDS = ('maximize', 'max', 'minimize', 'min')
+
+
+def _checked_seek_body(body):
+    """The seek wish's body at the door (design §XIV; wire pinned in
+    the chime 2026-10-12): species, region, criterion, budget,
+    candidates. This door mirrors the tender's own door — a wish that
+    cannot run refuses here, before anything plans on it; the tender's
+    door re-checks (never trust the wire)."""
+    if not isinstance(body, dict):
+        raise SteerwishValidationError(
+            'seek must be an object: {species, region, criterion, budget, candidates}')
+
+    species = body.get('species') or 'find_best'
+    if species not in SEEK_SPECIES:
+        raise SteerwishValidationError(
+            f"unknown seek species: {species} (cover_now or find_best)")
+
+    region = body.get('region')
+    if not isinstance(region, dict) or not region:
+        raise SteerwishValidationError(
+            'seek.region is required: at least one dial, each '
+            '[lo, hi, is_int]')
+    checked_region = {}
+    for dial, spec in region.items():
+        if not isinstance(spec, (list, tuple)) or len(spec) < 2:
+            raise SteerwishValidationError(
+                f'seek.region.{dial} must be [lo, hi, is_int]')
+        lo, hi = spec[0], spec[1]
+        is_int = bool(spec[2]) if len(spec) > 2 else False
+        if isinstance(lo, bool) or isinstance(hi, bool) \
+                or not isinstance(lo, (int, float)) \
+                or not isinstance(hi, (int, float)) \
+                or float(hi) <= float(lo):
+            raise SteerwishValidationError(
+                f'seek.region.{dial}: hi must exceed lo')
+        if is_int and (int(lo) != lo or int(hi) != hi):
+            raise SteerwishValidationError(
+                f'seek.region.{dial}: integer dial needs integer bounds')
+        checked_region[dial] = [float(lo) if not is_int else int(lo),
+                                float(hi) if not is_int else int(hi),
+                                is_int]
+
+    criterion = None
+    if species == 'find_best':
+        criterion = body.get('criterion')
+        if not isinstance(criterion, dict) \
+                or not criterion.get('outcome'):
+            raise SteerwishValidationError(
+                'find_best declares a criterion: {outcome, direction}')
+        direction = criterion.get('direction')
+        if direction not in DIRECTION_WORDS:
+            raise SteerwishValidationError(
+                f"criterion.direction must be one of {DIRECTION_WORDS}")
+        criterion = {'outcome': str(criterion['outcome']).strip(),
+                     'direction': direction}
+
+    budget = body.get('budget')
+    if species == 'find_best':
+        if isinstance(budget, bool) or not isinstance(budget, int) or budget <= 0:
+            raise SteerwishValidationError(
+                'find_best declares a budget: a positive integer '
+                '(the feelers it may spend)')
+    else:
+        if budget is not None:
+            raise SteerwishValidationError(
+                'cover_now walks on standing duty - it carries no budget')
+
+    candidates = body.get('candidates') or 0
+    if isinstance(candidates, bool) or not isinstance(candidates, int) \
+            or candidates < 0:
+        raise SteerwishValidationError(
+            'seek.candidates must be a non-negative integer (omitted = none)')
+    if species == 'find_best' and isinstance(budget, int) \
+            and candidates > budget:
+        raise SteerwishValidationError(
+            f'seek.candidates ({candidates}) exceeds the budget '
+            f'({budget}) - an impossible wish never starts')
+
+    return {
+        'species': species,
+        'region': checked_region,
+        'criterion': criterion,
+        'budget': budget,
+        'candidates': candidates,
+    }
+
+
 class SteerwishService:
     """Registry + lifecycle for steerwishes.
 
@@ -125,6 +214,13 @@ class SteerwishService:
         claim in band AND every term honored.
         """
         payload = payload or {}
+
+        if payload.get('species') == 'seek':
+            # The seek wish: a commissioned walk, not a hold. Its door
+            # is its own grammar (region/criterion/budget/candidates);
+            # the registry row carries the body in its own column —
+            # never inside claims, whose meaning stays pinned.
+            return self._create_seekwish(payload)
 
         if payload.get('outcome') is not None or payload.get('band') is not None:
             raise SteerwishValidationError(
@@ -212,6 +308,114 @@ class SteerwishService:
         if wish is None:
             raise RuntimeError(f'inserted steerwish vanished: {wish_id}')
         return wish
+
+    def _create_seekwish(self, payload):
+        """Declare a seek wish: validate its body at the door, insert
+        with regime 'seek' (the body rides its own column — claims keep
+        their pinned meaning), stamp 'declared', ask causal to plan.
+
+        The ask's refusal is a valid answer: causal's map_reads_it
+        carries the reading INSIDE the refusal detail, and the wish's
+        events carry it to the declarer — the refusal is the answer.
+        """
+        seek = _checked_seek_body(payload.get('seek'))
+        outcome = seek['criterion']['outcome'] if seek['criterion'] \
+            else 'cover_now'
+
+        wish_id = str(uuid.uuid4())
+        self._ensure_registry()
+        self.repo.insert_steerwish(
+            wish_id=wish_id,
+            outcome=outcome,
+            band=None,
+            limits=None,
+            budget=seek['budget'],
+            regime='seek',
+            claims=None,
+            terms=None,
+            seek=seek,
+        )
+        self.repo.insert_steerwish_event(wish_id, 'declared', None)
+        logger.info(
+            f"Seek wish declared: {wish_id} (species: {seek['species']}, "
+            f"outcome: {outcome})")
+
+        self._ask_causal_to_plan_seek(wish_id, seek)
+
+        wish = self.get_steerwish(wish_id)
+        if wish is None:
+            raise RuntimeError(f'inserted seek wish vanished: {wish_id}')
+        return wish
+
+    def _ask_causal_to_plan_seek(self, wish_id, seek):
+        """One HTTP ask seeds causal's book with the seek. The wire is
+        pinned (chime 2026-10-12): the ask carries the admitted body
+        under 'seek'; a planned answer names the serving tender (its
+        dials are the region's); any other answer is a refusal —
+        map_reads_it arrives with the reading in its detail, and the
+        event carries it to the declarer verbatim."""
+        plan_request = {
+            'wish_id': wish_id,
+            'species': 'seek',
+            'seek': seek,
+        }
+        try:
+            req = urllib.request.Request(
+                f"{self._causal_url()}/steer/plan",
+                data=json.dumps(plan_request).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                plan_response = json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            logger.warning(f"Wish {wish_id}: seek plan ask failed: {e}")
+            self.repo.insert_steerwish_event(
+                wish_id, 'plan_error', json.dumps({'error': str(e)}))
+            return
+
+        if plan_response.get('status') == 'planned':
+            self.repo.insert_steerwish_event(
+                wish_id, 'planned', json.dumps(plan_response))
+            sender = plan_response.get('sender')
+            if not sender:
+                logger.warning(
+                    f"Wish {wish_id}: planned but no serving tender named")
+                return
+            if self.archive_repo is None:
+                logger.warning(
+                    f"Wish {wish_id}: planned on {sender} but no archive "
+                    f"config - assignment not written")
+                return
+            alive, reason = self._sender_alive(sender)
+            if not alive:
+                detail = {'error': f'sender {sender} not alive: {reason} '
+                                   '- assignment not planted'}
+                self.repo.insert_steerwish_event(
+                    wish_id, 'plan_error', json.dumps(detail))
+                logger.warning(
+                    f"Wish {wish_id}: sender {sender} not alive ({reason})")
+                return
+            db_name = f"systemtender_{str(sender).replace('-', '_')}"
+            try:
+                self.archive_repo.write_wish_assignment(
+                    db_name, wish_id, role='sender')
+                self.repo.insert_steerwish_event(
+                    wish_id, 'assigned',
+                    json.dumps({'sender': sender, 'db': db_name}))
+                logger.info(f"Seek wish {wish_id} assigned to {db_name}")
+            except Exception as e:
+                logger.warning(f"Wish {wish_id}: assignment write failed: {e}")
+                self.repo.insert_steerwish_event(
+                    wish_id, 'plan_error',
+                    json.dumps({'error': f'assignment write failed: {e}'}))
+        else:
+            self.repo.insert_steerwish_event(wish_id, 'refused', json.dumps({
+                'reason': plan_response.get('reason'),
+                'detail': plan_response.get('detail'),
+            }))
+            logger.info(
+                f"Wish {wish_id} refused: {plan_response.get('reason')}")
 
     def get_steerwish(self, wish_id):
         """Fetch one wish with full event history; None if unknown.
