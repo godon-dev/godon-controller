@@ -29,8 +29,6 @@ sys.modules['database'] = MagicMock()
 
 sys.modules['wmill'] = MagicMock()
 
-sys.modules['optuna'] = MagicMock()
-sys.modules['optuna.storages'] = MagicMock()
 
 def create_stub_module(name):
     module = types.ModuleType(name)
