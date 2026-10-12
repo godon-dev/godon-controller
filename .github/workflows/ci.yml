@@ -63,9 +63,6 @@ jobs:
           mock_wmill.Windmill.return_value.get.return_value = {'status': 'Canceled'}
           sys.modules['wmill'] = mock_wmill
 
-          # Mock optuna.storages before imports (schema initialization uses it)
-          sys.modules['optuna'] = MagicMock()
-          sys.modules['optuna.storages'] = MagicMock()
 
           # Create stub modules using types.ModuleType
           class FakeControllerModule:
@@ -428,9 +425,6 @@ jobs:
           mock_wmill.run_script_by_path_async.return_value = 'test-job-id-123'
           sys.modules['wmill'] = mock_wmill
 
-          # Mock optuna.storages before imports (schema initialization uses it)
-          sys.modules['optuna'] = MagicMock()
-          sys.modules['optuna.storages'] = MagicMock()
 
           # Create stub modules using FakeControllerModule class (like systemtender tests)
           class FakeControllerModule:

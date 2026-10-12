@@ -13,8 +13,6 @@ from f.controller.shared.otel_logging import get_logger
 import wmill
 from wmill import Windmill
 
-import optuna.storages
-
 logger = get_logger(__name__)
 
 def cancel_job_by_id(job_id: str, reason: str = None) -> bool:
@@ -667,13 +665,9 @@ class SystemtenderService:
             # Create systemtender state table for shutdown signaling in the archive DB
             self.archive_repo.create_systemtender_state_table(systemtender_db_name)
 
-            # Wait for the systemtender_state table to be fully committed and accessible
-            # (prevents YugabyteDB serialization conflicts when Optuna starts its DDL)
+            # Wait for the systemtender_state table to be fully committed
+            # and accessible before workers boot against it
             self._await_state_table(systemtender_db_name)
-
-            # Initialize Optuna schema to prevent race conditions during worker startup
-            # (retries on YugabyteDB serialization failures and timeouts)
-            self._init_optuna_schema(systemtender_db_name)
 
             # Launch worker scripts with error handling
             worker_launch_failures = []
@@ -827,42 +821,6 @@ class SystemtenderService:
 
         if not table_ready:
             raise Exception(f"Systemtender state table did not become ready within {max_wait}s")
-
-    def _init_optuna_schema(self, systemtender_db_name):
-        """Initialize Optuna schema to prevent race conditions during
-        worker startup: multiple workers starting simultaneously would
-        otherwise conflict trying to create tables.
-
-        Retry logic for YugabyteDB serialization failures and timeouts.
-        Executor-side step (designs/2026-10-10).
-        """
-        max_retries = 5
-
-        for attempt in range(max_retries):
-            try:
-                db_url = self.archive_repo.get_connection_url(systemtender_db_name)
-                optuna.storages.RDBStorage(url=db_url)
-                logger.info(f"Initialized Optuna schema in {systemtender_db_name}")
-                return
-            except Exception as e:
-                error_str = str(e)
-                # Check for YugabyteDB-specific errors that should be retried
-                is_retryable = (
-                    'SerializationFailure' in error_str or
-                    '40001' in error_str or
-                    'Transaction aborted' in error_str or
-                    'Timed out waiting' in error_str or
-                    'InternalError_' in error_str
-                )
-
-                if attempt < max_retries - 1 and is_retryable:
-                    wait_time = 2 ** attempt  # Exponential backoff: 2s, 4s, 8s, 16s
-                    logger.warning(f"Optuna schema initialization attempt {attempt + 1}/{max_retries} failed for {systemtender_db_name}: {e}")
-                    logger.info(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"Failed to initialize Optuna schema for {systemtender_db_name} after {max_retries} attempts: {e}")
-                    raise
 
     def get_systemtender(self, systemtender_id):
         """Get systemtender information"""
@@ -1346,24 +1304,33 @@ class SystemtenderService:
             return True, "Force mode: skipping compatibility check"
 
         try:
-            import optuna
+            import psycopg2
+            import psycopg2.extras
+            import json as _json
 
             db_name = f"systemtender_{systemtender_id.replace('-', '_')}"
-            db_url = self.archive_repo.get_connection_url(db_name)
-            storage = optuna.storages.RDBStorage(url=db_url)
+            dsn = self.archive_repo.get_connection_url(db_name)
 
-            studies = storage.get_all_study_names()
-            if not studies:
+            conn = psycopg2.connect(dsn)
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT attrs, value FROM trials "
+                    "WHERE state = 'COMPLETE' ORDER BY number DESC LIMIT 1")
+                row = cur.fetchone()
+            conn.close()
+
+            if row is None:
                 return True, "No existing trial data found"
 
-            study = optuna.load_study(study_name=studies[0], storage=storage)
-            completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-            if not completed_trials:
-                return True, "No completed trials"
-
-            sample_trial = completed_trials[-1]
-            old_param_count = len(sample_trial.params)
-            old_obj_count = len(sample_trial.values) if sample_trial.values else 0
+            attrs = row['attrs'] or {}
+            stashed = attrs.get('effectuation_params')
+            if isinstance(stashed, str):
+                try:
+                    stashed = _json.loads(stashed)
+                except ValueError:
+                    stashed = None
+            old_param_count = len(stashed) if isinstance(stashed, dict) else 0
+            old_obj_count = 1 if row['value'] is not None else 0
 
             new_param_count = self._count_config_params(new_config)
             new_obj_count = len(new_config.get('objectives', []))
@@ -1383,11 +1350,9 @@ class SystemtenderService:
                 return False, f"Trial data incompatible: {detail}. Use force=true to clear trial history and start fresh."
 
             return True, f"Compatible: {old_param_count} params, {old_obj_count} objectives"
-
         except Exception as e:
-            logger.warning(f"Could not check trial compatibility: {e}")
+            logger.warning(f"Trial compatibility check failed for {systemtender_id}: {e}")
             return True, f"Compatibility check skipped: {e}"
-
     def _clear_trial_data(self, systemtender_id):
         db_name = f"systemtender_{systemtender_id.replace('-', '_')}"
         db_config = self.archive_repo.base_config.copy()

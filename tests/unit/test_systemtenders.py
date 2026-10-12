@@ -998,7 +998,6 @@ class TestAsyncCreate:
         from its own state table."""
         service, row_id = self._executor_service()
         with patch.object(service, '_await_state_table'), \
-             patch.object(service, '_init_optuna_schema'), \
              patch('controller.systemtender_service.wmill') as mock_wmill, \
              patch('controller.systemtender_service.start_optimization_flow',
                    return_value=('bench-tender_0_0', 'job-1')) as mock_start:
@@ -1026,7 +1025,6 @@ class TestAsyncCreate:
         create-failed + reason, visible to the client's poll."""
         service, row_id = self._executor_service()
         with patch.object(service, '_await_state_table'), \
-             patch.object(service, '_init_optuna_schema'), \
              patch('controller.systemtender_service.wmill') as mock_wmill, \
              patch('controller.systemtender_service.start_optimization_flow',
                    side_effect=Exception('worker refused')), \
