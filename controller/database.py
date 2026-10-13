@@ -828,7 +828,7 @@ class MetadataDatabaseRepository:
         db_config = self._get_db_config()
 
         query = f"""
-        SELECT w.id, w.outcome, w.regime,
+        SELECT w.id, w.outcome,
                COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
                          WHERE e.wish_id = w.id
                          AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
