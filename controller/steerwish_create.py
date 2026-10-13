@@ -1,5 +1,5 @@
 from f.controller.config import DatabaseConfig
-from f.controller.steerwish_service import SteerwishService, SteerwishValidationError
+from f.controller.wish_service import WishService, WishValidationError
 from f.controller.shared.otel_logging import get_logger
 
 logger = get_logger(__name__)
@@ -14,9 +14,9 @@ def main(request_data=None):
     serves exactly one claim.
     """
     try:
-        service = SteerwishService(DatabaseConfig.META_DB, DatabaseConfig.ARCHIVE_DB)
+        service = WishService(DatabaseConfig.META_DB, DatabaseConfig.ARCHIVE_DB)
         return service.create_steerwish(request_data)
-    except SteerwishValidationError as e:
+    except WishValidationError as e:
         return {"result": "FAILURE", "error": str(e)}
     except Exception as e:
         logger.error(f"Failed to declare steerwish: {e}", exc_info=True)

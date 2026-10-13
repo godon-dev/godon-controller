@@ -1,5 +1,5 @@
 from f.controller.config import DatabaseConfig
-from f.controller.steerwish_service import SteerwishService
+from f.controller.wish_service import WishService
 
 def main(request_data=None):
     data = request_data or {}
@@ -11,7 +11,7 @@ def main(request_data=None):
         return {"result": "FAILURE", "error": (
             "Missing claims ([{outcome, band}]) - the sugar shape is retired")}
 
-    service = SteerwishService(
+    service = WishService(
         archive_db_config=DatabaseConfig.ARCHIVE_DB,
         meta_db_config=DatabaseConfig.META_DB
     )

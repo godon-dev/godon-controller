@@ -1,5 +1,5 @@
 from f.controller.config import DatabaseConfig
-from f.controller.steerwish_service import SteerwishService
+from f.controller.wish_service import WishService
 from f.controller.shared.otel_logging import get_logger
 
 logger = get_logger(__name__)
@@ -16,7 +16,7 @@ def main(request_data=None):
         return {"result": "FAILURE", "error": "Missing wish_id"}
 
     try:
-        service = SteerwishService(DatabaseConfig.META_DB)
+        service = WishService(DatabaseConfig.META_DB)
         wish = service.get_steerwish(wish_id)
         if wish is None:
             return {"result": "FAILURE", "error": f"steerwish not found: {wish_id}"}

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
-from controller.steerwish_service import SteerwishService
+from controller.wish_service import WishService
 
 CREATED = datetime(2026, 10, 12, 19, 0, 0, tzinfo=timezone.utc)
 SEEK_BODY = {
@@ -34,7 +34,7 @@ def _row(seek=SEEK_BODY):
 
 
 def _service(events, returned=RETURN_PAYLOAD):
-    svc = SteerwishService.__new__(SteerwishService)
+    svc = WishService.__new__(WishService)
     svc.repo = MagicMock()
     svc.archive_repo = MagicMock()
     svc.repo.get_wish_lifecycle.return_value = None

@@ -13,11 +13,11 @@ Controller Logic that Manages Godon Systemtender Lifecycles
   Windmill scripts: `steerwish_create`, `steerwish_get`, `steerwishes_get`,
   `steerwish_close` (folder `f/controller/`).
 
-## Division of labor on steerwishes (sealed 2026-09-10)
+## Division of labor on wishes
 
-The controller owns the wish OBJECT and its lifecycle — identity,
+The controller holds the wish object and its lifecycle — identity,
 coordinates (outcome, band, limits, budget, regime), events, timestamps,
-adoption lookup, purge cascade. causal owns the steering CALCULATION keyed
-by wish id — the plan, bars, refusals, verdict stamps, vigilance. The
-controller asks, never computes: it holds the wish as it holds systemtenders
-without optimizing and curves without measuring.
+adoption lookup, purge cascade. Steering calculation lives in causal,
+keyed by wish id — the plan, bars, refusals, verdict stamps, vigilance.
+The controller asks; it never computes: it holds wishes as it holds
+systemtenders without optimizing and curves without measuring.
