@@ -5,6 +5,13 @@ import urllib.request
 import uuid
 
 from f.controller.database import ArchiveDatabaseRepository, MetadataDatabaseRepository
+try:
+    from f.controller import steer_grammar, seek_grammar
+    from f.controller.wish_errors import WishValidationError
+except ImportError:  # test envs
+    from controller import steer_grammar, seek_grammar
+    from controller.wish_errors import WishValidationError
+
 from f.controller.shared.otel_logging import get_logger
 
 logger = get_logger(__name__)
@@ -27,160 +34,10 @@ VALID_EVENT_TYPES = [
     'walk_opened', 'walk_probe', 'walk_closed',
 ]
 
-
-class SteerwishValidationError(Exception):
-    """Raised when a declare payload fails entry validation.
-
-    Malformed wishes are rejected before anything plans on them.
-    """
-
-
-def _checked_band(band, where='band'):
-    """One band, door-checked - the same rules for sugar and claims.
-
-    The wish-shape stays free; the door keeps one law for every band
-    it accepts (sealed with wish-v1: lo below hi, finite, target
-    finite when present).
-    """
-    if not isinstance(band, dict) or 'lo' not in band or 'hi' not in band:
-        raise SteerwishValidationError(
-            f'{where} requires lo and hi (in the outcome measurement units)')
-    try:
-        lo, hi = float(band['lo']), float(band['hi'])
-    except (TypeError, ValueError):
-        raise SteerwishValidationError(f'{where} lo and hi must be numbers')
-    if not lo < hi:
-        raise SteerwishValidationError(f'{where} lo must be below hi')
-    if not (math.isfinite(lo) and math.isfinite(hi)):
-        raise SteerwishValidationError(f'{where} lo and hi must be finite')
-    target = band.get('target')
-    if target is not None:
-        try:
-            t = float(target)
-        except (TypeError, ValueError):
-            raise SteerwishValidationError(f'{where} target must be a number')
-        if not math.isfinite(t):
-            raise SteerwishValidationError(f'{where} target must be finite')
-    return band
-
-
-def _checked_claim(claim, where='claim'):
-    """One claim or term at the door: the atom the gavel judges.
-
-    The shape is identical for aims and price - the role (dial or
-    never-actuate) is a compile-time fact, not a grammar one.
-    """
-    if not isinstance(claim, dict):
-        raise SteerwishValidationError(
-            f'{where} must be an object (outcome, band)')
-    if claim.get('direction') is not None:
-        raise SteerwishValidationError(
-            f'{where}.direction is refused: the direction rung is not '
-            'built - declare a band')
-    name = claim.get('outcome')
-    if not isinstance(name, str) or not name.strip():
-        raise SteerwishValidationError(
-            f'{where}.outcome is required: the plain name of one '
-            'measured value')
-    return {
-        'outcome': name.strip(),
-        'band': _checked_band(claim.get('band'), f'{where}.band'),
-    }
-
-
-SEEK_SPECIES = ('cover_now', 'find_best')
-DIRECTION_WORDS = ('maximize', 'max', 'minimize', 'min')
-
-
-def _checked_seek_body(body):
-    """The seek wish's body at the door (design §XIV; wire pinned in
-    the chime 2026-10-12): species, region, criterion, budget,
-    candidates. This door mirrors the tender's own door — a wish that
-    cannot run refuses here, before anything plans on it; the tender's
-    door re-checks (never trust the wire)."""
-    if not isinstance(body, dict):
-        raise SteerwishValidationError(
-            'seek must be an object: {species, region, criterion, budget, candidates}')
-
-    species = body.get('species') or 'find_best'
-    if species not in SEEK_SPECIES:
-        raise SteerwishValidationError(
-            f"unknown seek species: {species} (cover_now or find_best)")
-
-    region = body.get('region')
-    if not isinstance(region, dict) or not region:
-        raise SteerwishValidationError(
-            'seek.region is required: at least one dial, each '
-            '[lo, hi, is_int]')
-    checked_region = {}
-    for dial, spec in region.items():
-        if not isinstance(spec, (list, tuple)) or len(spec) < 2:
-            raise SteerwishValidationError(
-                f'seek.region.{dial} must be [lo, hi, is_int]')
-        lo, hi = spec[0], spec[1]
-        is_int = bool(spec[2]) if len(spec) > 2 else False
-        if isinstance(lo, bool) or isinstance(hi, bool) \
-                or not isinstance(lo, (int, float)) \
-                or not isinstance(hi, (int, float)) \
-                or float(hi) <= float(lo):
-            raise SteerwishValidationError(
-                f'seek.region.{dial}: hi must exceed lo')
-        if is_int and (int(lo) != lo or int(hi) != hi):
-            raise SteerwishValidationError(
-                f'seek.region.{dial}: integer dial needs integer bounds')
-        checked_region[dial] = [float(lo) if not is_int else int(lo),
-                                float(hi) if not is_int else int(hi),
-                                is_int]
-
-    criterion = None
-    if species == 'find_best':
-        criterion = body.get('criterion')
-        if not isinstance(criterion, dict) \
-                or not criterion.get('outcome'):
-            raise SteerwishValidationError(
-                'find_best declares a criterion: {outcome, direction}')
-        direction = criterion.get('direction')
-        if direction not in DIRECTION_WORDS:
-            raise SteerwishValidationError(
-                f"criterion.direction must be one of {DIRECTION_WORDS}")
-        criterion = {'outcome': str(criterion['outcome']).strip(),
-                     'direction': direction}
-
-    budget = body.get('budget')
-    if species == 'find_best':
-        if isinstance(budget, bool) or not isinstance(budget, int) or budget <= 0:
-            raise SteerwishValidationError(
-                'find_best declares a budget: a positive integer '
-                '(the feelers it may spend)')
-    else:
-        if budget is not None:
-            raise SteerwishValidationError(
-                'cover_now walks on standing duty - it carries no budget')
-
-    candidates = body.get('candidates') or 0
-    if isinstance(candidates, bool) or not isinstance(candidates, int) \
-            or candidates < 0:
-        raise SteerwishValidationError(
-            'seek.candidates must be a non-negative integer (omitted = none)')
-    if species == 'find_best' and isinstance(budget, int) \
-            and candidates > budget:
-        raise SteerwishValidationError(
-            f'seek.candidates ({candidates}) exceeds the budget '
-            f'({budget}) - an impossible wish never starts')
-
-    return {
-        'species': species,
-        'region': checked_region,
-        'criterion': criterion,
-        'budget': budget,
-        'candidates': candidates,
-    }
-
-
-class SteerwishService:
+class WishService:
     """Registry + lifecycle for steerwishes.
 
-    Division of labor (sealed 2026-09-10): the controller owns the wish
+    Division of labor: the controller owns the wish
     OBJECT and its lifecycle - identity, coordinates, events, timestamps,
     adoption lookup, purge cascade. causal owns the steering CALCULATION
     keyed by wish id (plan, bars, refusal, verdict stamps, vigilance).
@@ -223,24 +80,24 @@ class SteerwishService:
             return self._create_seekwish(payload)
 
         if payload.get('outcome') is not None or payload.get('band') is not None:
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 'the sugar shape is retired - the wish speaks claims: '
                 '[{outcome, band}], terms: [{outcome, band}]')
         claims_field = payload.get('claims')
         if not isinstance(claims_field, list) or not claims_field:
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 'claims is required: a non-empty list of {outcome, band} '
                 'claims - the atom the gavel judges')
         terms_field = payload.get('terms') or []
 
-        claims = [_checked_claim(c, f'claims[{i}]')
+        claims = [steer_grammar.checked_claim(c, f'claims[{i}]')
                   for i, c in enumerate(claims_field)]
-        terms = [_checked_claim(t, f'terms[{i}]')
+        terms = [steer_grammar.checked_claim(t, f'terms[{i}]')
                  for i, t in enumerate(terms_field)]
         names = [c['outcome'] for c in claims + terms]
         if len(set(names)) != len(names):
             duplicated = sorted({n for n in names if names.count(n) > 1})[0]
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 f'one claim per outcome per wish: {duplicated} appears '
                 'twice across claims and terms')
 
@@ -250,24 +107,24 @@ class SteerwishService:
         budget = payload.get('budget')
         if budget is not None:
             if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
-                raise SteerwishValidationError(
+                raise WishValidationError(
                     'budget must be a non-negative integer (omitted = upkeep indefinitely)')
 
         regime = payload.get('regime') or 'standing'
         if regime != 'standing':
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 f"unknown regime: {regime} (only 'standing' exists today)")
 
         limits = payload.get('limits')
         if limits is not None:
             if not isinstance(limits, dict):
-                raise SteerwishValidationError(
+                raise WishValidationError(
                     'limits must be an object (exclude, maxChange)')
             exclude = limits.get('exclude')
             if exclude is not None and (
                     not isinstance(exclude, list)
                     or not all(isinstance(p, str) for p in exclude)):
-                raise SteerwishValidationError(
+                raise WishValidationError(
                     'limits.exclude must be a list of param names')
             max_change = limits.get('maxChange')
             if max_change is not None:
@@ -276,7 +133,7 @@ class SteerwishService:
                 if isinstance(max_change, bool) \
                         or not isinstance(max_change, (int, float)) \
                         or not 0.0 < float(max_change) < 1.0:
-                    raise SteerwishValidationError(
+                    raise WishValidationError(
                         'limits.maxChange must be a fraction of a param\'s '
                         'range from neutral, in (0, 1)')
 
@@ -318,7 +175,7 @@ class SteerwishService:
         carries the reading INSIDE the refusal detail, and the wish's
         events carry it to the declarer — the refusal is the answer.
         """
-        seek = _checked_seek_body(payload.get('seek'))
+        seek = seek_grammar.checked_seek_body(payload.get('seek'))
         outcome = seek['criterion']['outcome'] if seek['criterion'] \
             else 'cover_now'
 
@@ -516,33 +373,33 @@ class SteerwishService:
         payload = payload or {}
         wish = self.get_steerwish(wish_id)
         if wish is None:
-            raise SteerwishValidationError(f'unknown wish: {wish_id}')
+            raise WishValidationError(f'unknown wish: {wish_id}')
         if wish['state'] == 'closed':
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 'wish is closed - corrections apply to living wishes')
         if payload.get('band') is not None:
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 'the sugar shape is retired - correct via claims: '
                 '[{outcome, band}], terms: [{outcome, band}]')
         claims_field = payload.get('claims')
         if not isinstance(claims_field, list) or not claims_field:
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 'corrections speak claims: a non-empty list of '
                 '{outcome, band} on the same identity')
-        claims = [_checked_claim(c, f'claims[{i}]')
+        claims = [steer_grammar.checked_claim(c, f'claims[{i}]')
                   for i, c in enumerate(claims_field)]
-        terms = [_checked_claim(t, f'terms[{i}]')
+        terms = [steer_grammar.checked_claim(t, f'terms[{i}]')
                  for i, t in enumerate(payload.get('terms') or [])]
         names = [c['outcome'] for c in claims + terms]
         if len(set(names)) != len(names):
             duplicated = sorted({n for n in names if names.count(n) > 1})[0]
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 f'one claim per outcome per wish: {duplicated} appears '
                 'twice across claims and terms')
 
         limits = payload.get('limits')
         if limits is not None and not isinstance(limits, dict):
-            raise SteerwishValidationError(
+            raise WishValidationError(
                 'limits must be an object (exclude, maxChange)')
 
         budget = payload.get('budget')

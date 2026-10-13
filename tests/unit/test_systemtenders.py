@@ -37,7 +37,7 @@ from controller.systemtender_stop import main as stop_systemtender
 from controller.systemtender_start import main as start_systemtender
 from controller.systemtender_service import SystemtenderService
 from controller.database import MetadataDatabaseRepository
-from controller.steerwish_service import SteerwishService
+from controller.wish_service import WishService
 
 
 class TestSystemtenderRetrieval:
@@ -819,7 +819,7 @@ class TestReceiverNotePlanted:
     36307488912). The door now plants a receiver note too."""
 
     def _service(self):
-        service = SteerwishService.__new__(SteerwishService)
+        service = WishService.__new__(WishService)
         service.repo = Mock()
         service.archive_repo = Mock()
         service._causal_url = lambda: "http://127.0.0.1:9091"
@@ -839,7 +839,7 @@ class TestReceiverNotePlanted:
 
     def test_sender_and_receiver_notes_planted(self):
         service = self._service()
-        with patch('controller.steerwish_service.urllib.request.urlopen') as ur:
+        with patch('controller.wish_service.urllib.request.urlopen') as ur:
             resp = Mock()
             resp.read.return_value = json.dumps(self._plan_response()).encode()
             ur.return_value.__enter__.return_value = resp
@@ -855,7 +855,7 @@ class TestReceiverNotePlanted:
 
     def test_write_wish_assignment_defaults_to_sender_role(self):
         service = self._service()
-        with patch('controller.steerwish_service.urllib.request.urlopen') as ur:
+        with patch('controller.wish_service.urllib.request.urlopen') as ur:
             resp = Mock()
             resp.read.return_value = json.dumps(self._plan_response()).encode()
             ur.return_value.__enter__.return_value = resp
@@ -871,7 +871,7 @@ class TestReceiverNotePlanted:
         plan['path'] = [plan['path'][0]]
         plan['moves'][0]['sender'] = plan['path'][0]
         service = self._service()
-        with patch('controller.steerwish_service.urllib.request.urlopen') as ur:
+        with patch('controller.wish_service.urllib.request.urlopen') as ur:
             resp = Mock()
             resp.read.return_value = json.dumps(plan).encode()
             ur.return_value.__enter__.return_value = resp

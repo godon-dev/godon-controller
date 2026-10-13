@@ -26,8 +26,9 @@ from unittest.mock import MagicMock, Mock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
 from controller.steerwish_create import main as create_main
-from controller import steerwish_service
-from controller.steerwish_service import SteerwishService, _checked_seek_body
+from controller import wish_service as steerwish_service
+from controller.wish_service import WishService
+from controller.seek_grammar import checked_seek_body as _checked_seek_body
 
 
 def seek_payload(**over):
@@ -111,7 +112,7 @@ class TestSeekValidationDoor:
 
 
 def _service():
-    svc = SteerwishService.__new__(SteerwishService)
+    svc = WishService.__new__(WishService)
     svc.repo = MagicMock()
     svc.archive_repo = MagicMock()
     svc.get_steerwish = MagicMock(return_value={'id': 'w1', 'state': 'declared'})
@@ -152,7 +153,7 @@ class TestSeekDeclaration:
             return _causal_answer(sender='670eee18-0216-4628-942b-94ae89effcee')
 
         with patch.object(svc, '_ensure_registry'), \
-             patch('controller.steerwish_service.urllib.request.urlopen',
+             patch('controller.wish_service.urllib.request.urlopen',
                    side_effect=fake_urlopen):
             svc._ask_causal_to_plan_seek('w1', _checked_seek_body(
                 seek_payload()['seek']))
@@ -168,7 +169,7 @@ class TestSeekDeclaration:
         svc = _service()
         svc._sender_alive = MagicMock(return_value=(False, 'no beat'))
         with patch.object(svc, '_ensure_registry'), \
-             patch('controller.steerwish_service.urllib.request.urlopen',
+             patch('controller.wish_service.urllib.request.urlopen',
                    return_value=_causal_answer(sender='dead-one')):
             svc._ask_causal_to_plan_seek('w1', _checked_seek_body(
                 seek_payload()['seek']))
@@ -182,7 +183,7 @@ class TestSeekDeclaration:
             status='refused', reason='map_reads_it',
             detail={'reading': 0.83, 'params': {'param_0': 35.2}})
         with patch.object(svc, '_ensure_registry'), \
-             patch('controller.steerwish_service.urllib.request.urlopen',
+             patch('controller.wish_service.urllib.request.urlopen',
                    return_value=refusal):
             svc._ask_causal_to_plan_seek('w1', _checked_seek_body(
                 seek_payload()['seek']))

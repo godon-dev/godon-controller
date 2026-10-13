@@ -59,7 +59,7 @@ sys.modules['f.controller.shared.otel_logging'] = fake_controller_otel
 for module_name in ['config', 'database', 'systemtender_service', 'credential_create',
                     'credential_get', 'credential_delete', 'credentials_get',
                     'target_create', 'target_get', 'targets_get', 'target_delete',
-                    'steerwish_service', 'steerwish_create', 'steerwish_get',
+                    'wish_service', 'steerwish_create', 'steerwish_get',
                     'steerwishes_get', 'steerwish_close', 'systemtender_create_executor']:
     full_name = f'f.controller.{module_name}'
     stub = create_stub_module(full_name)
@@ -107,8 +107,8 @@ populate_stub_module(sys.modules['f.controller.targets_get'], targets_get)
 import controller.target_delete as target_delete
 populate_stub_module(sys.modules['f.controller.target_delete'], target_delete)
 
-import controller.steerwish_service as steerwish_service
-populate_stub_module(sys.modules['f.controller.steerwish_service'], steerwish_service)
+import controller.wish_service as wish_service
+populate_stub_module(sys.modules['f.controller.wish_service'], wish_service)
 
 import controller.steerwish_create as steerwish_create
 populate_stub_module(sys.modules['f.controller.steerwish_create'], steerwish_create)

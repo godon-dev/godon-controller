@@ -30,7 +30,7 @@ from controller.steerwish_create import main as create_main
 from controller.steerwish_get import main as get_main
 from controller.steerwishes_get import main as list_main
 from controller.steerwish_close import main as close_main
-from controller import steerwish_service
+from controller import wish_service as steerwish_service
 
 WISH_ID = '550e8400-e29b-41d4-a716-446655440000'
 
@@ -43,10 +43,10 @@ def _no_wish_deletion_markers(monkeypatch):
     must never reach a real database in unit tests. Tests that want a
     marker patch the instance methods (instance attrs shadow these)."""
     monkeypatch.setattr(
-        'controller.steerwish_service.MetadataDatabaseRepository.get_wish_lifecycle',
+        'controller.wish_service.MetadataDatabaseRepository.get_wish_lifecycle',
         lambda self, wish_id: None)
     monkeypatch.setattr(
-        'controller.steerwish_service.MetadataDatabaseRepository.get_all_wish_lifecycle',
+        'controller.wish_service.MetadataDatabaseRepository.get_all_wish_lifecycle',
         lambda self, wish_id=None: {})
 
 
@@ -64,8 +64,8 @@ def _wish_row(state='declared'):
 
 
 def _service_with_repo(wish_row, events):
-    """A SteerwishService bound to a stubbed registry repo."""
-    with patch('controller.steerwish_service.MetadataDatabaseRepository') as repo_cls:
+    """A WishService bound to a stubbed registry repo."""
+    with patch('controller.wish_service.MetadataDatabaseRepository') as repo_cls:
         repo = repo_cls.return_value
         repo.fetch_steerwish_by_id.return_value = wish_row
         repo.fetch_steerwish_events.return_value = events
@@ -73,7 +73,7 @@ def _service_with_repo(wish_row, events):
         # (the autouse fixture guards the real class, not this mock)
         repo.get_wish_lifecycle.return_value = None
         repo.get_all_wish_lifecycle.return_value = {}
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service = steerwish_service.WishService({'database': 'meta_data'})
     return service, repo
 
 
@@ -138,7 +138,7 @@ class TestSteerwishCreation:
     """Creation stamps 'declared' and returns the full wish."""
 
     def test_create_success_stamps_declared(self):
-        with patch('controller.steerwish_create.SteerwishService') as svc_cls:
+        with patch('controller.steerwish_create.WishService') as svc_cls:
             svc = svc_cls.return_value
             svc.create_steerwish.return_value = {
                 'id': WISH_ID,
@@ -157,10 +157,10 @@ class TestSteerwishCreation:
         assert result['state'] == 'declared'
 
     def test_create_validation_failure_maps_to_failure(self):
-        with patch('controller.steerwish_create.SteerwishService') as svc_cls:
+        with patch('controller.steerwish_create.WishService') as svc_cls:
             svc = svc_cls.return_value
             svc.create_steerwish.side_effect = \
-                steerwish_service.SteerwishValidationError('band lo must be below hi')
+                steerwish_service.WishValidationError('band lo must be below hi')
 
             result = create_main(request_data={
                 'outcome': 'chainend.shift',
@@ -176,7 +176,7 @@ class TestClaimsGrammar:
     exactly the sugar shape; more is refused naming the rung it waits on."""
 
     def _create(self, payload):
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service = steerwish_service.WishService({'database': 'meta_data'})
         with patch.object(service.repo, 'fetch_steerwish_by_id',
                           return_value=_wish_row()), \
              patch.object(service.repo, 'fetch_steerwish_events',
@@ -206,7 +206,7 @@ class TestClaimsGrammar:
         assert wish['claims'][0]['outcome'] == 'chainend.shift'
 
     def test_sugar_declare_refused(self):
-        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+        with pytest.raises(steerwish_service.WishValidationError) as err:
             self._create({
                 'outcome': 'chainend.shift',
                 'band': {'lo': -0.14, 'hi': -0.06}})
@@ -227,7 +227,7 @@ class TestClaimsGrammar:
         claims = [{'outcome': 'latency.shift',
                    'band': {'lo': -0.2, 'hi': -0.1}}]
         terms = [{'outcome': 'mem.level', 'band': {'lo': 0.4, 'hi': 1.0}}]
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service = steerwish_service.WishService({'database': 'meta_data'})
         row = _wish_row() + (claims, terms)
         with patch.object(service.repo, 'fetch_steerwish_by_id',
                           return_value=row), \
@@ -245,7 +245,7 @@ class TestClaimsGrammar:
 
     def test_stack_shape_rides_the_ask(self):
         import json as _json
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service = steerwish_service.WishService({'database': 'meta_data'})
         payload = {
             'claims': [
                 {'outcome': 'latency.shift', 'band': {'lo': -0.2, 'hi': -0.1}},
@@ -274,7 +274,7 @@ class TestClaimsGrammar:
 
     def test_single_claim_rides_the_engine_shape(self):
         import json as _json
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service = steerwish_service.WishService({'database': 'meta_data'})
         payload = {'claims': [{'outcome': 'chainend.shift',
                                'band': {'lo': -0.14, 'hi': -0.06}}]}
         refused = {'status': 'refused', 'reason': 'unmeasured_path',
@@ -297,7 +297,7 @@ class TestClaimsGrammar:
         assert 'claims' not in body
 
     def test_duplicate_outcome_across_claims_and_terms_refused(self):
-        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+        with pytest.raises(steerwish_service.WishValidationError) as err:
             self._create({
                 'claims': [{'outcome': 'latency.shift',
                             'band': {'lo': -0.2, 'hi': -0.1}}],
@@ -306,26 +306,26 @@ class TestClaimsGrammar:
         assert 'one claim per outcome' in str(err.value)
 
     def test_claim_direction_refused(self):
-        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+        with pytest.raises(steerwish_service.WishValidationError) as err:
             self._create({'claims': [
                 {'outcome': 'a/x', 'band': {'lo': 0, 'hi': 1},
                  'direction': 'minimize'}]})
         assert 'direction rung' in str(err.value)
 
     def test_claims_mixed_with_sugar_refused(self):
-        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+        with pytest.raises(steerwish_service.WishValidationError) as err:
             self._create({'claims': [
                 {'outcome': 'a/x', 'band': {'lo': 0, 'hi': 1}}],
                 'outcome': 'a/x'})
         assert 'sugar shape is retired' in str(err.value)
 
     def test_claims_not_a_list_refused(self):
-        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+        with pytest.raises(steerwish_service.WishValidationError) as err:
             self._create({'claims': 'a/x'})
         assert 'claims is required' in str(err.value)
 
     def test_claim_band_gets_the_door_law(self):
-        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+        with pytest.raises(steerwish_service.WishValidationError) as err:
             self._create({'claims': [
                 {'outcome': 'a/x', 'band': {'lo': 1, 'hi': 0}}]})
         assert 'claims[0].band lo must be below hi' in str(err.value)
@@ -359,7 +359,7 @@ class TestClaimsGrammar:
             'rows older than the grammar read back with no price'
 
     def _update(self, payload, state='missed'):
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service = steerwish_service.WishService({'database': 'meta_data'})
         with patch.object(service.repo, 'fetch_steerwish_by_id',
                           return_value=_wish_row(state=state)), \
              patch.object(service.repo, 'fetch_steerwish_events',
@@ -372,7 +372,7 @@ class TestClaimsGrammar:
         return terms
 
     def test_update_refuses_band_sugar(self):
-        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+        with pytest.raises(steerwish_service.WishValidationError) as err:
             self._update({'band': {'lo': 0.2, 'hi': 0.4}})
         assert 'sugar shape is retired' in str(err.value)
 
@@ -390,14 +390,14 @@ class TestClaimsGrammar:
             'the correction restates the wish on the same identity'
 
     def test_update_requires_claims(self):
-        with pytest.raises(steerwish_service.SteerwishValidationError) as err:
+        with pytest.raises(steerwish_service.WishValidationError) as err:
             self._update({})
         assert 'corrections speak claims' in str(err.value)
 
 
 class TestSteerwishGetAndList:
     def test_get_unknown_wish_maps_to_not_found(self):
-        with patch('controller.steerwish_get.SteerwishService') as svc_cls:
+        with patch('controller.steerwish_get.WishService') as svc_cls:
             svc_cls.return_value.get_steerwish.return_value = None
 
             result = get_main(request_data={'wish_id': WISH_ID})
@@ -406,7 +406,7 @@ class TestSteerwishGetAndList:
         assert 'not found' in result['error']
 
     def test_get_returns_full_wish(self):
-        with patch('controller.steerwish_get.SteerwishService') as svc_cls:
+        with patch('controller.steerwish_get.WishService') as svc_cls:
             wish = {
                 'id': WISH_ID, 'outcome': 'chainend.shift',
                 'band': {'lo': -0.14, 'hi': -0.06}, 'state': 'declared',
@@ -422,7 +422,7 @@ class TestSteerwishGetAndList:
         assert result['events'][0]['type'] == 'declared'
 
     def test_list_passes_summaries_through(self):
-        with patch('controller.steerwishes_get.SteerwishService') as svc_cls:
+        with patch('controller.steerwishes_get.WishService') as svc_cls:
             summaries = [{
                 'id': WISH_ID, 'outcome': 'chainend.shift',
                 'state': 'planned', 'createdAt': CREATED_AT.isoformat(),
@@ -436,7 +436,7 @@ class TestSteerwishGetAndList:
 
 class TestSteerwishClose:
     def test_close_unknown_wish_maps_to_not_found(self):
-        with patch('controller.steerwish_close.SteerwishService') as svc_cls:
+        with patch('controller.steerwish_close.WishService') as svc_cls:
             svc_cls.return_value.close_steerwish.return_value = None
 
             result = close_main(request_data={'wish_id': WISH_ID})
@@ -445,7 +445,7 @@ class TestSteerwishClose:
         assert 'not found' in result['error']
 
     def test_close_returns_closed_wish(self):
-        with patch('controller.steerwish_close.SteerwishService') as svc_cls:
+        with patch('controller.steerwish_close.WishService') as svc_cls:
             svc_cls.return_value.close_steerwish.return_value = {
                 'id': WISH_ID, 'state': 'closed',
             }
@@ -455,14 +455,14 @@ class TestSteerwishClose:
         assert result['state'] == 'closed'
 
 
-class TestSteerwishService:
+class TestWishService:
     """Service logic against a stubbed registry (state derives from events)."""
 
     def _service_with_repo(self, wish_row, events):
         return _service_with_repo(wish_row, events)
 
     def test_create_inserts_and_stamps_declared(self):
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service = steerwish_service.WishService({'database': 'meta_data'})
         payload = {
             'claims': [{'outcome': '  chainend.shift  ',
                         'band': {'lo': -0.14, 'hi': -0.06, 'target': -0.10}}],
@@ -498,7 +498,7 @@ class TestSteerwishService:
 
     def test_create_planned_plants_assignment_row(self):
         import json as _json
-        service = steerwish_service.SteerwishService(
+        service = steerwish_service.WishService(
             {'database': 'meta_data'}, {'database': 'archive_db'})
         payload = {
             'claims': [{'outcome': 'chainend.shift',
@@ -539,7 +539,7 @@ class TestSteerwishService:
 
     def test_create_refusal_is_recorded_not_raised(self):
         import json as _json
-        service = steerwish_service.SteerwishService(
+        service = steerwish_service.WishService(
             {'database': 'meta_data'}, {'database': 'archive_db'})
         payload = {
             'claims': [{'outcome': 'chainend.shift',
@@ -575,12 +575,12 @@ class TestSteerwishService:
     def test_close_appends_event_once(self):
         open_row = _wish_row(state='landed')
         closed_row = _wish_row(state='closed')
-        with patch('controller.steerwish_service.MetadataDatabaseRepository') as repo_cls:
+        with patch('controller.wish_service.MetadataDatabaseRepository') as repo_cls:
             repo = repo_cls.return_value
             repo.fetch_steerwish_by_id.side_effect = [open_row, closed_row]
             repo.fetch_steerwish_events.return_value = _events('declared', 'landed', 'closed')
             repo.get_wish_lifecycle.return_value = None
-            service = steerwish_service.SteerwishService({'database': 'meta_data'})
+            service = steerwish_service.WishService({'database': 'meta_data'})
 
             wish = service.close_steerwish(WISH_ID)
 
@@ -666,10 +666,10 @@ class TestLazyFoldIn:
             ('w-open', 'chainend.shift', 'serving', CREATED_AT),
             ('w-closed', 'chainend.shift', 'closed', CREATED_AT),
         ]
-        with patch('controller.steerwish_service.MetadataDatabaseRepository') as repo_cls:
+        with patch('controller.wish_service.MetadataDatabaseRepository') as repo_cls:
             repo = repo_cls.return_value
             repo.fetch_steerwishes_list.return_value = rows
-            service = steerwish_service.SteerwishService({'database': 'meta_data'})
+            service = steerwish_service.WishService({'database': 'meta_data'})
 
             with patch.object(service, '_fold_in_book') as fold:
                 service.list_steerwishes()
@@ -684,7 +684,7 @@ class TestBudgetRidesTheAsk:
 
     def test_create_sends_budget_in_plan_ask(self):
         import json as _json
-        service = steerwish_service.SteerwishService(
+        service = steerwish_service.WishService(
             {'database': 'meta_data'}, {'database': 'archive_db'})
         payload = {
             'claims': [{'outcome': 'chainend.shift',
@@ -718,7 +718,7 @@ class TestBudgetRidesTheAsk:
 
     def test_create_without_budget_omits_the_field(self):
         import json as _json
-        service = steerwish_service.SteerwishService(
+        service = steerwish_service.WishService(
             {'database': 'meta_data'}, {'database': 'archive_db'})
         payload = {'claims': [{'outcome': 'chainend.shift',
                                'band': {'lo': -0.14, 'hi': -0.06}}]}
@@ -749,13 +749,13 @@ class TestDoorValidation:
     field-level checks (finiteness, limits shape, maxChange range)."""
 
     def _service(self):
-        return steerwish_service.SteerwishService({'database': 'meta_data'})
+        return steerwish_service.WishService({'database': 'meta_data'})
 
     def _assert_refused(self, payload, fragment):
         service = self._service()
         try:
             service.create_steerwish(payload)
-        except steerwish_service.SteerwishValidationError as e:
+        except steerwish_service.WishValidationError as e:
             assert fragment in str(e), f'expected {fragment!r} in {str(e)!r}'
             return
         raise AssertionError(f'wish with {fragment!r} must be refused at the door')
@@ -819,7 +819,7 @@ class TestSenderLivenessAtTheDoor:
     def _service(self, heartbeat=1.0, meta_row='default', hb_error=None):
         from contextlib import ExitStack
         import json as _json
-        service = steerwish_service.SteerwishService(
+        service = steerwish_service.WishService(
             {'database': 'meta_data'}, {'database': 'archive_db'})
         payload = {
             'claims': [{'outcome': 'chainend.shift',
@@ -908,7 +908,7 @@ class TestSenderLivenessAtTheDoor:
         # back to age-only, and the fallback window decides
         import json as _json
         from contextlib import ExitStack
-        service = steerwish_service.SteerwishService(
+        service = steerwish_service.WishService(
             {'database': 'meta_data'}, {'database': 'archive_db'})
         payload = {
             'claims': [{'outcome': 'chainend.shift',
@@ -984,7 +984,7 @@ class TestSteerwishDeletion:
     row as finalizer, deletion-failed on causal trouble."""
 
     def _service(self):
-        service = steerwish_service.SteerwishService({'database': 'meta_data'})
+        service = steerwish_service.WishService({'database': 'meta_data'})
         service.repo = Mock()
         service.repo.fetch_steerwish_by_id.return_value = _wish_row()
         service.repo.claim_wish_deletion.return_value = True
