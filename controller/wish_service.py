@@ -73,6 +73,9 @@ class WishService:
         payload = payload or {}
 
         wish_type = payload.get('type')
+        if wish_type is None:
+            raise WishValidationError(
+                'the wish speaks its type: steer or seek (no omission)')
         if wish_type == 'seek':
             # The walk wishes: a commissioned walk, not a hold. Their
             # door is their own grammar (form, region, criterion,
@@ -388,6 +391,9 @@ class WishService:
         if wish['state'] == 'closed':
             raise WishValidationError(
                 'wish is closed - corrections apply to living wishes')
+        if payload.get('type') != 'steer':
+            raise WishValidationError(
+                'corrections speak their type: steer - holds only today')
         if payload.get('band') is not None:
             raise WishValidationError(
                 'the sugar shape is retired - correct via claims: '

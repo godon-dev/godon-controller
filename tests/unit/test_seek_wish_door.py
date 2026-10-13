@@ -208,6 +208,17 @@ class TestWishTypeDispatch:
         result = create_main(request_data=seek_payload())
         assert result['result'] != 'FAILURE' or 'claims' not in result.get('error', '')
 
+    def test_missing_type_refuses_no_omission(self):
+        result = create_main(request_data={'claims': [
+            {'outcome': 'room/objective_1', 'band': {'lo': 0.0, 'hi': 1.0}}]})
+        assert result['result'] == 'FAILURE'
+        assert 'speaks its type' in result['error']
+
+    def test_walk_without_form_refuses_no_omission(self):
+        result = create_main(request_data=seek_payload(form=None))
+        assert result['result'] == 'FAILURE'
+        assert 'speaks its form' in result['error']
+
     def test_unknown_type_refuses_named(self):
         result = create_main(request_data=dict(seek_payload(), type='guard'))
         assert result['result'] == 'FAILURE'

@@ -25,7 +25,10 @@ def checked_seek_body(body):
         raise WishValidationError(
             'the walk body must be an object: {form, region, criterion, budget, candidates}')
 
-    form = body.get('form') or 'find_best'
+    form = body.get('form')
+    if form is None:
+        raise WishValidationError(
+            'the walk speaks its form: find_best or cover_now (no omission)')
     if form not in WALK_FORMS:
         raise WishValidationError(
             f"unknown walk form: {form} (find_best or cover_now)")
@@ -103,8 +106,9 @@ def checked_seek_body(body):
 def checked_wish_body(payload):
     """The walk wish's body at the public door (design §XVII): the
     wish carries type 'seek' and its walk fields flat — form
-    (find_best or cover_now, omitted = find_best), region, criterion,
-    budget, candidates. One dialect end to end; the §XIV vocabulary
+    (find_best or cover_now, both stated, no omission), region,
+    criterion, budget, candidates. One dialect end to end; the §XIV
+    vocabulary
     lives on in the values, the word 'species' is retired everywhere.
     """
     walk = checked_seek_body({
