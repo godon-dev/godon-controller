@@ -17,7 +17,7 @@ from controller.wish_service import WishService
 
 CREATED = datetime(2026, 10, 12, 19, 0, 0, tzinfo=timezone.utc)
 SEEK_BODY = {
-    'species': 'find_best',
+    'form': 'find_best',
     'region': {'param_0': [0.0, 100.0, False]},
     'criterion': {'outcome': 'r/objective_1', 'direction': 'maximize'},
     'budget': 50, 'candidates': 2,

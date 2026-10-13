@@ -8,7 +8,8 @@ Each test names the ruling or rider it pins:
   (it walks on standing duty)
 - the registry row carries regime 'seek' and the body in its own
   column — claims keep their pinned meaning
-- the ask rides the pinned wire (species 'seek', body under 'seek');
+- the ask rides the re-pinned wire (type 'seek', walk body under
+  'seek', form-keyed);
   a planned answer plants the sender's assignment through the same
   alive-door holds use; a refusal lands as an event carrying
   reason+detail verbatim — map_reads_it's reading reaches the
@@ -29,18 +30,20 @@ from controller.steerwish_create import main as create_main
 from controller import wish_service as steerwish_service
 from controller.wish_service import WishService
 from controller.seek_grammar import checked_seek_body as _checked_seek_body
+from controller.seek_grammar import checked_wish_body as _checked_wish_body
 
 
 def seek_payload(**over):
     body = {
-        'species': 'find_best',
+        'type': 'seek',
+        'form': 'find_best',
         'region': {'param_0': [0.0, 100.0, False]},
         'criterion': {'outcome': 'room/objective_1', 'direction': 'maximize'},
         'budget': 50,
         'candidates': 5,
     }
     body.update(over)
-    return {'species': 'seek', 'seek': body}
+    return body
 
 
 class TestSeekValidationDoor:
@@ -78,13 +81,13 @@ class TestSeekValidationDoor:
 
     def test_cover_now_refuses_a_budget(self):
         result = create_main(request_data=seek_payload(
-            species='cover_now', criterion=None, budget=10))
+            form='cover_now', criterion=None, budget=10))
         assert result['result'] == 'FAILURE'
         assert 'no budget' in result['error']
 
     def test_cover_now_admits_without_search_fields(self):
         body = _checked_seek_body({
-            'species': 'cover_now',
+            'form': 'cover_now',
             'region': {'param_0': [0.0, 100.0, False]},
         })
         assert body['criterion'] is None
@@ -92,7 +95,7 @@ class TestSeekValidationDoor:
 
     def test_region_normalizes_shapes(self):
         body = _checked_seek_body({
-            'species': 'find_best',
+            'form': 'find_best',
             'region': {'n': [1, 8, True], 'f': (0.0, 10.0, False)},
             'criterion': {'outcome': 'o', 'direction': 'min'},
             'budget': 10,
@@ -103,7 +106,7 @@ class TestSeekValidationDoor:
     def test_estate_direction_words_admit(self):
         for word in ('maximize', 'max', 'minimize', 'min'):
             body = _checked_seek_body({
-                'species': 'find_best',
+                'form': 'find_best',
                 'region': {'param_0': [0.0, 1.0, False]},
                 'criterion': {'outcome': 'o', 'direction': word},
                 'budget': 10,
@@ -139,7 +142,7 @@ class TestSeekDeclaration:
         assert kwargs['regime'] == 'seek'
         assert kwargs['outcome'] == 'room/objective_1'
         assert kwargs['claims'] is None and kwargs['terms'] is None
-        assert kwargs['seek']['species'] == 'find_best'
+        assert kwargs['seek']['form'] == 'find_best'
         assert kwargs['budget'] == 50
 
     def test_planned_answer_plants_the_senders_assignment(self):
@@ -155,10 +158,11 @@ class TestSeekDeclaration:
         with patch.object(svc, '_ensure_registry'), \
              patch('controller.wish_service.urllib.request.urlopen',
                    side_effect=fake_urlopen):
-            svc._ask_causal_to_plan_seek('w1', _checked_seek_body(
-                seek_payload()['seek']))
+            svc._ask_causal_to_plan_seek('w1', _checked_wish_body(
+                seek_payload()))
         assert asked['url'].endswith('/steer/plan')
-        assert asked['body']['species'] == 'seek'
+        assert asked['body']['type'] == 'seek'
+        assert asked['body']['seek']['form'] == 'find_best'
         assert 'region' in asked['body']['seek']
         db = svc.archive_repo.write_wish_assignment.call_args
         assert db.args[0] == 'systemtender_670eee18_0216_4628_942b_94ae89effcee'
@@ -171,8 +175,8 @@ class TestSeekDeclaration:
         with patch.object(svc, '_ensure_registry'), \
              patch('controller.wish_service.urllib.request.urlopen',
                    return_value=_causal_answer(sender='dead-one')):
-            svc._ask_causal_to_plan_seek('w1', _checked_seek_body(
-                seek_payload()['seek']))
+            svc._ask_causal_to_plan_seek('w1', _checked_wish_body(
+                seek_payload()))
         svc.archive_repo.write_wish_assignment.assert_not_called()
         events = [c.args[1] for c in svc.repo.insert_steerwish_event.call_args_list]
         assert 'plan_error' in events
@@ -185,11 +189,36 @@ class TestSeekDeclaration:
         with patch.object(svc, '_ensure_registry'), \
              patch('controller.wish_service.urllib.request.urlopen',
                    return_value=refusal):
-            svc._ask_causal_to_plan_seek('w1', _checked_seek_body(
-                seek_payload()['seek']))
+            svc._ask_causal_to_plan_seek('w1', _checked_wish_body(
+                seek_payload()))
         svc.archive_repo.write_wish_assignment.assert_not_called()
         refused = [c for c in svc.repo.insert_steerwish_event.call_args_list
                    if c.args[1] == 'refused'][0]
         detail = json.loads(refused.args[2])
         assert detail['reason'] == 'map_reads_it'
         assert detail['detail']['reading'] == 0.83
+
+
+class TestWishTypeDispatch:
+    """§XVII: two discriminators, flat — type picks the grammar
+    (steer or omitted = the hold; seek = the walk), form is a field
+    of the walk grammar only."""
+
+    def test_type_seek_routes_to_the_walk_door(self):
+        result = create_main(request_data=seek_payload())
+        assert result['result'] != 'FAILURE' or 'claims' not in result.get('error', '')
+
+    def test_unknown_type_refuses_named(self):
+        result = create_main(request_data=dict(seek_payload(), type='guard'))
+        assert result['result'] == 'FAILURE'
+        assert 'unknown wish type' in result['error']
+
+    def test_form_on_a_hold_refuses_loudly(self):
+        result = create_main(request_data={
+            'type': 'steer',
+            'form': 'find_best',
+            'claims': [{'outcome': 'room/objective_1', 'band': {'lo': 0.0, 'hi': 1.0}}],
+            'terms': [],
+        })
+        assert result['result'] == 'FAILURE'
+        assert 'form belongs to seek wishes' in result['error']
