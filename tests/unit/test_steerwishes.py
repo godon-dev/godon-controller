@@ -1054,3 +1054,22 @@ class TestSteerwishDeletion:
         assert 'causal' in call_args[2]
         service.repo.delete_steerwish.assert_not_called()
         service.repo.remove_wish_lifecycle.assert_not_called()
+
+
+class TestListQueryEmitsSummaryContract:
+    """The list query's columns must match _format_summary's reads
+    (estate receipt 2026-10-13: regime rode at position 2, the summary
+    isoformat'd the state string - units mocked the repo so CI was
+    green while the estate red). This pin reads the REAL query text."""
+
+    def test_list_columns_in_summary_order(self):
+        import inspect
+        import re
+        from controller import database
+        src = inspect.getsource(
+            database.MetadataDatabaseRepository.fetch_steerwishes_list)
+        head = src.split('COALESCE')[0]
+        assert 'w.regime' not in head, \
+            'list query column drift: a column between outcome and ' \
+            'state shifts every read after it - _format_summary ' \
+            'isoformats the state string and the list 500s'
