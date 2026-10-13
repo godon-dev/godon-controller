@@ -72,12 +72,24 @@ class WishService:
         """
         payload = payload or {}
 
-        if payload.get('species') == 'seek':
-            # The seek wish: a commissioned walk, not a hold. Its door
-            # is its own grammar (region/criterion/budget/candidates);
-            # the registry row carries the body in its own column —
-            # never inside claims, whose meaning stays pinned.
+        wish_type = payload.get('type')
+        if wish_type is None:
+            raise WishValidationError(
+                'the wish speaks its type: steer or seek (no omission)')
+        if wish_type == 'seek':
+            # The walk wishes: a commissioned walk, not a hold. Their
+            # door is their own grammar (form, region, criterion,
+            # budget, candidates); the registry row carries the body
+            # in its own column — never inside claims, whose meaning
+            # stays pinned.
             return self._create_seekwish(payload)
+        if wish_type not in (None, 'steer'):
+            raise WishValidationError(
+                f"unknown wish type: {wish_type} (steer or seek)")
+        if payload.get('form') is not None:
+            raise WishValidationError(
+                "form belongs to seek wishes - a hold speaks claims "
+                "and terms")
 
         if payload.get('outcome') is not None or payload.get('band') is not None:
             raise WishValidationError(
@@ -175,8 +187,8 @@ class WishService:
         carries the reading INSIDE the refusal detail, and the wish's
         events carry it to the declarer — the refusal is the answer.
         """
-        seek = seek_grammar.checked_seek_body(payload.get('seek'))
-        outcome = seek['criterion']['outcome'] if seek['criterion'] \
+        walk = seek_grammar.checked_wish_body(payload)
+        outcome = walk['criterion']['outcome'] if walk['criterion'] \
             else 'cover_now'
 
         wish_id = str(uuid.uuid4())
@@ -186,35 +198,37 @@ class WishService:
             outcome=outcome,
             band=None,
             limits=None,
-            budget=seek['budget'],
+            budget=walk['budget'],
             regime='seek',
             claims=None,
             terms=None,
-            seek=seek,
+            seek=walk,
         )
         self.repo.insert_steerwish_event(wish_id, 'declared', None)
         logger.info(
-            f"Seek wish declared: {wish_id} (species: {seek['species']}, "
+            f"Seek wish declared: {wish_id} (form: {walk['form']}, "
             f"outcome: {outcome})")
 
-        self._ask_causal_to_plan_seek(wish_id, seek)
+        self._ask_causal_to_plan_seek(wish_id, walk)
 
         wish = self.get_steerwish(wish_id)
         if wish is None:
             raise RuntimeError(f'inserted seek wish vanished: {wish_id}')
         return wish
 
-    def _ask_causal_to_plan_seek(self, wish_id, seek):
+    def _ask_causal_to_plan_seek(self, wish_id, walk):
         """One HTTP ask seeds causal's book with the seek. The wire is
-        pinned (chime 2026-10-12): the ask carries the admitted body
-        under 'seek'; a planned answer names the serving tender (its
-        dials are the region's); any other answer is a refusal —
-        map_reads_it arrives with the reading in its detail, and the
-        event carries it to the declarer verbatim."""
+        re-pinned (§XVII, 2026-10-13): the ask carries type 'seek' and
+        the admitted walk body under 'seek' — one dialect end to end,
+        form-keyed (the word 'species' is retired); a planned answer
+        names the serving tender (its dials are the region's); any
+        other answer is a refusal — map_reads_it arrives with the
+        reading in its detail, and the event carries it to the
+        declarer verbatim."""
         plan_request = {
             'wish_id': wish_id,
-            'species': 'seek',
-            'seek': seek,
+            'type': 'seek',
+            'seek': walk,
         }
         try:
             req = urllib.request.Request(
@@ -377,6 +391,9 @@ class WishService:
         if wish['state'] == 'closed':
             raise WishValidationError(
                 'wish is closed - corrections apply to living wishes')
+        if payload.get('type') != 'steer':
+            raise WishValidationError(
+                'corrections speak their type: steer - holds only today')
         if payload.get('band') is not None:
             raise WishValidationError(
                 'the sugar shape is retired - correct via claims: '

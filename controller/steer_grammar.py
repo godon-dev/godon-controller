@@ -1,8 +1,8 @@
-"""The steer species' grammar — claims and terms at the door.
+"""The hold wish's grammar — claims and terms at the door.
 
-The wish registry is species-agnostic (wish_service); this module
+The wish registry is grammar-agnostic (wish_service); this module
 carries the STEER vocabulary: bands, claims, terms — the atoms the
-gavel judges. The seek species' grammar lives beside it in
+gavel judges. The walk wish's grammar lives beside it in
 seek_grammar.
 """
 
