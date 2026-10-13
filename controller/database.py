@@ -264,6 +264,31 @@ class ArchiveDatabaseRepository:
         execute_ddl_query(db_config, query)
         logger.info(f"Dropped archive database: {systemtender_id}")
 
+    def read_seek_return(self, systemtender_db_name, wish_id):
+        """The seek's RETURN from the serving tender's own ledger.
+
+        The worker writes seek_return::<wish_id> into its ledger_state
+        when the seek completes (robots #241); this read surfaces it to
+        the wish's event trail. Returns the stored JSON string or None
+        — an absent db or table (the tender gone, the ledger never
+        created) reads as no return, never an error: the mirror must
+        not break a wish read because its tender died.
+        """
+        db_config = self.base_config.copy()
+        db_config['database'] = systemtender_db_name
+        try:
+            result = execute_query(db_config, (
+                'SELECT value_json FROM ledger_state '
+                "WHERE key = 'seek_return::{}';".format(
+                    str(wish_id).replace("'", "''"))),
+                with_result=True)
+        except Exception:
+            return None
+        if not result:
+            return None
+        value = result[0].get('value_json')
+        return str(value) if value is not None else None
+
     def cleanup_coordination_state(self, systemtender_id):
         """Remove a systemtender's rows from coordination tables in archive_db.
 

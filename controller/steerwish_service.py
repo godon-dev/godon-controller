@@ -432,6 +432,33 @@ class SteerwishService:
         if self._fold_in_book(wish_id) > 0:
             # the mirror moved: the derived state may have moved with it
             row = self.repo.fetch_steerwish_by_id(wish_id)
+
+        # The seek's return mirror: the worker banks its RETURN in the
+        # serving tender's own ledger (seek_return::<wish_id>); whoever
+        # reads the wish pulls it into the event trail ONCE — the same
+        # lazy-mirror discipline the book fold-in uses. A dead tender
+        # reads as no return, never an error.
+        if (row is not None and len(row) > 10 and row[10]
+                and self.archive_repo is not None):
+            events_so_far = self.repo.fetch_steerwish_events(wish_id)
+            if not any(e[0] == 'returned' for e in events_so_far):
+                for e in events_so_far:
+                    if e[0] != 'assigned':
+                        continue
+                    detail = e[2]
+                    try:
+                        d = json.loads(detail) if isinstance(detail, str) else detail
+                    except Exception:
+                        d = None
+                    db_name = d.get('db') if isinstance(d, dict) else None
+                    if not db_name:
+                        continue
+                    payload = self.archive_repo.read_seek_return(db_name, wish_id)
+                    if payload:
+                        self.repo.insert_steerwish_event(wish_id, 'returned', payload)
+                        row = self.repo.fetch_steerwish_by_id(wish_id)
+                        break
+
         events = self.repo.fetch_steerwish_events(wish_id)
         wish = self._format_wish(row, events)
 
@@ -872,6 +899,7 @@ class SteerwishService:
             'regime': row[5],
             'createdAt': row[6].isoformat() if row[6] else None,
             'state': row[7],
+            'seek': row[10] if len(row) > 10 else None,
             'events': [
                 {
                     'type': event[0],
