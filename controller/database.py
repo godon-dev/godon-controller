@@ -181,14 +181,30 @@ class ArchiveDatabaseRepository:
         """
         db_config = self.base_config.copy()
         db_config['database'] = systemtender_db_name
+        # The instruments column is rollout-order guarded, message-matched
+        # (the worker's own beat-guard pattern): a state row born before
+        # the column — fresh tender, worker has not stamped yet — reads
+        # the three verdict columns alone, instruments None.
         try:
-            rows = execute_query(
-                db_config,
-                "SELECT finished_at IS NOT NULL, "
-                "EXTRACT(EPOCH FROM (now() - updated_at)), "
-                "beat_interval_secs FROM systemtender_state LIMIT 1",
-                with_result=True,
-            )
+            try:
+                rows = execute_query(
+                    db_config,
+                    "SELECT finished_at IS NOT NULL, "
+                    "EXTRACT(EPOCH FROM (now() - updated_at)), "
+                    "beat_interval_secs, instruments "
+                    "FROM systemtender_state LIMIT 1",
+                    with_result=True,
+                )
+            except Exception as e:
+                if not ('instruments' in str(e) and 'does not exist' in str(e)):
+                    raise
+                rows = execute_query(
+                    db_config,
+                    "SELECT finished_at IS NOT NULL, "
+                    "EXTRACT(EPOCH FROM (now() - updated_at)), "
+                    "beat_interval_secs FROM systemtender_state LIMIT 1",
+                    with_result=True,
+                )
         except Exception as e:
             error_text = str(e)
             if 'does not exist' in error_text or \
@@ -203,11 +219,21 @@ class ArchiveDatabaseRepository:
                 return None
             raise
         if rows and rows[0][0] is not None:
-            return {
+            verdict = {
                 'finished': bool(rows[0][0]),
                 'age_secs': float(rows[0][1]) if rows[0][1] is not None else None,
                 'interval_secs': float(rows[0][2]) if rows[0][2] is not None else None,
+                'instruments': None,
             }
+            if len(rows[0]) > 3 and rows[0][3]:
+                # the worker's JSON stamp, parsed leniently — a torn
+                # payload reads as absent, never as a failed read
+                try:
+                    import json as _json
+                    verdict['instruments'] = _json.loads(rows[0][3])
+                except Exception:
+                    verdict['instruments'] = None
+            return verdict
         return None
 
     def write_wish_assignment(self, systemtender_db_name, wish_id, role='sender'):
