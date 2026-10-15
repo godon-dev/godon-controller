@@ -218,6 +218,96 @@ class TestPlanWish:
         assert asked['body']['standard'] == 'all'
 
 
+class TestJointServingAssignments:
+    """Multi-claim plans name several senders: every distinct sender
+    gets its own assignment row; each tender serves exactly its own
+    moves (the worker side pins that); a dead sender refuses loudly by
+    name while the living ones still plant."""
+
+    def _planned(self, moves, path=None):
+        resp = MagicMock()
+        resp.read.return_value = json.dumps({
+            'status': 'planned', 'moves': moves, 'path': path or [],
+        }).encode('utf-8')
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    def test_every_distinct_sender_gets_an_assignment(self):
+        svc = _service()
+        svc._sender_alive = MagicMock(return_value=(True, 'beat'))
+        moves = [
+            {'sender': 't-a', 'param': 'valve', 'setting': 0.6},
+            {'sender': 't-b', 'param': 'pump', 'setting': 40.0},
+            {'sender': 't-a', 'param': 'vent', 'setting': 3.5},
+        ]
+        with patch.object(svc, '_ensure_registry'), \
+             patch('controller.wish_service.urllib.request.urlopen',
+                   return_value=self._planned(moves)):
+            svc._ask_causal_to_plan('w1', outcome='o',
+                                    band={'lo': 0.0, 'hi': 1.0})
+        dbs = [c.args[0] for c in
+               svc.archive_repo.write_wish_assignment.call_args_list]
+        assert dbs == ['systemtender_t_a', 'systemtender_t_b'], \
+            'one row per distinct sender, in plan order'
+        roles = [c.kwargs.get('role') for c in
+                 svc.archive_repo.write_wish_assignment.call_args_list]
+        assert roles == ['sender', 'sender']
+        events = [c.args[1] for c in
+                  svc.repo.insert_steerwish_event.call_args_list]
+        assert events.count('assigned') == 2
+
+    def test_dead_sender_refuses_by_name_others_still_plant(self):
+        svc = _service()
+        svc._sender_alive = MagicMock(
+            side_effect=[(False, 'no beat'), (True, 'beat')])
+        moves = [
+            {'sender': 't-dead', 'param': 'valve', 'setting': 0.6},
+            {'sender': 't-live', 'param': 'pump', 'setting': 40.0},
+        ]
+        with patch.object(svc, '_ensure_registry'), \
+             patch('controller.wish_service.urllib.request.urlopen',
+                   return_value=self._planned(moves)):
+            svc._ask_causal_to_plan('w1', outcome='o',
+                                    band={'lo': 0.0, 'hi': 1.0})
+        dbs = [c.args[0] for c in
+               svc.archive_repo.write_wish_assignment.call_args_list]
+        assert dbs == ['systemtender_t_live'], \
+            'the dead sender plants nothing'
+        stamped = [c.args[2] for c in
+                   svc.repo.insert_steerwish_event.call_args_list
+                   if c.args[1] == 'plan_error']
+        assert any('t-dead' in d for d in stamped), \
+            'the refusal names the dead sender'
+
+    def test_receiver_note_skipped_when_receiver_is_a_sender(self):
+        svc = _service()
+        svc._sender_alive = MagicMock(return_value=(True, 'beat'))
+        moves = [{'sender': 't-a', 'param': 'valve', 'setting': 0.6}]
+        # the path's tail IS the sender: no double plant for one tender
+        with patch.object(svc, '_ensure_registry'), \
+             patch('controller.wish_service.urllib.request.urlopen',
+                   return_value=self._planned(moves, path=['t-a', 't-a'])):
+            svc._ask_causal_to_plan('w1', outcome='o',
+                                    band={'lo': 0.0, 'hi': 1.0})
+        roles = [c.kwargs.get('role') for c in
+                 svc.archive_repo.write_wish_assignment.call_args_list]
+        assert roles == ['sender'], \
+            'a receiver that IS a sender gets no second note'
+
+        # a distinct receiver still gets its note
+        svc2 = _service()
+        svc2._sender_alive = MagicMock(return_value=(True, 'beat'))
+        with patch.object(svc2, '_ensure_registry'), \
+             patch('controller.wish_service.urllib.request.urlopen',
+                   return_value=self._planned(moves, path=['t-a', 't-b'])):
+            svc2._ask_causal_to_plan('w1', outcome='o',
+                                     band={'lo': 0.0, 'hi': 1.0})
+        calls = svc2.archive_repo.write_wish_assignment.call_args_list
+        assert [c.kwargs.get('role') for c in calls] == ['sender', 'receiver']
+        assert calls[1].args[0] == 'systemtender_t_b'
+
+
 class TestUnservableDerivation:
     """A standing refusal reads as 'unservable' — the translation is in
     the read queries (positional readers are pinned by query text)."""
