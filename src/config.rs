@@ -3,8 +3,23 @@
 //! surface - they port verbatim, python quirks included (list renders,
 //! aggregated numbering, the unused strict-mode flag).
 
-use crate::pyval::{py_f64, py_is_int, py_is_number, py_num_str, py_type_name};
 use serde_json::{Map, Value};
+
+/// The type words inside validation error strings. These exact words
+/// are client-visible today - the python controller emitted python's
+/// type names and the estate's clients read them - so the words port
+/// as-is. Everything else in the port speaks rust natively.
+fn json_type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "NoneType",
+        Value::Bool(_) => "bool",
+        Value::Number(n) if n.is_f64() => "float",
+        Value::Number(_) => "int",
+        Value::String(_) => "str",
+        Value::Array(_) => "list",
+        Value::Object(_) => "dict",
+    }
+}
 
 /// Internal systemtender capabilities - not customer configurable.
 pub fn systemtender_capabilities() -> Value {
@@ -102,7 +117,7 @@ pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result
             return Err(format!(
                 "Parameter '{}': constraints must be a list or dict with 'values', got {}",
                 param_name,
-                py_type_name(constraints)
+                json_type_name(constraints)
             ))
         }
     };
@@ -122,7 +137,7 @@ pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result
             return Err(format!(
                 "Parameter '{}': each constraint must be a dict, got {}",
                 param_name,
-                py_type_name(first_constraint)
+                json_type_name(first_constraint)
             ))
         }
     };
@@ -134,7 +149,7 @@ pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result
                 return Err(format!(
                     "Parameter '{}': 'values' must be a list, got {}",
                     param_name,
-                    py_type_name(other)
+                    json_type_name(other)
                 ))
             }
             None => {
@@ -159,7 +174,7 @@ pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result
                     "Parameter '{}': all values must be strings, item {} is {}",
                     i,
                     param_name,
-                    py_type_name(value)
+                    json_type_name(value)
                 ));
             }
         }
@@ -177,7 +192,7 @@ pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result
                         "Parameter '{}': constraint {}: must be a dict, got {}",
                         param_name,
                         i,
-                        py_type_name(constraint)
+                        json_type_name(constraint)
                     ))
                 }
             };
@@ -204,36 +219,36 @@ pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result
 
             for field in ["step", "lower", "upper"] {
                 let v = obj.get(field).expect("checked above");
-                if !py_is_number(v) {
+                if !v.is_number() {
                     return Err(format!(
                         "Parameter '{}': constraint {}: '{}' must be numeric, got {}",
                         param_name,
                         i,
                         field,
-                        py_type_name(v)
+                        json_type_name(v)
                     ));
                 }
             }
 
-            let lower = py_f64(obj.get("lower").expect("checked above"));
-            let upper = py_f64(obj.get("upper").expect("checked above"));
+            let lower = obj.get("lower").expect("checked above").as_f64().unwrap_or(0.0);
+            let upper = obj.get("upper").expect("checked above").as_f64().unwrap_or(0.0);
             if lower >= upper {
                 return Err(format!(
                     "Parameter '{}': constraint {}: 'lower' ({}) must be less than 'upper' ({})",
                     param_name,
                     i,
-                    py_num_str(obj.get("lower").expect("checked above")),
-                    py_num_str(obj.get("upper").expect("checked above"))
+                    obj.get("lower").expect("checked above"),
+                    obj.get("upper").expect("checked above")
                 ));
             }
 
-            let step = py_f64(obj.get("step").expect("checked above"));
+            let step = obj.get("step").expect("checked above").as_f64().unwrap_or(0.0);
             if step <= 0.0 {
                 return Err(format!(
                     "Parameter '{}': constraint {}: 'step' must be positive, got {}",
                     param_name,
                     i,
-                    py_num_str(obj.get("step").expect("checked above"))
+                    obj.get("step").expect("checked above")
                 ));
             }
         }
@@ -264,7 +279,7 @@ pub fn validate_guardrails_v03(systemtender_config: &Value) -> Result<(), String
         other => {
             return Err(format!(
                 "'guardrails' must be a list, got {}",
-                py_type_name(other)
+                json_type_name(other)
             ))
         }
     };
@@ -276,7 +291,7 @@ pub fn validate_guardrails_v03(systemtender_config: &Value) -> Result<(), String
                 return Err(format!(
                     "Guardrail {}: must be a dict, got {}",
                     idx,
-                    py_type_name(other)
+                    json_type_name(other)
                 ))
             }
         };
@@ -293,12 +308,12 @@ pub fn validate_guardrails_v03(systemtender_config: &Value) -> Result<(), String
 
         match obj.get("hard_limit") {
             Some(h) => {
-                if !py_is_number(h) {
+                if !h.is_number() {
                     return Err(format!(
                         "Guardrail {} ({}): 'hard_limit' must be numeric, got {}",
                         idx,
                         name_str,
-                        py_type_name(h)
+                        json_type_name(h)
                     ));
                 }
             }
@@ -327,7 +342,7 @@ pub fn validate_guardrails_v03(systemtender_config: &Value) -> Result<(), String
                     "Guardrail {} ({}): 'reconnaissance' must be a dict, got {}",
                     idx,
                     name_str,
-                    py_type_name(other)
+                    json_type_name(other)
                 ))
             }
         };
@@ -372,7 +387,7 @@ pub fn validate_guardrails_v03(systemtender_config: &Value) -> Result<(), String
         }
 
         if let Some(s) = recon_obj.get("stabilization_seconds") {
-            if !py_is_int(s) || py_f64(s) < 0.0 {
+            if !(s.is_i64() || s.is_u64()) || s.as_f64().unwrap_or(0.0) < 0.0 {
                 return Err(format!(
                     "Guardrail {} ({}): 'stabilization_seconds' must be a non-negative integer",
                     idx, name_str
@@ -381,7 +396,7 @@ pub fn validate_guardrails_v03(systemtender_config: &Value) -> Result<(), String
         }
 
         if let Some(s) = recon_obj.get("samples") {
-            if !py_is_int(s) || py_f64(s) < 1.0 {
+            if !(s.is_i64() || s.is_u64()) || s.as_f64().unwrap_or(0.0) < 1.0 {
                 return Err(format!(
                     "Guardrail {} ({}): 'samples' must be an integer >= 1",
                     idx, name_str
@@ -390,7 +405,7 @@ pub fn validate_guardrails_v03(systemtender_config: &Value) -> Result<(), String
         }
 
         if let Some(iv) = recon_obj.get("interval") {
-            if !py_is_number(iv) || py_f64(iv) < 0.0 {
+            if !iv.is_number() || iv.as_f64().unwrap_or(0.0) < 0.0 {
                 return Err(format!(
                     "Guardrail {} ({}): 'interval' must be an integer >= 1",
                     idx, name_str
@@ -419,7 +434,7 @@ pub fn validate_rollback_strategies_v03(systemtender_config: &Value) -> Result<(
         other => {
             return Err(format!(
                 "'rollback_strategies' must be a dict, got {}",
-                py_type_name(other)
+                json_type_name(other)
             ))
         }
     };
@@ -434,7 +449,7 @@ pub fn validate_rollback_strategies_v03(systemtender_config: &Value) -> Result<(
                 return Err(format!(
                     "Rollback strategy '{}': must be a dict, got {}",
                     strategy_name,
-                    py_type_name(other)
+                    json_type_name(other)
                 ))
             }
         };
@@ -464,7 +479,9 @@ pub fn validate_rollback_strategies_v03(systemtender_config: &Value) -> Result<(
         }
 
         let consecutive_failures = obj.get("consecutive_failures").expect("checked above");
-        if !py_is_int(consecutive_failures) || py_f64(consecutive_failures) < 1.0 {
+        if !(consecutive_failures.is_i64() || consecutive_failures.is_u64())
+            || consecutive_failures.as_f64().unwrap_or(0.0) < 1.0
+        {
             return Err(format!(
                 "Rollback strategy '{}': 'consecutive_failures' must be an integer >= 1",
                 strategy_name
@@ -482,7 +499,9 @@ pub fn validate_rollback_strategies_v03(systemtender_config: &Value) -> Result<(
         }
 
         let max_attempts = obj.get("max_attempts").expect("checked above");
-        if !py_is_int(max_attempts) || py_f64(max_attempts) < 1.0 {
+        if !(max_attempts.is_i64() || max_attempts.is_u64())
+            || max_attempts.as_f64().unwrap_or(0.0) < 1.0
+        {
             return Err(format!(
                 "Rollback strategy '{}': 'max_attempts' must be an integer >= 1",
                 strategy_name
@@ -500,7 +519,9 @@ pub fn validate_rollback_strategies_v03(systemtender_config: &Value) -> Result<(
         }
 
         let timeout_seconds = obj.get("timeout_seconds").expect("checked above");
-        if !py_is_int(timeout_seconds) || py_f64(timeout_seconds) < 1.0 {
+        if !(timeout_seconds.is_i64() || timeout_seconds.is_u64())
+            || timeout_seconds.as_f64().unwrap_or(0.0) < 1.0
+        {
             return Err(format!(
                 "Rollback strategy '{}': 'timeout_seconds' must be an integer >= 1",
                 strategy_name
@@ -514,7 +535,7 @@ pub fn validate_rollback_strategies_v03(systemtender_config: &Value) -> Result<(
                 return Err(format!(
                     "Rollback strategy '{}': 'after' must be a dict, got {}",
                     strategy_name,
-                    py_type_name(other)
+                    json_type_name(other)
                 ))
             }
         };
@@ -547,7 +568,7 @@ pub fn validate_rollback_strategies_v03(systemtender_config: &Value) -> Result<(
                     ))
                 }
                 Some(d) => {
-                    if !py_is_int(d) || py_f64(d) < 1.0 {
+                    if !(d.is_i64() || d.is_u64()) || d.as_f64().unwrap_or(0.0) < 1.0 {
                         return Err(format!(
                             "Rollback strategy '{}': 'after.duration' must be an integer >= 1",
                             strategy_name
@@ -700,7 +721,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                     errors.push(format!(
                         "settings.{} must be a dict, got {}",
                         category,
-                        py_type_name(category_cfg)
+                        json_type_name(category_cfg)
                     ));
                     continue;
                 }
@@ -722,7 +743,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                             "settings.{}.{}: must be a dict, got {}",
                             category,
                             param_name,
-                            py_type_name(param_config)
+                            json_type_name(param_config)
                         ));
                         continue;
                     }
@@ -737,7 +758,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                                     "settings.ethtool.{}.{}: must be a dict, got {}",
                                     param_name,
                                     ethtool_param,
-                                    py_type_name(ethtool_config)
+                                    json_type_name(ethtool_config)
                                 ));
                                 continue;
                             }
@@ -803,11 +824,11 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
             .and_then(|r| r.get("parallel"))
             .cloned()
             .unwrap_or(Value::Number(serde_json::Number::from(1)));
-        let parallel_f = py_f64(&parallel);
+        let parallel_f = parallel.as_f64().unwrap_or(0.0);
         if parallel_f <= 1.0 {
             errors.push(format!(
                 "Cooperation enabled but run.parallel={}. Cooperation requires parallel > 1 for multiple workers to share trials.",
-                py_num_str(&parallel)
+                &parallel
             ));
         }
     }
@@ -835,7 +856,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                     errors.push(format!(
                         "Objective {}: must be a dict, got {}",
                         idx,
-                        py_type_name(objective)
+                        json_type_name(objective)
                     ));
                     continue;
                 }
@@ -848,7 +869,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                         errors.push(format!(
                             "Objective {}: 'reconnaissance' must be a dict, got {}",
                             idx,
-                            py_type_name(recon)
+                            json_type_name(recon)
                         ));
                         continue;
                     }
@@ -922,7 +943,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                 let _ = obj_name_for;
 
                 if let Some(s) = recon_obj.get("stabilization_seconds") {
-                    if !py_is_int(s) || py_f64(s) < 0.0 {
+                    if !(s.is_i64() || s.is_u64()) || s.as_f64().unwrap_or(0.0) < 0.0 {
                         let obj_name = obj_obj
                             .get("name")
                             .and_then(|n| n.as_str())
@@ -936,7 +957,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                 }
 
                 if let Some(s) = recon_obj.get("samples") {
-                    if !py_is_int(s) || py_f64(s) < 1.0 {
+                    if !(s.is_i64() || s.is_u64()) || s.as_f64().unwrap_or(0.0) < 1.0 {
                         let obj_name = obj_obj
                             .get("name")
                             .and_then(|n| n.as_str())
@@ -950,7 +971,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                 }
 
                 if let Some(iv) = recon_obj.get("interval") {
-                    if !py_is_number(iv) || py_f64(iv) < 0.0 {
+                    if !iv.is_number() || iv.as_f64().unwrap_or(0.0) < 0.0 {
                         let obj_name = obj_obj
                             .get("name")
                             .and_then(|n| n.as_str())
@@ -970,14 +991,16 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
         .get("run")
         .and_then(|r| r.get("completion"));
     if let Some(completion) = run_config {
+        let empty_completion = Map::new();
         let completion_obj = match completion.as_object() {
             Some(o) => o,
             None => {
                 errors.push(format!(
                     "'run.completion' must be a dict, got {}",
-                    py_type_name(completion)
+                    json_type_name(completion)
                 ));
                 // python raises inside the else-branch; nothing further
+                &empty_completion
             }
         };
         if let Some(iterations) = completion_obj.get("iterations") {
@@ -986,7 +1009,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                 None => {
                     errors.push(format!(
                         "'run.completion.iterations' must be a dict, got {}",
-                        py_type_name(iterations)
+                        json_type_name(iterations)
                     ));
                 }
                 Some(o) => {
@@ -994,21 +1017,23 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                     let iterations_max = o.get("max");
 
                     if let (Some(mn), Some(mx)) = (iterations_min, iterations_max) {
-                        if !py_is_int(mn) || py_f64(mn) < 1.0 {
+                        if !(mn.is_i64() || mn.is_u64()) || mn.as_f64().unwrap_or(0.0) < 1.0 {
                             errors.push(
                                 "'run.completion.iterations.min' must be an integer >= 1"
                                     .to_string(),
                             );
-                        } else if !py_is_int(mx) || py_f64(mx) < 1.0 {
+                        } else if !(mx.is_i64() || mx.is_u64())
+                            || mx.as_f64().unwrap_or(0.0) < 1.0
+                        {
                             errors.push(
                                 "'run.completion.iterations.max' must be an integer >= 1"
                                     .to_string(),
                             );
-                        } else if py_f64(mn) > py_f64(mx) {
+                        } else if mn.as_f64().unwrap_or(0.0) > mx.as_f64().unwrap_or(0.0) {
                             errors.push(format!(
                                 "'run.completion.iterations.min' ({}) must be <= 'max' ({})",
-                                py_num_str(mn),
-                                py_num_str(mx)
+                                mn,
+                                mx
                             ));
                         }
                     }

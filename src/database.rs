@@ -13,7 +13,6 @@
 //! One deliberate divergence, named: python logged the database config
 //! (password included) on connection errors; this port logs it redacted.
 
-use crate::pyval::{py_f64_str, py_json_dumps, py_truthy};
 use log::{debug, error, info, warn};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -83,8 +82,13 @@ fn text_cell(cell: Option<&str>) -> Option<String> {
     cell.map(|s| s.to_string())
 }
 
-fn rows_from_simple(rows: &[postgres::SimpleQueryRow]) -> Vec<TextRow> {
-    rows.iter()
+fn rows_from_simple(messages: &[postgres::SimpleQueryMessage]) -> Vec<TextRow> {
+    messages
+        .iter()
+        .filter_map(|m| match m {
+            postgres::SimpleQueryMessage::Row(r) => Some(r),
+            _ => None,
+        })
         .map(|r| (0..r.columns().len()).map(|i| text_cell(r.get(i))).collect())
         .collect()
 }
@@ -656,7 +660,8 @@ impl MetadataDatabaseRepository {
             "DELETE FROM systemtender_lifecycle WHERE systemtender_id = '{}';",
             systemtender_id
         );
-        self.db.execute_query(&db_config, &query, false)
+        self.db.execute_query(&db_config, &query, false)?;
+        Ok(())
     }
 
     /// Create the credentials catalog table.
@@ -699,7 +704,7 @@ impl MetadataDatabaseRepository {
         meta_state: &Value,
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
-        let json_string = py_json_dumps(meta_state).replace('\'', "''");
+        let json_string = serde_json::to_string(meta_state).unwrap_or_default().replace('\'', "''");
         let name_escaped = name.replace('\'', "''");
 
         let query = format!(
@@ -718,7 +723,7 @@ impl MetadataDatabaseRepository {
     /// Update systemtender metadata (e.g., to add job IDs).
     pub fn update_systemtender_meta(&self, systemtender_id: &str, meta_state: &Value) -> DbResult<()> {
         let db_config = self._get_db_config();
-        let json_string = py_json_dumps(meta_state).replace('\'', "''");
+        let json_string = serde_json::to_string(meta_state).unwrap_or_default().replace('\'', "''");
 
         let query = format!(
             r#"
@@ -794,11 +799,11 @@ impl MetadataDatabaseRepository {
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
         let metadata_json = match metadata {
-            Some(m) if py_truthy(m) => format!("'{}'", py_json_dumps(m).replace('\'', "''")),
+            Some(m) if !m.is_null() => format!("'{}'", serde_json::to_string(m).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
         let description_escaped = match description {
-            Some(d) if py_truthy(&Value::String(d.to_string())) => {
+            Some(d) if !d.is_empty() => {
                 format!("'{}'", d.replace('\'', "''"))
             }
             _ => "NULL".to_string(),
@@ -1041,7 +1046,8 @@ impl MetadataDatabaseRepository {
         let db_config = self._get_db_config();
 
         let query = format!("DELETE FROM steerwish_lifecycle WHERE wish_id = '{}';", wish_id);
-        self.db.execute_query(&db_config, &query, false)
+        self.db.execute_query(&db_config, &query, false)?;
+        Ok(())
     }
 
     /// Holder correction: restate the terms on the same identity. NULL
@@ -1056,9 +1062,9 @@ impl MetadataDatabaseRepository {
         terms: Option<&Value>,
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
-        let band_json = format!("'{}'::jsonb", py_json_dumps(band).replace('\'', "''"));
+        let band_json = format!("'{}'::jsonb", serde_json::to_string(band).unwrap_or_default().replace('\'', "''"));
         let limits_json = match limits {
-            Some(l) if py_truthy(l) => format!("'{}'::jsonb", py_json_dumps(l).replace('\'', "''")),
+            Some(l) if !l.is_null() => format!("'{}'::jsonb", serde_json::to_string(l).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
         let budget_sql = match budget {
@@ -1067,11 +1073,11 @@ impl MetadataDatabaseRepository {
         };
         let wid = wish_id.replace('\'', "''");
         let claims_set = match claims {
-            Some(c) => format!("'{}'::jsonb", py_json_dumps(c).replace('\'', "''")),
+            Some(c) => format!("'{}'::jsonb", serde_json::to_string(c).unwrap_or_default().replace('\'', "''")),
             None => "NULL".to_string(),
         };
         let terms_set = match terms {
-            Some(t) => format!("'{}'::jsonb", py_json_dumps(t).replace('\'', "''")),
+            Some(t) => format!("'{}'::jsonb", serde_json::to_string(t).unwrap_or_default().replace('\'', "''")),
             None => "NULL".to_string(),
         };
         let query = format!(
@@ -1120,9 +1126,9 @@ impl MetadataDatabaseRepository {
         terms: Option<&Value>,
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
-        let band_json = format!("'{}'", py_json_dumps(band).replace('\'', "''"));
+        let band_json = format!("'{}'", serde_json::to_string(band).unwrap_or_default().replace('\'', "''"));
         let limits_json = match limits {
-            Some(l) if py_truthy(l) => format!("'{}'::jsonb", py_json_dumps(l).replace('\'', "''")),
+            Some(l) if !l.is_null() => format!("'{}'::jsonb", serde_json::to_string(l).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
         let budget_sql = match budget {
@@ -1132,11 +1138,11 @@ impl MetadataDatabaseRepository {
         let outcome_sql = outcome.replace('\'', "''");
         let regime_sql = regime.replace('\'', "''");
         let claims_json = match claims {
-            Some(c) if py_truthy(c) => format!("'{}'::jsonb", py_json_dumps(c).replace('\'', "''")),
+            Some(c) if !c.is_null() => format!("'{}'::jsonb", serde_json::to_string(c).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
         let terms_json = match terms {
-            Some(t) if py_truthy(t) => format!("'{}'::jsonb", py_json_dumps(t).replace('\'', "''")),
+            Some(t) if !t.is_null() => format!("'{}'::jsonb", serde_json::to_string(t).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
 
@@ -1284,7 +1290,7 @@ impl MetadataDatabaseRepository {
             wish_id_sql,
             event_type_sql,
             detail_sql,
-            py_f64_str(at_epoch)
+            at_epoch
         );
         self.db.execute_query(&db_config, &query, false)?;
         Ok(())
@@ -1306,7 +1312,7 @@ impl MetadataDatabaseRepository {
             self.steerwish_events_table_name,
             wish_id_sql,
             event_type_sql,
-            py_f64_str(at_epoch)
+            at_epoch
         );
         let result = self.db.execute_query(&db_config, &query, true)?;
         let count = result
@@ -1354,12 +1360,12 @@ impl MetadataDatabaseRepository {
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
         let spec_json = if spec.is_object() {
-            py_json_dumps(spec)
+            serde_json::to_string(spec).unwrap_or_default()
         } else {
             spec.as_str().map(|s| s.to_string()).unwrap_or_default()
         };
         let metadata_json = match metadata {
-            Some(m) if py_truthy(m) => format!("'{}'::jsonb", py_json_dumps(m).replace('\'', "''")),
+            Some(m) if !m.is_null() => format!("'{}'::jsonb", serde_json::to_string(m).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
 
@@ -1465,7 +1471,8 @@ impl MetadataDatabaseRepository {
             self.credentials_table_name, credential_id
         );
 
-        self.db.execute_query(&db_config, &query, false)
+        self.db.execute_query(&db_config, &query, false)?;
+        Ok(())
     }
 }
 
