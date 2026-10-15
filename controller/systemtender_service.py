@@ -870,6 +870,11 @@ class SystemtenderService:
                     'stale_threshold_secs': threshold,
                 }
 
+            # The worker's instruments (rung-7 field-sets), stamped in
+            # its own state row — passed through verbatim; absent until
+            # the worker has stamped once.
+            instruments = state.get('instruments') if state else None
+
             # Lifecycle state machine overrides the liveness verdict:
             # while the marker stands, the tender IS its state —
             # deleting/deletion-failed (designs/2026-10-03) or
@@ -900,6 +905,7 @@ class SystemtenderService:
                     "deletion_reason": deletion_reason,
                     "creation_reason": creation_reason,
                     "liveness": liveness,
+                    "instruments": instruments,
                     "createdAt": systemtender_meta_data_row[0][2].isoformat(),
                     "config": systemtender_meta_data_row[0][3],
                     "relaunches": len(_history),
