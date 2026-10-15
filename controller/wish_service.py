@@ -740,22 +740,30 @@ class WishService:
             self.repo.insert_steerwish_event(
                 wish_id, 'planned', json.dumps(plan_response))
             moves = plan_response.get('moves') or []
-            sender = (moves[0] or {}).get('sender') if moves else None
+            # Joint serving: a multi-claim plan may name several
+            # senders — every distinct sender gets its own assignment
+            # row (each tender's pulse adopts exactly its own moves).
+            senders = []
+            for m in moves:
+                s = (m or {}).get('sender')
+                if s and s not in senders:
+                    senders.append(s)
             path = plan_response.get('path') or []
             receiver = path[-1] if path else None
-            if sender and self.archive_repo is not None:
-                # The door check: never plant into a house that is not
-                # breathing. Flight 9 planted into a torn-down cell's db
-                # and the wish died silently; a dead sender now refuses
-                # loudly on the wish instead of vanishing into a void.
-                alive, reason = self._sender_alive(sender)
-                if not alive:
-                    detail = {'error': f'sender {sender} not alive: {reason} '
-                                       '- assignment not planted'}
-                    self.repo.insert_steerwish_event(wish_id, 'plan_error', json.dumps(detail))
-                    logger.warning(f"Wish {wish_id}: sender {sender} not alive "
-                                   f"({reason}) - no note planted")
-                else:
+            if senders and self.archive_repo is not None:
+                for sender in senders:
+                    # The door check: never plant into a house that is not
+                    # breathing. Flight 9 planted into a torn-down cell's db
+                    # and the wish died silently; a dead sender now refuses
+                    # loudly on the wish instead of vanishing into a void.
+                    alive, reason = self._sender_alive(sender)
+                    if not alive:
+                        detail = {'error': f'sender {sender} not alive: {reason} '
+                                           '- assignment not planted'}
+                        self.repo.insert_steerwish_event(wish_id, 'plan_error', json.dumps(detail))
+                        logger.warning(f"Wish {wish_id}: sender {sender} not alive "
+                                       f"({reason}) - no note planted")
+                        continue
                     db_name = f"systemtender_{str(sender).replace('-', '_')}"
                     try:
                         self.archive_repo.write_wish_assignment(db_name, wish_id, role='sender')
@@ -769,33 +777,33 @@ class WishService:
                         self.repo.insert_steerwish_event(
                             wish_id, 'plan_error',
                             json.dumps({'error': f'assignment write failed: {e}'}))
-                    # The receiver is told too: its reading is the wish.
-                    # Without its own note the receiver never parks - it
-                    # keeps walking, swinging the promised reading, and
-                    # the judge watches a moving target forever (found
-                    # live Sep 27: every wish froze at planned because
-                    # only the sender's house ever got a note).
-                    if receiver and receiver != sender:
-                        receiver_db = f"systemtender_{str(receiver).replace('-', '_')}"
-                        try:
-                            self.archive_repo.write_wish_assignment(
-                                receiver_db, wish_id, role='receiver')
-                            self.repo.insert_steerwish_event(
-                                wish_id, 'assigned',
-                                json.dumps({'receiver': receiver, 'db': receiver_db,
-                                            'role': 'receiver'}))
-                            logger.info(f"Wish {wish_id} receiver note in {receiver_db}")
-                        except Exception as e:
-                            logger.warning(
-                                f"Wish {wish_id}: receiver note failed: {e}")
-                            self.repo.insert_steerwish_event(
-                                wish_id, 'plan_error',
-                                json.dumps({'error': f'receiver note failed: {e}'}))
-            elif sender is None:
+                # The receiver is told too: its reading is the wish.
+                # Without its own note the receiver never parks - it
+                # keeps walking, swinging the promised reading, and the
+                # judge watches a moving target forever (found
+                # live Sep 27: every wish froze at planned because
+                # only the sender's house ever got a note).
+                if receiver and receiver not in senders:
+                    receiver_db = f"systemtender_{str(receiver).replace('-', '_')}"
+                    try:
+                        self.archive_repo.write_wish_assignment(
+                            receiver_db, wish_id, role='receiver')
+                        self.repo.insert_steerwish_event(
+                            wish_id, 'assigned',
+                            json.dumps({'receiver': receiver, 'db': receiver_db,
+                                        'role': 'receiver'}))
+                        logger.info(f"Wish {wish_id} receiver note in {receiver_db}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Wish {wish_id}: receiver note failed: {e}")
+                        self.repo.insert_steerwish_event(
+                            wish_id, 'plan_error',
+                            json.dumps({'error': f'receiver note failed: {e}'}))
+            elif not senders:
                 logger.warning(f"Wish {wish_id}: planned but no move named")
             else:
                 logger.warning(
-                    f"Wish {wish_id}: planned on {sender} but no archive "
+                    f"Wish {wish_id}: planned on {senders} but no archive "
                     f"config - assignment not written")
         else:
             self.repo.insert_steerwish_event(wish_id, 'refused', json.dumps({
