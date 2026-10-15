@@ -68,16 +68,16 @@ def checked_claim(claim, where='claim'):
 
 
 ANSWER_WORDS = ('now', 'later')
-DIVISIBILITY_WORDS = ('joint', 'alternatives')
+STANDARD_WORDS = ('all', 'best')
 
 
-def checked_declaration_options(body, default_divisibility):
+def checked_declaration_options(body, default_standard):
     """The two caller-stated declaration options (design §XIX) - family
-    grammar, both wish types: answer timing and divisibility, intent
+    grammar, both wish types: answer timing and standard, intent
     only the wisher holds. Both optional with sealed defaults: answer
     'later' (the consult's answers surface at serving time and in
-    status), divisibility 'joint' for holds (a half-kept state is a
-    lying state) and 'alternatives' for walks (a seek's candidates by
+    status), standard 'all' for holds (a half-kept state is a
+    lying state) and 'best' for walks (a seek's candidates by
     nature).
     """
     answer = body.get('answer')
@@ -88,12 +88,12 @@ def checked_declaration_options(body, default_divisibility):
             f"answer must be 'now' or 'later' (got: {answer}) - when the "
             'reachability consult answers: in the same breath, or at '
             'serving time')
-    divisibility = body.get('divisibility')
-    if divisibility is None:
-        divisibility = default_divisibility
-    if divisibility not in DIVISIBILITY_WORDS:
+    standard = body.get('standard')
+    if standard is None:
+        standard = default_standard
+    if standard not in STANDARD_WORDS:
         raise WishValidationError(
-            f'divisibility must be joint or alternatives '
-            f'(got: {divisibility}) - one kept state, or the best of '
+            f'standard must be all or best '
+            f'(got: {standard}) - one kept state, or the best of '
             'several')
-    return {'answer': answer, 'divisibility': divisibility}
+    return {'answer': answer, 'standard': standard}

@@ -128,9 +128,9 @@ class WishService:
                 f"unknown regime: {regime} (only 'standing' exists today)")
 
         # The two caller-stated declaration options (§XIX): answer
-        # timing (default later) and divisibility (holds default
-        # joint - a half-kept state is a lying state).
-        options = steer_grammar.checked_declaration_options(payload, 'joint')
+        # timing (default later) and standard (holds default
+        # all - a half-kept state is a lying state).
+        options = steer_grammar.checked_declaration_options(payload, 'all')
 
         limits = payload.get('limits')
         if limits is not None:
@@ -166,7 +166,7 @@ class WishService:
             claims=claims,
             terms=terms,
             answer=options['answer'],
-            divisibility=options['divisibility'],
+            standard=options['standard'],
         )
         self.repo.insert_steerwish_event(wish_id, 'declared', None)
         logger.info(f"Steerwish declared: {wish_id} (outcome: {outcome.strip()})")
@@ -185,7 +185,7 @@ class WishService:
         if options['answer'] == 'now':
             self._ask_causal_to_plan(wish_id, claims=claims, terms=terms,
                                      limits=limits, budget=budget,
-                                     divisibility=options['divisibility'])
+                                     standard=options['standard'])
         else:
             self._dispatch_plan_ask(wish_id)
 
@@ -206,9 +206,9 @@ class WishService:
         walk = seek_grammar.checked_wish_body(payload)
         outcome = walk['criterion']['outcome'] if walk['criterion'] \
             else 'cover_now'
-        # Walk wishes default to alternatives (§XIX): a seek's
+        # Walk wishes default to best (§XIX): a seek's
         # candidates are partial service by nature.
-        options = steer_grammar.checked_declaration_options(payload, 'alternatives')
+        options = steer_grammar.checked_declaration_options(payload, 'best')
 
         wish_id = str(uuid.uuid4())
         self._ensure_registry()
@@ -223,7 +223,7 @@ class WishService:
             terms=None,
             seek=walk,
             answer=options['answer'],
-            divisibility=options['divisibility'],
+            standard=options['standard'],
         )
         self.repo.insert_steerwish_event(wish_id, 'declared', None)
         logger.info(
@@ -232,7 +232,7 @@ class WishService:
 
         if options['answer'] == 'now':
             self._ask_causal_to_plan_seek(wish_id, walk,
-                                          divisibility=options['divisibility'])
+                                          standard=options['standard'])
         else:
             self._dispatch_plan_ask(wish_id)
 
@@ -241,7 +241,7 @@ class WishService:
             raise RuntimeError(f'inserted seek wish vanished: {wish_id}')
         return wish
 
-    def _ask_causal_to_plan_seek(self, wish_id, walk, divisibility=None):
+    def _ask_causal_to_plan_seek(self, wish_id, walk, standard=None):
         """One HTTP ask seeds causal's book with the seek. The wire is
         re-pinned (§XVII, 2026-10-13): the ask carries type 'seek' and
         the admitted walk body under 'seek' — one dialect end to end,
@@ -255,8 +255,8 @@ class WishService:
             'type': 'seek',
             'seek': walk,
         }
-        if divisibility:
-            plan_request['divisibility'] = divisibility
+        if standard:
+            plan_request['standard'] = standard
         try:
             req = urllib.request.Request(
                 f"{self._causal_url()}/steer/plan",
@@ -470,10 +470,10 @@ class WishService:
         # note out before the ask would release a wish the corrected
         # terms already satisfy. A correction is a deliberate holder
         # act - the mover's ask answers in the same breath (§XIX).
-        stored_divisibility = wish.get('divisibility')
+        stored_standard = wish.get('standard')
         self._ask_causal_to_plan(wish_id, claims=claims, terms=terms,
                                  limits=limits, budget=budget,
-                                 divisibility=stored_divisibility)
+                                 standard=stored_standard)
         return self.get_steerwish(wish_id)
 
     def delete_steerwish(self, wish_id):
@@ -668,26 +668,26 @@ class WishService:
         if row is None:
             logger.warning(f"Plan ask for unknown wish: {wish_id}")
             return None
-        divisibility = row[12] if len(row) > 12 else None
+        standard = row[12] if len(row) > 12 else None
         if row[5] == 'seek':
             walk = row[10] if len(row) > 10 else None
             if not walk:
                 logger.warning(f"Wish {wish_id}: seek row carries no walk body")
                 return None
             self._ask_causal_to_plan_seek(wish_id, walk,
-                                          divisibility=divisibility)
+                                          standard=standard)
         else:
             claims = row[8] or ([{'outcome': row[1], 'band': row[2]}]
                                 if row[1] and row[2] else [])
             self._ask_causal_to_plan(wish_id, claims=claims,
                                      terms=row[9] or [], limits=row[3],
                                      budget=row[4],
-                                     divisibility=divisibility)
+                                     standard=standard)
         return self.get_steerwish(wish_id)
 
     def _ask_causal_to_plan(self, wish_id, outcome=None, band=None, limits=None,
                             budget=None, claims=None, terms=None,
-                            divisibility=None):
+                            standard=None):
         """One HTTP ask seeds causal's book. A single claim with no
         terms rides the engine's current wire shape (outcome + band);
         a multi-claim or terms-carrying wish rides the stack shape
@@ -715,8 +715,8 @@ class WishService:
                 'claims': claims,
                 'terms': terms or [],
             }
-        if divisibility:
-            plan_request['divisibility'] = divisibility
+        if standard:
+            plan_request['standard'] = standard
         if budget is not None:
             plan_request['budget'] = int(budget)
         if limits:
@@ -857,7 +857,7 @@ class WishService:
             'state': row[7],
             'seek': row[10] if len(row) > 10 else None,
             'answer': row[11] if len(row) > 11 else None,
-            'divisibility': row[12] if len(row) > 12 else None,
+            'standard': row[12] if len(row) > 12 else None,
             'events': [
                 {
                     'type': event[0],

@@ -6,8 +6,8 @@ Each test names what it pins:
 - answer timing: 'now' asks causal in the same breath (the consult's
   answer rides the very response); 'later' — the sealed default —
   dispatches the ask as its own job and the door returns at 'declared'
-- divisibility: 'joint' defaults on holds (a half-kept state is a
-  lying state), 'alternatives' on walks (a seek's candidates by
+- standard: 'all' defaults on holds (a half-kept state is a
+  lying state), 'best' on walks (a seek's candidates by
   nature); both ride the plan-ask wire
 - the dispatched job re-asks from stored terms — one ask discipline,
   two timings; a dispatch that cannot fly asks inline (never unasked)
@@ -67,28 +67,28 @@ def _service(wish=None):
 
 
 class TestDeclarationOptions:
-    def test_defaults_hold_later_joint(self):
-        opts = checked_declaration_options({}, 'joint')
-        assert opts == {'answer': 'later', 'divisibility': 'joint'}
+    def test_defaults_hold_later_all(self):
+        opts = checked_declaration_options({}, 'all')
+        assert opts == {'answer': 'later', 'standard': 'all'}
 
-    def test_defaults_walk_alternatives(self):
-        opts = checked_declaration_options({}, 'alternatives')
-        assert opts == {'answer': 'later', 'divisibility': 'alternatives'}
+    def test_defaults_walk_best(self):
+        opts = checked_declaration_options({}, 'best')
+        assert opts == {'answer': 'later', 'standard': 'best'}
 
-    def test_explicit_now_alternatives_admit(self):
+    def test_explicit_now_best_admit(self):
         opts = checked_declaration_options(
-            {'answer': 'now', 'divisibility': 'alternatives'}, 'joint')
-        assert opts == {'answer': 'now', 'divisibility': 'alternatives'}
+            {'answer': 'now', 'standard': 'best'}, 'all')
+        assert opts == {'answer': 'now', 'standard': 'best'}
 
     def test_unknown_answer_refuses_named(self):
         with pytest.raises(Exception) as e:
-            checked_declaration_options({'answer': 'soon'}, 'joint')
+            checked_declaration_options({'answer': 'soon'}, 'all')
         assert 'now' in str(e.value) and 'later' in str(e.value)
 
-    def test_unknown_divisibility_refuses_named(self):
+    def test_unknown_standard_refuses_named(self):
         with pytest.raises(Exception) as e:
-            checked_declaration_options({'divisibility': 'partial'}, 'joint')
-        assert 'joint' in str(e.value) and 'alternatives' in str(e.value)
+            checked_declaration_options({'standard': 'partial'}, 'all')
+        assert 'all' in str(e.value) and 'best' in str(e.value)
 
 
 class TestAnswerTiming:
@@ -97,7 +97,7 @@ class TestAnswerTiming:
         with patch.object(svc, '_ask_causal_to_plan') as ask, \
              patch.object(svc, '_ensure_registry'):
             svc.create_steerwish(hold_payload(answer='now'))
-        assert ask.call_args.kwargs.get('divisibility') == 'joint'
+        assert ask.call_args.kwargs.get('standard') == 'all'
 
     def test_later_dispatches_and_returns_declared(self):
         svc = _service()
@@ -142,30 +142,30 @@ class TestAnswerTiming:
         with patch.object(svc, '_ask_causal_to_plan'), \
              patch.object(svc, '_ensure_registry'):
             svc.create_steerwish(
-                hold_payload(answer='now', divisibility='alternatives'))
+                hold_payload(answer='now', standard='best'))
         kwargs = svc.repo.insert_steerwish.call_args.kwargs
         assert kwargs['answer'] == 'now'
-        assert kwargs['divisibility'] == 'alternatives'
+        assert kwargs['standard'] == 'best'
 
-    def test_seek_row_defaults_alternatives(self):
+    def test_seek_row_defaults_best(self):
         svc = _service()
         with patch.object(svc, '_ask_causal_to_plan_seek'), \
              patch.object(svc, '_ensure_registry'):
             svc.create_steerwish(seek_payload())
         kwargs = svc.repo.insert_steerwish.call_args.kwargs
         assert kwargs['answer'] == 'later'
-        assert kwargs['divisibility'] == 'alternatives'
+        assert kwargs['standard'] == 'best'
 
 
 class TestPlanWish:
     """The dispatched job's body: the ask re-built from stored terms."""
 
-    def _row(self, regime='standing', seek=None, divisibility='joint'):
+    def _row(self, regime='standing', seek=None, standard='all'):
         return ['w1', 'chainend.shift', {'lo': -0.14, 'hi': -0.06}, None,
                 2, regime, None, 'declared',
                 [{'outcome': 'chainend.shift',
                   'band': {'lo': -0.14, 'hi': -0.06}}], [], seek,
-                'later', divisibility]
+                'later', standard]
 
     def test_plan_wish_asks_from_stored_terms(self):
         svc = _service()
@@ -174,19 +174,19 @@ class TestPlanWish:
              patch.object(svc, '_ensure_registry'):
             svc.plan_wish('w1')
         kwargs = ask.call_args.kwargs
-        assert kwargs['divisibility'] == 'joint'
+        assert kwargs['standard'] == 'all'
         assert kwargs['claims'][0]['outcome'] == 'chainend.shift'
 
     def test_plan_wish_seek_row_uses_the_walk_door(self):
         svc = _service()
         walk = seek_payload()
         svc.repo.fetch_steerwish_by_id.return_value = self._row(
-            regime='seek', seek=walk, divisibility='alternatives')
+            regime='seek', seek=walk, standard='best')
         with patch.object(svc, '_ask_causal_to_plan_seek') as ask, \
              patch.object(svc, '_ensure_registry'):
             svc.plan_wish('w1')
         assert ask.call_args.args[1]['form'] == 'find_best'
-        assert ask.call_args.kwargs['divisibility'] == 'alternatives'
+        assert ask.call_args.kwargs['standard'] == 'best'
 
     def test_plan_wish_unknown_id_is_none(self):
         svc = _service()
@@ -194,7 +194,7 @@ class TestPlanWish:
         with patch.object(svc, '_ensure_registry'):
             assert svc.plan_wish('nope') is None
 
-    def test_divisibility_rides_the_wire(self):
+    def test_standard_rides_the_wire(self):
         svc = _service()
         asked = {}
 
@@ -214,8 +214,8 @@ class TestPlanWish:
             svc._ask_causal_to_plan(
                 'w1', claims=[{'outcome': 'o',
                                'band': {'lo': 0.0, 'hi': 1.0}}],
-                terms=[], divisibility='joint')
-        assert asked['body']['divisibility'] == 'joint'
+                terms=[], standard='all')
+        assert asked['body']['standard'] == 'all'
 
 
 class TestUnservableDerivation:
@@ -232,10 +232,10 @@ class TestUnservableDerivation:
             database.MetadataDatabaseRepository.fetch_steerwishes_list)
         assert "CASE WHEN e.event_type = 'refused' THEN 'unservable'" in src
 
-    def test_columns_answer_divisibility_append_after_seek(self):
+    def test_columns_answer_standard_append_after_seek(self):
         src = inspect.getsource(
             database.MetadataDatabaseRepository.fetch_steerwish_by_id)
-        assert 'w.claims, w.terms, w.seek, w.answer, w.divisibility' in src
+        assert 'w.claims, w.terms, w.seek, w.answer, w.standard' in src
 
     def test_insert_carries_the_options(self):
         src = inspect.getsource(
@@ -247,14 +247,14 @@ class TestUnservableDerivation:
         row = self._row()
         wish = svc._format_wish(row, [])
         assert wish['answer'] == 'later'
-        assert wish['divisibility'] == 'joint'
+        assert wish['standard'] == 'all'
 
     def _row(self):
         return ['w1', 'chainend.shift', {'lo': -0.14, 'hi': -0.06}, None,
                 2, 'standing', None, 'unservable',
                 [{'outcome': 'chainend.shift',
                   'band': {'lo': -0.14, 'hi': -0.06}}], [], None,
-                'later', 'joint']
+                'later', 'all']
 
 
 class TestCreateDoorRung6:
@@ -263,7 +263,7 @@ class TestCreateDoorRung6:
         assert result['result'] == 'FAILURE'
         assert 'later' in result['error']
 
-    def test_malformed_divisibility_refuses_at_the_door(self):
-        result = create_main(request_data=hold_payload(divisibility='some'))
+    def test_malformed_standard_refuses_at_the_door(self):
+        result = create_main(request_data=hold_payload(standard='some'))
         assert result['result'] == 'FAILURE'
-        assert 'alternatives' in result['error']
+        assert 'best' in result['error']
