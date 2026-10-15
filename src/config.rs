@@ -1004,14 +1004,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
             }
         };
         if let Some(iterations) = completion_obj.get("iterations") {
-            let iterations_obj = match iterations.as_object() {
-                Some(o) => o,
-                None => {
-                    errors.push(format!(
-                        "'run.completion.iterations' must be a dict, got {}",
-                        json_type_name(iterations)
-                    ));
-                }
+            match iterations.as_object() {
                 Some(o) => {
                     let iterations_min = o.get("min");
                     let iterations_max = o.get("max");
@@ -1038,7 +1031,13 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                         }
                     }
                 }
-            };
+                None => {
+                    errors.push(format!(
+                        "'run.completion.iterations' must be a dict, got {}",
+                        json_type_name(iterations)
+                    ));
+                }
+            }
         }
     }
 

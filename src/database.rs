@@ -213,6 +213,18 @@ impl ArchiveDatabaseRepository {
         Self { base_config, db }
     }
 
+    /// The gateway the repository carries (the services' raw reads ride it).
+    pub fn gateway(&self) -> Arc<dyn DbGateway> {
+        self.db.clone()
+    }
+
+    /// A one-off read against a per-tender database (the trial
+    /// compatibility checks).
+    pub fn raw_query(&self, db_name: &str, sql: &str) -> DbResult<Option<Vec<TextRow>>> {
+        let db_config = self.base_config.with_database(db_name);
+        self.db.execute_query(&db_config, sql, true)
+    }
+
     /// Create the systemtender state table for shutdown signaling.
     pub fn create_systemtender_state_table(&self, systemtender_id: &str) -> DbResult<()> {
         let db_config = self.base_config.with_database(systemtender_id);
