@@ -645,7 +645,9 @@ class MetadataDatabaseRepository:
         ALTER TABLE {self.steerwishes_table_name}
         ADD COLUMN IF NOT EXISTS claims JSONB,
         ADD COLUMN IF NOT EXISTS terms JSONB,
-        ADD COLUMN IF NOT EXISTS seek JSONB;
+        ADD COLUMN IF NOT EXISTS seek JSONB,
+        ADD COLUMN IF NOT EXISTS answer VARCHAR(16),
+        ADD COLUMN IF NOT EXISTS divisibility VARCHAR(16);
         """
         execute_query(db_config, query)
 
@@ -784,7 +786,8 @@ class MetadataDatabaseRepository:
         logger.info(f"Steerwish purged from registry: {wish_id}")
 
     def insert_steerwish(self, wish_id, outcome, band, limits, budget, regime,
-                         claims=None, terms=None, seek=None):
+                         claims=None, terms=None, seek=None,
+                         answer='later', divisibility='joint'):
         """Insert a declared steerwish (the 'declared' event is appended by the caller)"""
         db_config = self._get_db_config()
         band_json = "'" + json.dumps(band).replace("'", "''") + "'"
@@ -795,11 +798,13 @@ class MetadataDatabaseRepository:
         claims_json = "'" + json.dumps(claims).replace("'", "''") + "'::jsonb" if claims else 'NULL'
         terms_json = "'" + json.dumps(terms).replace("'", "''") + "'::jsonb" if terms else 'NULL'
         seek_json = "'" + json.dumps(seek).replace("'", "''") + "'::jsonb" if seek else 'NULL'
+        answer_sql = str(answer).replace("'", "''")
+        divisibility_sql = str(divisibility).replace("'", "''")
 
         query = f"""
         INSERT INTO {self.steerwishes_table_name}
-        (id, outcome, band, limits, budget, regime, claims, terms, seek)
-        VALUES('{wish_id}', '{outcome_sql}', {band_json}::jsonb, {limits_json}, {budget_sql}, '{regime_sql}', {claims_json}, {terms_json}, {seek_json});
+        (id, outcome, band, limits, budget, regime, claims, terms, seek, answer, divisibility)
+        VALUES('{wish_id}', '{outcome_sql}', {band_json}::jsonb, {limits_json}, {budget_sql}, '{regime_sql}', {claims_json}, {terms_json}, {seek_json}, '{answer_sql}', '{divisibility_sql}');
         """
         execute_query(db_config, query)
         logger.info(f"Inserted steerwish {wish_id} for outcome: {outcome}")
@@ -811,11 +816,13 @@ class MetadataDatabaseRepository:
 
         query = f"""
         SELECT w.id, w.outcome, w.band, w.limits, w.budget, w.regime, w.created_at,
-               COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
+               COALESCE((SELECT CASE WHEN e.event_type = 'refused' THEN 'unservable'
+                                     ELSE e.event_type END
+                         FROM {self.steerwish_events_table_name} e
                          WHERE e.wish_id = w.id
                          AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
                          ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state,
-               w.claims, w.terms, w.seek
+               w.claims, w.terms, w.seek, w.answer, w.divisibility
         FROM {self.steerwishes_table_name} w
         WHERE w.id = '{wish_id_sql}';
         """
@@ -829,7 +836,9 @@ class MetadataDatabaseRepository:
 
         query = f"""
         SELECT w.id, w.outcome,
-               COALESCE((SELECT e.event_type FROM {self.steerwish_events_table_name} e
+               COALESCE((SELECT CASE WHEN e.event_type = 'refused' THEN 'unservable'
+                                     ELSE e.event_type END
+                         FROM {self.steerwish_events_table_name} e
                          WHERE e.wish_id = w.id
                          AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
                          ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state,
