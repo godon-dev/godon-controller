@@ -96,6 +96,27 @@ class ArchiveDatabaseRepository:
         execute_query(db_config, query)
         logger.info(f"Set shutdown_requested={value} in archive DB for systemtender: {systemtender_id}")
 
+    def read_shutdown_requested(self, systemtender_db_name):
+        """The stop flag's current value, or None when unreadable.
+
+        Rung 8 (designs/2026-10-11 XX): the start door names the case
+        it resolves — a set flag means the tender was STOPPED (a
+        deliberate exit), heartbeat silence without the flag means the
+        worker DIED. The door never covers the difference."""
+        db_config = self.base_config.copy()
+        db_config['database'] = systemtender_db_name
+        try:
+            rows = execute_query(
+                db_config,
+                "SELECT shutdown_requested FROM systemtender_state LIMIT 1",
+                with_result=True,
+            )
+        except Exception:
+            return None
+        if rows and rows[0][0] is not None:
+            return bool(rows[0][0])
+        return None
+
     def read_heartbeat(self, systemtender_db_name):
         """The tender's pulse: (age_secs, beat_interval_secs).
 

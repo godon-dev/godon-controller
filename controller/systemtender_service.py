@@ -896,7 +896,11 @@ class SystemtenderService:
                     "creation_reason": creation_reason,
                     "liveness": liveness,
                     "createdAt": systemtender_meta_data_row[0][2].isoformat(),
-                    "config": systemtender_meta_data_row[0][3]
+                    "config": systemtender_meta_data_row[0][3],
+                    # Rung 8: a death-resume is history, never covered —
+                    # the count and the last one ride every read.
+                    "relaunches": len(((systemtender_meta_data_row[0][3] or {}).get('relaunch_history')) or []),
+                    "last_relaunch": (((systemtender_meta_data_row[0][3] or {}).get('relaunch_history')) or [None])[-1],
                 }
             }
         except Exception as e:
@@ -938,6 +942,41 @@ class SystemtenderService:
             is_cooperative = systemtender_config.get('cooperation', {}).get('active', False)
 
             __uuid_common_name = f"systemtender_{systemtender_id.replace('-', '_')}"
+
+            # Rung 8 (designs/2026-10-11 XX): the resume is explicit —
+            # name the case this start resolves, never cover a death
+            # as a fresh start. Same reads the GET verdict uses: a set
+            # stop flag means STOPPED (a deliberate exit); heartbeat
+            # silence without the flag means the worker DIED.
+            resume_case = 'fresh'
+            death_age = None
+            try:
+                stopped = self.archive_repo.read_shutdown_requested(__uuid_common_name)
+                state = self.archive_repo.read_state_verdict(__uuid_common_name)
+            except Exception as e:
+                logger.warning(f"Start case read failed for {systemtender_id}: {e}")
+                stopped, state = None, None
+            if stopped:
+                resume_case = 'stopped'
+            elif state and not state['finished']:
+                interval = state['interval_secs'] if state['interval_secs'] else 60
+                threshold = max(90, 6 * interval)
+                if state['age_secs'] is not None and state['age_secs'] > threshold:
+                    resume_case = 'presumed_dead'
+                    death_age = state['age_secs']
+                elif state['age_secs'] is not None:
+                    resume_case = 'running'
+
+            # A death-resume is history, not identity: recorded, never
+            # covered (rides the same metadata update as the job ids).
+            if resume_case == 'presumed_dead':
+                history = systemtender_config.get('relaunch_history') or []
+                history.append({
+                    'ts': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    'resumed_from': 'presumed_dead',
+                    'liveness_age_secs': death_age,
+                })
+                systemtender_config['relaunch_history'] = history
 
             # Clear the shutdown flag in archive DB
             self.archive_repo.set_shutdown_requested(__uuid_common_name, value=False)
@@ -998,7 +1037,8 @@ class SystemtenderService:
                     "result": "PARTIAL_SUCCESS",
                     "error": f"Failed to launch {len(worker_launch_failures)} worker(s)",
                     "workers_started": len(worker_job_ids),
-                    "workers_failed": len(worker_launch_failures)
+                    "workers_failed": len(worker_launch_failures),
+                    "resumed_from": resume_case
                 }
 
             logger.info(f"Successfully started/resumed systemtender: {systemtender_id}")
@@ -1007,7 +1047,8 @@ class SystemtenderService:
                 "data": {
                     "systemtender_id": systemtender_id,
                     "workers_started": len(worker_job_ids),
-                    "status": "ACTIVE"
+                    "status": "ACTIVE",
+                    "resumed_from": resume_case
                 }
             }
 
