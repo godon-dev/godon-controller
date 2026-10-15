@@ -1145,3 +1145,69 @@ class TestAsyncCreate:
                    side_effect=Exception('connection refused')), \
              pytest.raises(Exception):
             repo.read_state_verdict('systemtender_x')
+
+
+class TestDeathRelaunch:
+    """Rung 8 (designs/2026-10-11 XX): a presumed_dead tender is
+    startable. The death verdict is loud — GET answers presumed_dead
+    with its liveness numbers — and the cure is the same relaunch
+    machinery a stop uses: clear the flag, dispatch workers
+    create-identical. No status guard refuses the dead; the wish the
+    dead tender held resumes through the worker's own boot (robots
+    #251)."""
+
+    def _dead_tender_service(self):
+        svc = SystemtenderService({}, {})
+        svc.metadata_repo = MagicMock()
+        svc.archive_repo = MagicMock()
+        return svc
+
+    @patch('controller.systemtender_service.determine_config_shard',
+           side_effect=lambda **kw: kw.get('config') or kw.get('shard_config'))
+    @patch('controller.systemtender_service.start_optimization_flow')
+    def test_start_relaunches_a_presumed_dead_tender(self, mock_flow, mock_shard):
+        mock_flow.return_value = (None, 'job-relaunched-1')
+        svc = self._dead_tender_service()
+        test_id = str(uuid.uuid4())
+        config = {
+            'systemtender': {'name': 't', 'type': 'ssh'},
+            'effectuation': {'targets': [{'target_id': 't1'}]},
+        }
+        meta_row = [(test_id, 't', datetime.datetime.now(datetime.timezone.utc), config)]
+        svc.metadata_repo.fetch_meta_data.return_value = meta_row
+        # the death verdict's ground: heartbeat silent far past the
+        # threshold (max(90, 6*interval)), never finished
+        svc.archive_repo.read_state_verdict.return_value = {
+            'finished': False, 'age_secs': 4000, 'interval_secs': 60}
+
+        result = svc.start_systemtender(test_id)
+
+        assert result['result'] == 'SUCCESS', "the dead are startable — no status guard refuses"
+        # the stop flag cleared regardless of the death (value kwarg)
+        flag_kwargs = svc.archive_repo.set_shutdown_requested.call_args.kwargs
+        assert flag_kwargs['value'] is False
+        # workers relaunched create-identical, fresh job ids booked
+        mock_flow.assert_called_once()
+        booked = svc.metadata_repo.update_systemtender_meta.call_args[1]
+        assert booked['meta_state']['worker_job_ids'] == ['job-relaunched-1']
+
+    @patch('controller.systemtender_service.determine_config_shard',
+           side_effect=lambda **kw: kw.get('config') or kw.get('shard_config'))
+    @patch('controller.systemtender_service.start_optimization_flow')
+    def test_the_verdict_stays_loud_while_the_tender_stays_dead(self, mock_flow, mock_shard):
+        svc = self._dead_tender_service()
+        test_id = str(uuid.uuid4())
+        config = {
+            'systemtender': {'name': 't', 'type': 'ssh'},
+            'effectuation': {'targets': [{'target_id': 't1'}]},
+        }
+        meta_row = [(test_id, 't', datetime.datetime.now(datetime.timezone.utc), config)]
+        svc.metadata_repo.fetch_meta_data.return_value = meta_row
+        svc.archive_repo.read_state_verdict.return_value = {
+            'finished': False, 'age_secs': 4000, 'interval_secs': 60}
+        svc.metadata_repo.get_lifecycle.return_value = None
+
+        got = svc.get_systemtender(test_id)
+
+        assert got['data']['status'] == 'presumed_dead'
+        assert got['data']['liveness']['age_secs'] == 4000, "the verdict carries its numbers"
