@@ -1,0 +1,21 @@
+[package]
+name = "godon-controller"
+version = "0.59.26"
+edition = "2021"
+description = "The godon controller - lifecycle verbs and the data layer (rung 10 rust port)"
+
+[lib]
+name = "godon_controller"
+path = "src/lib.rs"
+
+[[bin]]
+name = "godon-controller"
+path = "src/main.rs"
+
+[dependencies]
+postgres = "0.19"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+env_logger = "0.11"
