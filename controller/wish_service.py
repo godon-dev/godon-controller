@@ -127,6 +127,11 @@ class WishService:
             raise WishValidationError(
                 f"unknown regime: {regime} (only 'standing' exists today)")
 
+        # The two caller-stated declaration options (§XIX): answer
+        # timing (default later) and divisibility (holds default
+        # joint - a half-kept state is a lying state).
+        options = steer_grammar.checked_declaration_options(payload, 'joint')
+
         limits = payload.get('limits')
         if limits is not None:
             if not isinstance(limits, dict):
@@ -160,6 +165,8 @@ class WishService:
             regime=regime,
             claims=claims,
             terms=terms,
+            answer=options['answer'],
+            divisibility=options['divisibility'],
         )
         self.repo.insert_steerwish_event(wish_id, 'declared', None)
         logger.info(f"Steerwish declared: {wish_id} (outcome: {outcome.strip()})")
@@ -170,8 +177,17 @@ class WishService:
         # assignment row in the serving tender's archive DB, and the
         # tender's pulse does the rest. The budget rides along: causal
         # enforces the outer round total, the controller only declares it.
-        self._ask_causal_to_plan(wish_id, claims=claims, terms=terms,
-                                 limits=limits, budget=budget)
+        # Answer timing (§XIX): 'now' asks in the same breath - the
+        # consult's answer (planned, or a refusal with numbers) is in
+        # this very response; 'later' (the default) dispatches the ask
+        # as its own job - the wish stands declared, the answers land
+        # as events and surface at serving time and in status.
+        if options['answer'] == 'now':
+            self._ask_causal_to_plan(wish_id, claims=claims, terms=terms,
+                                     limits=limits, budget=budget,
+                                     divisibility=options['divisibility'])
+        else:
+            self._dispatch_plan_ask(wish_id)
 
         wish = self.get_steerwish(wish_id)
         if wish is None:
@@ -190,6 +206,9 @@ class WishService:
         walk = seek_grammar.checked_wish_body(payload)
         outcome = walk['criterion']['outcome'] if walk['criterion'] \
             else 'cover_now'
+        # Walk wishes default to alternatives (§XIX): a seek's
+        # candidates are partial service by nature.
+        options = steer_grammar.checked_declaration_options(payload, 'alternatives')
 
         wish_id = str(uuid.uuid4())
         self._ensure_registry()
@@ -203,20 +222,26 @@ class WishService:
             claims=None,
             terms=None,
             seek=walk,
+            answer=options['answer'],
+            divisibility=options['divisibility'],
         )
         self.repo.insert_steerwish_event(wish_id, 'declared', None)
         logger.info(
             f"Seek wish declared: {wish_id} (form: {walk['form']}, "
             f"outcome: {outcome})")
 
-        self._ask_causal_to_plan_seek(wish_id, walk)
+        if options['answer'] == 'now':
+            self._ask_causal_to_plan_seek(wish_id, walk,
+                                          divisibility=options['divisibility'])
+        else:
+            self._dispatch_plan_ask(wish_id)
 
         wish = self.get_steerwish(wish_id)
         if wish is None:
             raise RuntimeError(f'inserted seek wish vanished: {wish_id}')
         return wish
 
-    def _ask_causal_to_plan_seek(self, wish_id, walk):
+    def _ask_causal_to_plan_seek(self, wish_id, walk, divisibility=None):
         """One HTTP ask seeds causal's book with the seek. The wire is
         re-pinned (§XVII, 2026-10-13): the ask carries type 'seek' and
         the admitted walk body under 'seek' — one dialect end to end,
@@ -230,6 +255,8 @@ class WishService:
             'type': 'seek',
             'seek': walk,
         }
+        if divisibility:
+            plan_request['divisibility'] = divisibility
         try:
             req = urllib.request.Request(
                 f"{self._causal_url()}/steer/plan",
@@ -441,9 +468,12 @@ class WishService:
         # a plan with moves re-plants the note (new dial); a zero-move
         # hold keeps the existing note and dial untouched. Tearing the
         # note out before the ask would release a wish the corrected
-        # terms already satisfy.
+        # terms already satisfy. A correction is a deliberate holder
+        # act - the mover's ask answers in the same breath (§XIX).
+        stored_divisibility = wish.get('divisibility')
         self._ask_causal_to_plan(wish_id, claims=claims, terms=terms,
-                                 limits=limits, budget=budget)
+                                 limits=limits, budget=budget,
+                                 divisibility=stored_divisibility)
         return self.get_steerwish(wish_id)
 
     def delete_steerwish(self, wish_id):
@@ -606,8 +636,58 @@ class WishService:
                 logger.debug(f"Wish {wish_id}: fold-in of {event} skipped: {ex}")
         return mirrored
 
+    # ── the plan ask as its own motion (answer 'later') ──────────────
+
+    def _dispatch_plan_ask(self, wish_id):
+        """Answer 'later' (§XIX): the consult rides its own job and the
+        door returns at 'declared'. Every answer - planned, refused
+        with numbers, plan_error - lands on the wish's event record
+        when the job runs; status and serving time surface it. A
+        dispatch that cannot fly (no windmill in this context) asks
+        inline instead: the wish is never left unasked."""
+        try:
+            import wmill
+            wmill.run_script_by_path_async(
+                path='f/controller/steerwish_plan',
+                args={'wish_id': wish_id},
+            )
+            logger.info(
+                f"Wish {wish_id}: plan ask dispatched (answer: later)")
+        except Exception as e:
+            logger.warning(
+                f"Wish {wish_id}: plan ask dispatch failed ({e}) - asking inline")
+            self.plan_wish(wish_id)
+
+    def plan_wish(self, wish_id):
+        """The plan ask from stored terms (the dispatched job's body, and
+        any re-ask): identical answers and event stamps as the inline
+        path - one ask discipline, two timings. Returns the wish, or
+        None when the id is unknown."""
+        self._ensure_registry()
+        row = self.repo.fetch_steerwish_by_id(wish_id)
+        if row is None:
+            logger.warning(f"Plan ask for unknown wish: {wish_id}")
+            return None
+        divisibility = row[12] if len(row) > 12 else None
+        if row[5] == 'seek':
+            walk = row[10] if len(row) > 10 else None
+            if not walk:
+                logger.warning(f"Wish {wish_id}: seek row carries no walk body")
+                return None
+            self._ask_causal_to_plan_seek(wish_id, walk,
+                                          divisibility=divisibility)
+        else:
+            claims = row[8] or ([{'outcome': row[1], 'band': row[2]}]
+                                if row[1] and row[2] else [])
+            self._ask_causal_to_plan(wish_id, claims=claims,
+                                     terms=row[9] or [], limits=row[3],
+                                     budget=row[4],
+                                     divisibility=divisibility)
+        return self.get_steerwish(wish_id)
+
     def _ask_causal_to_plan(self, wish_id, outcome=None, band=None, limits=None,
-                            budget=None, claims=None, terms=None):
+                            budget=None, claims=None, terms=None,
+                            divisibility=None):
         """One HTTP ask seeds causal's book. A single claim with no
         terms rides the engine's current wire shape (outcome + band);
         a multi-claim or terms-carrying wish rides the stack shape
@@ -635,6 +715,8 @@ class WishService:
                 'claims': claims,
                 'terms': terms or [],
             }
+        if divisibility:
+            plan_request['divisibility'] = divisibility
         if budget is not None:
             plan_request['budget'] = int(budget)
         if limits:
@@ -774,6 +856,8 @@ class WishService:
             'createdAt': row[6].isoformat() if row[6] else None,
             'state': row[7],
             'seek': row[10] if len(row) > 10 else None,
+            'answer': row[11] if len(row) > 11 else None,
+            'divisibility': row[12] if len(row) > 12 else None,
             'events': [
                 {
                     'type': event[0],

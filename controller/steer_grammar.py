@@ -65,3 +65,35 @@ def checked_claim(claim, where='claim'):
         'outcome': name.strip(),
         'band': checked_band(claim.get('band'), f'{where}.band'),
     }
+
+
+ANSWER_WORDS = ('now', 'later')
+DIVISIBILITY_WORDS = ('joint', 'alternatives')
+
+
+def checked_declaration_options(body, default_divisibility):
+    """The two caller-stated declaration options (design §XIX) - family
+    grammar, both wish types: answer timing and divisibility, intent
+    only the wisher holds. Both optional with sealed defaults: answer
+    'later' (the consult's answers surface at serving time and in
+    status), divisibility 'joint' for holds (a half-kept state is a
+    lying state) and 'alternatives' for walks (a seek's candidates by
+    nature).
+    """
+    answer = body.get('answer')
+    if answer is None:
+        answer = 'later'
+    if answer not in ANSWER_WORDS:
+        raise WishValidationError(
+            f"answer must be 'now' or 'later' (got: {answer}) - when the "
+            'reachability consult answers: in the same breath, or at '
+            'serving time')
+    divisibility = body.get('divisibility')
+    if divisibility is None:
+        divisibility = default_divisibility
+    if divisibility not in DIVISIBILITY_WORDS:
+        raise WishValidationError(
+            f'divisibility must be joint or alternatives '
+            f'(got: {divisibility}) - one kept state, or the best of '
+            'several')
+    return {'answer': answer, 'divisibility': divisibility}

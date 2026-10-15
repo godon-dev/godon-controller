@@ -193,7 +193,7 @@ class TestClaimsGrammar:
              patch.object(service.repo, 'insert_steerwish') as insert, \
              patch.object(service.repo, 'insert_steerwish_event'), \
              patch.object(service, '_ask_causal_to_plan') as ask:
-            wish = service.create_steerwish({**payload, 'type': 'steer'})
+            wish = service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
         return wish, insert, ask
 
     def test_claims_one_accepted_and_stored(self):
@@ -245,7 +245,8 @@ class TestClaimsGrammar:
              patch.object(service.repo, 'insert_steerwish') as insert, \
              patch.object(service.repo, 'insert_steerwish_event'):
             wish = service.create_steerwish(
-                {'type': 'steer', 'claims': claims, 'terms': terms})
+                {'type': 'steer', 'claims': claims, 'terms': terms,
+                 'answer': 'now'})
         kwargs = insert.call_args.kwargs if insert.call_args else {}
         assert kwargs['terms'] == terms, \
             'the price rides the wish: claims that carry no dial'
@@ -275,7 +276,7 @@ class TestClaimsGrammar:
              patch.object(service.repo, 'insert_steerwish'), \
              patch.object(service.repo, 'insert_steerwish_event'), \
              patch('urllib.request.urlopen', return_value=fake_resp) as urlopen:
-            service.create_steerwish({**payload, 'type': 'steer'})
+            service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
         body = _json.loads(urlopen.call_args_list[0][0][0].data.decode('utf-8'))
         assert len(body['claims']) == 2 and body['terms'], \
             'multi-claim wishes ride the stack shape'
@@ -299,7 +300,7 @@ class TestClaimsGrammar:
              patch.object(service.repo, 'insert_steerwish'), \
              patch.object(service.repo, 'insert_steerwish_event'), \
              patch('urllib.request.urlopen', return_value=fake_resp) as urlopen:
-            service.create_steerwish({**payload, 'type': 'steer'})
+            service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
         body = _json.loads(urlopen.call_args_list[0][0][0].data.decode('utf-8'))
         assert body['outcome'] == 'chainend.shift', \
             'N=1 with zero terms rides the engine wire unchanged'
@@ -488,7 +489,7 @@ class TestWishService:
              patch.object(service.repo, 'insert_steerwish') as insert, \
              patch.object(service.repo, 'insert_steerwish_event') as event, \
              patch.object(service, '_ask_causal_to_plan') as ask:
-            wish = service.create_steerwish({**payload, 'type': 'steer'})
+            wish = service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
 
         args, kwargs = insert.call_args
         assert kwargs['outcome'] == 'chainend.shift', 'outcome must be trimmed'
@@ -538,7 +539,7 @@ class TestWishService:
                           return_value=(1.0, 10.0)), \
              patch.object(service.archive_repo, 'write_wish_assignment') as write_a, \
              patch('urllib.request.urlopen', return_value=fake_resp):
-            service.create_steerwish({**payload, 'type': 'steer'})
+            service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
 
         # the plan named the dial: the assignment row lands in that
         # tender's own archive DB, causal's book is the plan's home
@@ -569,7 +570,7 @@ class TestWishService:
              patch.object(service.repo, 'insert_steerwish'), \
              patch.object(service.repo, 'insert_steerwish_event') as event, \
              patch('urllib.request.urlopen', return_value=fake_resp):
-            wish = service.create_steerwish({**payload, 'type': 'steer'})
+            wish = service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
 
         stamped = [c[0][1] for c in event.call_args_list]
         assert 'refused' in stamped, 'a refusal is a book entry, not an error'
@@ -720,7 +721,7 @@ class TestBudgetRidesTheAsk:
                 patch.object(service.repo, 'insert_steerwish_event'), \
                 patch.object(service.archive_repo, 'write_wish_assignment'), \
                 patch('urllib.request.urlopen', return_value=fake_resp) as urlopen:
-            service.create_steerwish({**payload, 'type': 'steer'})
+            service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
 
         ask_req = urlopen.call_args_list[0][0][0]
         body = _json.loads(ask_req.data.decode('utf-8'))
@@ -746,7 +747,7 @@ class TestBudgetRidesTheAsk:
                 patch.object(service.repo, 'insert_steerwish'), \
                 patch.object(service.repo, 'insert_steerwish_event'), \
                 patch('urllib.request.urlopen', return_value=fake_resp) as urlopen:
-            service.create_steerwish({**payload, 'type': 'steer'})
+            service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
 
         ask_req = urlopen.call_args_list[0][0][0]
         body = _json.loads(ask_req.data.decode('utf-8'))
@@ -765,7 +766,7 @@ class TestDoorValidation:
         payload = {**payload, 'type': payload.get('type', 'steer')}
         service = self._service()
         try:
-            service.create_steerwish({**payload, 'type': 'steer'})
+            service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
         except steerwish_service.WishValidationError as e:
             assert fragment in str(e), f'expected {fragment!r} in {str(e)!r}'
             return
@@ -812,7 +813,7 @@ class TestDoorValidation:
              patch.object(service.repo, 'create_steerwish_tables'), \
              patch.object(service.repo, 'insert_steerwish'), \
              patch.object(service.repo, 'insert_steerwish_event'):
-            wish = service.create_steerwish({**payload, 'type': 'steer'})
+            wish = service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
         assert wish['state'] == 'declared'
 
 
@@ -871,7 +872,7 @@ class TestSenderLivenessAtTheDoor:
                     return_value=heartbeat))
             event = service.repo.insert_steerwish_event
             write_a = service.archive_repo.write_wish_assignment
-            service.create_steerwish({**payload, 'type': 'steer'})
+            service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
         return service, event, write_a
 
     def _stamped(self, event):
@@ -967,7 +968,7 @@ class TestSenderLivenessAtTheDoor:
                 stack.enter_context(p)
             write_a = service.archive_repo.write_wish_assignment
             event = service.repo.insert_steerwish_event
-            service.create_steerwish({**payload, 'type': 'steer'})
+            service.create_steerwish({**payload, 'type': 'steer', 'answer': 'now'})
 
         assert calls['heartbeat'] == 1 and calls['ageonly'] == 1, \
             'one full read, one age-only retry'
