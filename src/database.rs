@@ -477,21 +477,28 @@ impl ArchiveDatabaseRepository {
         row[0].clone()
     }
 
-    /// Check if shutdown has been requested for a systemtender.
-    pub fn get_shutdown_requested(&self, systemtender_id: &str) -> DbResult<bool> {
-        let db_config = self.base_config.with_database(systemtender_id);
+    /// The stop flag's current value, or None when unreadable.
+    ///
+    /// Rung 8 (designs/2026-10-11 XX): the start door names the case
+    /// it resolves - a set flag means the tender was STOPPED (a
+    /// deliberate exit), heartbeat silence without the flag means the
+    /// worker DIED. The door never covers the difference.
+    pub fn read_shutdown_requested(&self, systemtender_db_name: &str) -> Option<bool> {
+        let db_config = self.base_config.with_database(systemtender_db_name);
 
-        let query = r#"
-        SELECT shutdown_requested FROM systemtender_state;
-        "#;
-
-        let result = self.db.execute_query(&db_config, query, true)?;
-        if let Some(rows) = result {
-            if !rows.is_empty() {
-                return Ok(rows[0][0].as_deref() == Some("t"));
-            }
+        let rows = self
+            .db
+            .execute_query(
+                &db_config,
+                "SELECT shutdown_requested FROM systemtender_state LIMIT 1",
+                true,
+            )
+            .ok()
+            .flatten();
+        match rows {
+            Some(rows) if !rows.is_empty() => cell_bool(&rows[0][0]),
+            _ => None,
         }
-        Ok(false)
     }
 
     /// Create a new database for a systemtender.

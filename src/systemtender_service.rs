@@ -3,9 +3,9 @@
 //! strings, and error texts are the parity surface.
 //!
 //! The CREATE EXECUTOR is not here: it stays a python leaf on the
-//! script layer (it owns the optuna schema init; its healed #402
-//! contract is untouched). create dispatches it by path, exactly as
-//! python did.
+//! script layer (python code windmill runs until cutover; its healed
+//! #402 contract is untouched). create dispatches it by path, exactly
+//! as python did.
 //!
 //! The trial-compatibility read goes straight at the optuna tables
 //! the executor creates (studies/trials/trial_params/trial_values) -
@@ -16,7 +16,7 @@ use crate::config::validate_minimal;
 use crate::database::{
     ArchiveDatabaseRepository, DbConfig, DbGateway, MetadataDatabaseRepository, TextRow,
 };
-use crate::timefmt::{now_iso_naive, pg_ts_to_iso};
+use crate::timefmt::{now_iso_naive, now_iso_utc_aware, pg_ts_to_iso};
 use crate::wmill::{CausalClient, WindmillGateway};
 use log::{error, info, warn};
 use serde_json::{json, Map, Value};
@@ -687,6 +687,14 @@ impl SystemtenderService {
                 .and_then(|t| serde_json::from_str(t).ok())
                 .unwrap_or(Value::Null);
 
+            // Rung 8: a death-resume is history, never covered - the
+            // count and the last one ride every read.
+            let history: Vec<Value> = config
+                .get("relaunch_history")
+                .and_then(|h| h.as_array())
+                .cloned()
+                .unwrap_or_default();
+
             Ok(json!({
                 "result": "SUCCESS",
                 "data": {
@@ -699,6 +707,8 @@ impl SystemtenderService {
                     "instruments": instruments,
                     "createdAt": row.get(2).and_then(|c| c.as_ref()).and_then(|t| pg_ts_to_iso(t)),
                     "config": config,
+                    "relaunches": json!(history.len()),
+                    "last_relaunch": history.last().cloned().unwrap_or(Value::Null),
                 }
             }))
         })();
@@ -723,7 +733,7 @@ impl SystemtenderService {
                 }));
             };
 
-            let config: Value = row
+            let mut config: Value = row
                 .get(3)
                 .and_then(|c| c.as_ref())
                 .and_then(|t| serde_json::from_str(t).ok())
@@ -731,21 +741,85 @@ impl SystemtenderService {
             let instance_name = row[1].clone().unwrap_or_default();
 
             let db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
+
+            // Rung 8 (designs/2026-10-11 XX): the resume is explicit -
+            // name the case this start resolves, never cover a death
+            // as a fresh start. Same reads the GET verdict uses: a set
+            // stop flag means STOPPED (a deliberate exit); heartbeat
+            // silence without the flag means the worker DIED. A failed
+            // case read answers nothing - the case stays fresh.
+            let mut resume_case = "fresh";
+            let mut death_age: Option<f64> = None;
+            let mut stopped: Option<bool> = None;
+            let state_read = (|| -> Result<Option<Value>, crate::database::DbError> {
+                stopped = self.archive_repo.read_shutdown_requested(&db_name);
+                self.archive_repo.read_state_verdict(&db_name)
+            })();
+            let state = match state_read {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Start case read failed for {}: {}", systemtender_id, e.0);
+                    stopped = None;
+                    None
+                }
+            };
+            if stopped == Some(true) {
+                resume_case = "stopped";
+            } else if let Some(state) = &state {
+                if state.get("finished") != Some(&Value::Bool(true)) {
+                    let interval = state
+                        .get("interval_secs")
+                        .and_then(|v| v.as_f64())
+                        .filter(|v| *v != 0.0)
+                        .unwrap_or(60.0);
+                    let threshold = (90.0f64).max(6.0 * interval);
+                    let age = state.get("age_secs").and_then(|v| v.as_f64());
+                    if age.map(|a| a > threshold).unwrap_or(false) {
+                        resume_case = "presumed_dead";
+                        death_age = age;
+                    } else if age.map(|_| true).unwrap_or(false) {
+                        resume_case = "running";
+                    }
+                }
+            }
+
+            // A death-resume is history, not identity: recorded, never
+            // covered (rides the same metadata update as the job ids).
+            if resume_case == "presumed_dead" {
+                let mut history: Vec<Value> = config
+                    .get("relaunch_history")
+                    .and_then(|h| h.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                history.push(json!({
+                    "ts": now_iso_utc_aware(),
+                    "resumed_from": "presumed_dead",
+                    "liveness_age_secs": death_age,
+                }));
+                config
+                    .as_object_mut()
+                    .map(|o| o.insert("relaunch_history".to_string(), json!(history)));
+            }
+
+            // Clear the shutdown flag in archive DB
             self.archive_repo
                 .set_shutdown_requested(&db_name, false)
                 .map_err(|e| e.0)?;
 
+            // Relaunch workers using the same logic as create_systemtender
             let (job_ids, failures) = self.launch_workers(systemtender_id, &instance_name, &config);
 
+            // Update worker job IDs in metadata
             if !job_ids.is_empty() {
-                let mut cfg = config.clone();
-                cfg.as_object_mut()
+                config
+                    .as_object_mut()
                     .map(|o| o.insert("worker_job_ids".to_string(), json!(job_ids)));
                 self.metadata_repo
-                    .update_systemtender_meta(systemtender_id, &cfg)
+                    .update_systemtender_meta(systemtender_id, &config)
                     .map_err(|e| e.0)?;
             }
 
+            // Handle any launch failures
             if !failures.is_empty() {
                 error!(
                     "Failed to launch {} workers for systemtender {}",
@@ -757,6 +831,7 @@ impl SystemtenderService {
                     "error": format!("Failed to launch {} worker(s)", failures.len()),
                     "workers_started": job_ids.len(),
                     "workers_failed": failures.len(),
+                    "resumed_from": resume_case
                 }));
             }
 
@@ -767,6 +842,7 @@ impl SystemtenderService {
                     "systemtender_id": systemtender_id,
                     "workers_started": job_ids.len(),
                     "status": "ACTIVE",
+                    "resumed_from": resume_case
                 }
             }))
         })();

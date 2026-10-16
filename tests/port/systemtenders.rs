@@ -442,9 +442,9 @@ fn start_unknown_tender_answers_not_found() {
     assert!(r["error"].as_str().unwrap().contains("not found"));
 }
 
-// NOTE start-success + TestDeathRelaunch BLOCKED: the python service
-// gained the death-relaunch surfaces after this port's service read;
-// a service-parity motion ports those first.
+// start-success + the death-relaunch shapes: the section at the
+// bottom (the relaunch surfaces are ported; the three BLOCKED tests
+// landed there with them).
 
 // ── worker cancellation ────────────────────────────────────────────
 
@@ -772,5 +772,132 @@ fn get_survives_the_table_build_window() {
 }
 
 // SKIPPED, named: the create-executor tests (python leaf by ruling).
-// BLOCKED, named: TestDeathRelaunch + start-success shapes (the rust
-// service predates the relaunch surfaces; parity motion owed first).
+
+// ── death relaunch (rung 8, TestDeathRelaunch) ─────────────────────
+// The three formerly-BLOCKED tests: the service now carries the
+// relaunch surfaces (the named resume, the history booking, the
+// relaunches/last_relaunch reads), so they land unchanged in their
+// asserted envelopes.
+
+fn relaunch_meta_row(config: &'static str) -> Arc<FakeDb> {
+    arc_db(move |_db, q| {
+        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![row(&[
+                Some("550e8400-e29b-41d4-a716-446655440000"),
+                Some("t"),
+                Some("2026-10-15 09:00:00+00"),
+                Some(config),
+            ])]));
+        }
+        // the stop flag read comes BEFORE the verdict arm: both name
+        // systemtender_state, the flag query is the specific one
+        if q.contains("SELECT shutdown_requested FROM systemtender_state") {
+            return Ok(Some(vec![row(&[Some("f")])]));
+        }
+        // the verdict: finished, age, interval (+ instruments cell)
+        if q.contains("FROM systemtender_state") {
+            return Ok(Some(vec![row(&[Some("f"), Some("4000"), Some("60"), None])]));
+        }
+        Ok(None)
+    })
+}
+
+#[test]
+fn start_relaunches_a_presumed_dead_tender() {
+    let wmill = Arc::new(FakeWindmill::default());
+    wmill.queue_async(Ok("job-relaunched-1".to_string()));
+    let db = relaunch_meta_row(
+        r#"{"systemtender": {"name": "t", "type": "ssh"}, "effectuation": {"targets": [{"target_id": "t1"}]}}"#,
+    );
+    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+
+    let r = svc.start_systemtender("550e8400-e29b-41d4-a716-446655440000");
+
+    assert_eq!(r["result"], "SUCCESS", "the dead are startable — no status guard refuses");
+    assert_eq!(r["data"]["resumed_from"], "presumed_dead", "the door names the death, never covers it");
+    // the stop flag cleared regardless of the death
+    assert!(db.queries().iter().any(|q| q.contains("shutdown_requested = FALSE")));
+    // workers relaunched create-identical, fresh job ids booked
+    assert_eq!(wmill.dispatched.lock().unwrap().len(), 1);
+    let booked = db
+        .queries()
+        .into_iter()
+        .find(|q| q.trim_start().starts_with("UPDATE systemtender_meta_data"))
+        .expect("the booking flew");
+    assert!(booked.contains("\"worker_job_ids\":[\"job-relaunched-1\"]"));
+    // the death-resume is history, recorded in the same booking (the
+    // age rides as the read's float — the live EXTRACT shape)
+    assert!(booked.contains("\"relaunch_history\":["));
+    assert!(booked.contains("\"resumed_from\":\"presumed_dead\""));
+    assert!(booked.contains("\"liveness_age_secs\":4000.0"));
+}
+
+#[test]
+fn a_stopped_tender_resumes_as_stopped_not_dead() {
+    let wmill = Arc::new(FakeWindmill::default());
+    wmill.queue_async(Ok("job-1".to_string()));
+    // the stop flag set: a deliberate exit, not a death (the verdict
+    // numbers are death-shaped — the flag decides)
+    let db = arc_db(move |_db, q| {
+        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![row(&[
+                Some("550e8400-e29b-41d4-a716-446655440000"),
+                Some("t"),
+                Some("2026-10-15 09:00:00+00"),
+                Some(r#"{"systemtender": {"name": "t", "type": "ssh"}, "effectuation": {"targets": [{"target_id": "t1"}]}}"#),
+            ])]));
+        }
+        if q.contains("SELECT shutdown_requested FROM systemtender_state") {
+            return Ok(Some(vec![row(&[Some("t")])]));
+        }
+        if q.contains("FROM systemtender_state") {
+            return Ok(Some(vec![row(&[Some("f"), Some("4000"), Some("60"), None])]));
+        }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db.clone(), wmill, Arc::new(FakeCausal::default()));
+
+    let r = svc.start_systemtender("550e8400-e29b-41d4-a716-446655440000");
+
+    assert_eq!(r["result"], "SUCCESS");
+    assert_eq!(r["data"]["resumed_from"], "stopped", "a deliberate exit is never covered as death");
+    let booked = db
+        .queries()
+        .into_iter()
+        .find(|q| q.trim_start().starts_with("UPDATE systemtender_meta_data"))
+        .expect("the booking flew");
+    assert!(!booked.contains("relaunch_history"), "only deaths make history");
+}
+
+#[test]
+fn the_verdict_stays_loud_while_the_tender_stays_dead() {
+    // one history entry already on the config: a relaunched tender
+    // that died again still reads dead, with its numbers and its
+    // resume count
+    let db = arc_db(|_db, q| {
+        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![row(&[
+                Some("550e8400-e29b-41d4-a716-446655440000"),
+                Some("t"),
+                Some("2026-10-15 09:00:00+00"),
+                Some(r#"{"systemtender": {"name": "t", "type": "ssh"}, "effectuation": {"targets": [{"target_id": "t1"}]}, "relaunch_history": [{"ts": "2026-10-15T12:00:00+00:00", "resumed_from": "presumed_dead", "liveness_age_secs": 4000}]}"#),
+            ])]));
+        }
+        if q.contains("FROM systemtender_state") {
+            return Ok(Some(vec![row(&[Some("f"), Some("4000"), Some("60"), None])]));
+        }
+        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") { return Ok(Some(vec![])); }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+
+    let got = svc.get_systemtender("550e8400-e29b-41d4-a716-446655440000");
+
+    assert_eq!(got["data"]["status"], "presumed_dead");
+    assert_eq!(got["data"]["liveness"]["age_secs"], json!(4000.0), "the verdict carries its numbers");
+    assert_eq!(got["data"]["relaunches"], json!(1), "the resume count rides every read");
+    assert_eq!(got["data"]["last_relaunch"]["resumed_from"], "presumed_dead");
+}
