@@ -325,13 +325,30 @@ impl ArchiveDatabaseRepository {
     /// "not found in Raft group").
     pub fn read_state_verdict(&self, systemtender_db_name: &str) -> DbResult<Option<Value>> {
         let db_config = self.base_config.with_database(systemtender_db_name);
-        let rows = match self.db.execute_query(
+        // The instruments column is rollout-order guarded, message-matched
+        // (the worker's own beat-guard pattern): a state row born before
+        // the column - fresh tender, worker has not stamped yet - reads
+        // the three verdict columns alone, instruments None.
+        let attempted = match self.db.execute_query(
             &db_config,
             "SELECT finished_at IS NOT NULL, \
              EXTRACT(EPOCH FROM (now() - updated_at)), \
-             beat_interval_secs FROM systemtender_state LIMIT 1",
+             beat_interval_secs, instruments \
+             FROM systemtender_state LIMIT 1",
             true,
         ) {
+            Err(e) if e.0.contains("instruments") && e.0.contains("does not exist") => {
+                self.db.execute_query(
+                    &db_config,
+                    "SELECT finished_at IS NOT NULL, \
+                     EXTRACT(EPOCH FROM (now() - updated_at)), \
+                     beat_interval_secs FROM systemtender_state LIMIT 1",
+                    true,
+                )
+            }
+            other => other,
+        };
+        let rows = match attempted {
             Ok(r) => r,
             Err(e) => {
                 let error_text = e.0.clone();
@@ -364,6 +381,16 @@ impl ArchiveDatabaseRepository {
                             None => Value::Null,
                         },
                     );
+                    // The worker's JSON stamp, parsed leniently - a torn
+                    // payload reads as absent, never as a failed read.
+                    let mut instruments = Value::Null;
+                    if let Some(Some(cell)) = row.get(3) {
+                        if !cell.is_empty() {
+                            instruments =
+                                serde_json::from_str::<Value>(cell).unwrap_or(Value::Null);
+                        }
+                    }
+                    m.insert("instruments".to_string(), instruments);
                     return Ok(Some(Value::Object(m)));
                 }
             }
