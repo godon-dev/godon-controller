@@ -225,3 +225,10 @@ pub fn cfg_with_db(name: &str) -> DbConfig {
     c.database = Some(name.to_string());
     c
 }
+
+/// The suite's constructors want the fake as a shared handle.
+pub fn arc_db(
+    f: impl Fn(&str, &str) -> DbResult<Option<Vec<TextRow>>> + Send + Sync + 'static,
+) -> std::sync::Arc<FakeDb> {
+    std::sync::Arc::new(FakeDb::from_fn(f))
+}
