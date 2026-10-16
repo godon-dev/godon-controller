@@ -2,15 +2,16 @@
 //! controller/systemtender_service.py. Envelope key orders, status
 //! strings, and error texts are the parity surface.
 //!
-//! The CREATE EXECUTOR is not here: it stays a python leaf on the
-//! script layer (python code windmill runs until cutover; its healed
-//! #402 contract is untouched). create dispatches it by path, exactly
-//! as python did.
+//! The CREATE EXECUTOR is ported (10-17 — its python-leaf reason
+//! died with optuna: nothing in the estate creates the optuna
+//! tables). It runs as its own windmill job; create dispatches it
+//! by path, exactly as python did.
 //!
-//! The trial-compatibility read goes straight at the optuna tables
-//! the executor creates (studies/trials/trial_params/trial_values) -
-//! python went through optuna's ORM; the statements here carry the
-//! same meaning. The executor leaf owns that schema.
+//! The trial-compatibility read is python's live one: the last
+//! COMPLETE row of the worker's `trials` ledger (attrs + value).
+//! GROUND (10-17, pattern counts over controller and robots main):
+//! studies/trial_params/trial_values are created by NOTHING — the
+//! old optuna schema survives only in clear_trial_data's DROP list.
 
 use crate::config::validate_minimal;
 use crate::database::{
@@ -612,6 +613,314 @@ impl SystemtenderService {
         Ok(())
     }
 
+    /// The async executor behind create's 202 (designs/2026-10-10):
+    /// runs as its own windmill job, no caller waiting. Reads the row
+    /// the fast path planted in `creating` and does the heavy half -
+    /// preflight, archive DB + state table, worker launches. Success
+    /// drops the lifecycle marker (the row reads active from its own
+    /// state table); any failure flags `create-failed` + reason on
+    /// the KEPT row, cancels launched workers, and drops the
+    /// half-made archive DB - a failed create holds nothing but its
+    /// row.
+    pub fn create_systemtender_executor(&self, systemtender_id: &str) -> Value {
+        let systemtender_db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
+        let mut launched_job_ids: Vec<String> = Vec::new();
+
+        let outcome = (|| -> Result<Value, String> {
+            self.metadata_repo.create_table().map_err(|e| e.0)?;
+            let rows = self
+                .metadata_repo
+                .fetch_meta_data(systemtender_id)
+                .map_err(|e| e.0)?;
+            if rows.is_empty() {
+                return Ok(json!({
+                    "result": "FAILURE",
+                    "error": "Systemtender not found"
+                }));
+            }
+            let row = &rows[0];
+            let systemtender_instance_name = row[1].clone().unwrap_or_default();
+            // python read creation_ts.isoformat() off the parsed cell;
+            // a NULL cell crashed into the outer except there - here
+            // it takes the same Err arm with a plainer word.
+            let creation_ts = row[2]
+                .as_deref()
+                .and_then(pg_ts_to_iso)
+                .ok_or_else(|| "creation_ts cell missing or unreadable".to_string())?;
+            let systemtender_config: Value = row[3]
+                .as_deref()
+                .and_then(|t| serde_json::from_str(t).ok())
+                .unwrap_or_else(|| json!({}));
+            let systemtender_type = systemtender_config
+                .get("systemtender")
+                .and_then(|s| s.get("type"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("unknown_systemtender");
+            let parallel_runs = systemtender_config
+                .get("run")
+                .and_then(|r| r.get("parallel"))
+                .and_then(|p| p.as_i64())
+                .unwrap_or(1);
+            let targets: Vec<Value> = systemtender_config
+                .get("effectuation")
+                .and_then(|e| e.get("targets"))
+                .and_then(|t| t.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let targets_count = targets.len();
+            let is_cooperative = systemtender_config
+                .get("cooperation")
+                .and_then(|c| c.get("active"))
+                == Some(&Value::Bool(true));
+
+            // Semantic validation the controller can't do; runs a
+            // strain script. A missing/failing script is a warning,
+            // not a stop (strains without preflight still launch).
+            info!("Running preflight check for systemtender type: {}", systemtender_type);
+            let preflight_script_path =
+                format!("f/systemtender/strains/{}/preflight", systemtender_type);
+            match self
+                .wmill
+                .run_script_by_path(&preflight_script_path, &json!({ "config": systemtender_config }))
+            {
+                Ok(preflight_result) if preflight_result.is_object() => {
+                    if preflight_result.get("result") != Some(&Value::String("SUCCESS".to_string())) {
+                        // python: .get('error', default), rendered into
+                        // the f-string - null renders "None", a string
+                        // renders itself
+                        let error_msg = match preflight_result.get("error") {
+                            Some(Value::String(s)) => s.clone(),
+                            Some(Value::Null) => "None".to_string(),
+                            Some(other) => other.to_string(),
+                            None => "Unknown preflight error".to_string(),
+                        };
+                        error!("Preflight validation failed: {}", error_msg);
+                        return Ok(self.create_executor_fail(
+                            systemtender_id,
+                            &format!("Preflight validation failed: {}", error_msg),
+                            &launched_job_ids,
+                            &systemtender_db_name,
+                        ));
+                    }
+                    info!("Preflight validation passed");
+                }
+                // a non-object answer is python's AttributeError into
+                // the same warn-and-continue arm
+                Ok(_) => warn!(
+                    "Preflight check failed or not found: script returned a non-object. Continuing with worker launch."
+                ),
+                Err(e) => warn!(
+                    "Preflight check failed or not found: {}. Continuing with worker launch.", e
+                ),
+            }
+
+            self.archive_repo
+                .create_database(&systemtender_db_name)
+                .map_err(|e| e.0)?;
+            self.archive_repo
+                .create_systemtender_state_table(&systemtender_db_name)
+                .map_err(|e| e.0)?;
+            self.await_state_table(&systemtender_db_name)?;
+
+            let mut worker_launch_failures: Vec<Value> = Vec::new();
+            let mut worker_job_ids: Vec<String> = Vec::new();
+            for (target_count, _target) in targets.iter().enumerate() {
+                // python computed an unused sha256 address suffix
+                // here (dead since its write; no reader) - not ported
+                for run_id in 0..parallel_runs {
+                    let mut flow_config = systemtender_config.clone();
+                    if let Some(o) = flow_config.as_object_mut() {
+                        o.insert("creation_ts".to_string(), json!(creation_ts));
+                    }
+                    let flow_id = format!("{}_{}_{}", systemtender_instance_name, target_count, run_id);
+                    if !is_cooperative {
+                        determine_config_shard(
+                            run_id,
+                            target_count,
+                            targets_count,
+                            &mut flow_config,
+                            parallel_runs,
+                        );
+                    }
+                    match start_optimization_flow(
+                        self.wmill.as_ref(),
+                        &flow_id,
+                        &flow_config,
+                        run_id,
+                        target_count,
+                        systemtender_id,
+                    ) {
+                        Ok((_, job_id)) => {
+                            worker_job_ids.push(job_id.clone());
+                            launched_job_ids.push(job_id);
+                        }
+                        Err(e) => {
+                            worker_launch_failures.push(json!({
+                                "flow_id": flow_id,
+                                "target": target_count,
+                                "run": run_id,
+                                "error": e,
+                            }));
+                            error!("Failed to launch worker {}: {}", flow_id, e);
+                        }
+                    }
+                }
+            }
+
+            if !worker_job_ids.is_empty() {
+                let mut stored = systemtender_config.clone();
+                if let Some(o) = stored.as_object_mut() {
+                    o.insert("worker_job_ids".to_string(), json!(worker_job_ids));
+                }
+                self.metadata_repo
+                    .update_systemtender_meta(systemtender_id, &stored)
+                    .map_err(|e| e.0)?;
+                info!(
+                    "Stored {} worker job IDs for systemtender {}",
+                    worker_job_ids.len(),
+                    systemtender_id
+                );
+            }
+
+            if !worker_launch_failures.is_empty() {
+                let first_error = worker_launch_failures[0]
+                    .get("error")
+                    .and_then(|e| e.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                return Ok(self.create_executor_fail(
+                    systemtender_id,
+                    &format!(
+                        "Failed to launch {} worker(s): {}",
+                        worker_launch_failures.len(),
+                        first_error
+                    ),
+                    &launched_job_ids,
+                    &systemtender_db_name,
+                ));
+            }
+
+            // Live: the marker drops, the row stands on its own state
+            // table (active until the first heartbeat refines it).
+            self.metadata_repo
+                .remove_lifecycle(systemtender_id)
+                .map_err(|e| e.0)?;
+
+            info!("Successfully created systemtender: {}", systemtender_id);
+            Ok(json!({
+                "result": "SUCCESS",
+                "data": {
+                    "id": systemtender_id,
+                    "name": systemtender_instance_name,
+                    "status": "active",
+                    "createdAt": creation_ts,
+                }
+            }))
+        })();
+
+        match outcome {
+            Ok(v) => v,
+            Err(e) => self.create_executor_fail(
+                systemtender_id,
+                &format!("create executor error: {}", e),
+                &launched_job_ids,
+                &systemtender_db_name,
+            ),
+        }
+    }
+
+    /// python's `_fail`: flag create-failed and stop. The row stays as
+    /// the receipt (GET answers state + reason); launched workers
+    /// die, the half-made archive DB goes. (python's set_lifecycle
+    /// raised onward if the meta DB was down - unwritable is
+    /// unwritable; the envelope still answers here.)
+    fn create_executor_fail(
+        &self,
+        systemtender_id: &str,
+        reason: &str,
+        launched_job_ids: &[String],
+        systemtender_db_name: &str,
+    ) -> Value {
+        error!(
+            "Create executor failed for systemtender {}: {}",
+            systemtender_id, reason
+        );
+        for job_id in launched_job_ids {
+            if !cancel_job_by_id(
+                self.wmill.as_ref(),
+                job_id,
+                Some(&format!("Create failed for systemtender {}", systemtender_id)),
+            ) {
+                error!(
+                    "Failed to cancel launched worker {}; cancel it manually before retrying",
+                    job_id
+                );
+            }
+        }
+        if let Err(drop_error) = self.archive_repo.drop_database(systemtender_db_name) {
+            error!(
+                "Failed to drop half-made archive database {}: {}",
+                systemtender_db_name, drop_error.0
+            );
+        }
+        if let Err(e) =
+            self.metadata_repo
+                .set_lifecycle(systemtender_id, "create-failed", Some(reason))
+        {
+            error!(
+                "Failed to flag create-failed for systemtender {}: {}",
+                systemtender_id, e.0
+            );
+        }
+        json!({
+            "result": "FAILURE",
+            "error": reason,
+            "data": {
+                "id": systemtender_id,
+                "status": "create-failed",
+            }
+        })
+    }
+
+    /// Wait for the systemtender_state build to commit before workers
+    /// boot against it (YugabyteDB serialization guard,
+    /// designs/2026-10-10 - the wait lives where no caller holds a
+    /// connection). python's trailing "did not become ready" raise
+    /// was dead code (the in-loop raise at the last attempt always
+    /// fired first); the port surfaces the original error the same
+    /// way python's bare `raise` did.
+    fn await_state_table(&self, systemtender_db_name: &str) -> Result<(), String> {
+        let max_wait = 10; // seconds
+        let check_interval = std::time::Duration::from_millis(500);
+        let attempts = (max_wait * 1000 / check_interval.as_millis() as i64) as i32;
+        for attempt in 0..attempts {
+            match self
+                .archive_repo
+                .raw_query(systemtender_db_name, "SELECT COUNT(*) FROM systemtender_state;")
+            {
+                Ok(_) => {
+                    info!("Systemtender state table is ready in {}", systemtender_db_name);
+                    return Ok(());
+                }
+                Err(e) => {
+                    if attempt < attempts - 1 {
+                        sleep(check_interval);
+                    } else {
+                        error!(
+                            "Systemtender state table still not ready after {}s: {}",
+                            max_wait, e.0
+                        );
+                        return Err(e.0);
+                    }
+                }
+            }
+        }
+        Err(format!(
+            "Systemtender state table did not become ready within {}s",
+            max_wait
+        ))
+    }
+
     pub fn get_systemtender(&self, systemtender_id: &str) -> Value {
         let outcome = (|| -> Result<Value, String> {
             self.metadata_repo.create_table().map_err(|e| e.0)?;
@@ -1172,9 +1481,17 @@ impl SystemtenderService {
         new_param_count
     }
 
-    /// The optuna tables read directly (the executor leaf owns their
-    /// schema; python read them through optuna's ORM).
-    fn check_trial_compatibility(&self, systemtender_id: &str, new_config: &Value, force: bool) -> (bool, String) {
+    /// The update verb's trial check, reading python's live surface:
+    /// the last COMPLETE row of the worker's `trials` ledger (attrs +
+    /// value). GROUND (10-17): nothing in the estate creates the
+    /// optuna tables (studies/trial_params/trial_values) - the prior
+    /// rust read queried that dead schema; this is the real one.
+    pub fn check_trial_compatibility(
+        &self,
+        systemtender_id: &str,
+        new_config: &Value,
+        force: bool,
+    ) -> (bool, String) {
         if force {
             return (true, "Force mode: skipping compatibility check".to_string());
         }
@@ -1185,43 +1502,27 @@ impl SystemtenderService {
             let repo = ArchiveDatabaseRepository::with_gateway(cfg, self.archive_repo_gateway());
             repo.raw_query(&db_name, sql).map_err(|e| e.0)
         };
-        let _ = run;
 
         match (|| -> Result<(bool, String), String> {
-            let studies = run("SELECT COUNT(*) FROM studies;")?;
-            let count: i64 = studies
-                .and_then(|r| r.first().cloned())
-                .and_then(|row| row[0].clone())
-                .and_then(|t| t.parse().ok())
-                .unwrap_or(0);
-            if count == 0 {
-                return Ok((true, "No existing trial data found".to_string()));
-            }
-            let last = run(
-                "SELECT trial_id FROM trials WHERE state = 'COMPLETE' ORDER BY trial_id DESC LIMIT 1;",
+            let rows = run(
+                "SELECT attrs, value FROM trials WHERE state = 'COMPLETE' ORDER BY number DESC LIMIT 1",
             )?;
-            let Some(last) = last else {
-                return Ok((true, "No completed trials".to_string()));
+            let Some(top) = rows.and_then(|r| r.into_iter().next()) else {
+                return Ok((true, "No existing trial data found".to_string()));
             };
-            let trial_id = last[0][0].clone().unwrap_or_default();
-            let params = run(&format!(
-                "SELECT COUNT(*) FROM trial_params WHERE trial_id = '{}';",
-                trial_id
-            ))?;
-            let old_param_count: i64 = params
-                .and_then(|r| r.first().cloned())
-                .and_then(|row| row[0].clone())
-                .and_then(|t| t.parse().ok())
-                .unwrap_or(0);
-            let values = run(&format!(
-                "SELECT COUNT(*) FROM trial_values WHERE trial_id = '{}';",
-                trial_id
-            ))?;
-            let old_obj_count: i64 = values
-                .and_then(|r| r.first().cloned())
-                .and_then(|row| row[0].clone())
-                .and_then(|t| t.parse().ok())
-                .unwrap_or(0);
+            // psycopg2 parsed the jsonb attrs cell; here it is text.
+            // python's `attrs or {}` and the str-stash json.loads both
+            // land as: object -> count, anything else -> 0.
+            let attrs: Value = top[0]
+                .as_deref()
+                .and_then(|t| serde_json::from_str(t).ok())
+                .unwrap_or(Value::Null);
+            let mut stashed = attrs.get("effectuation_params").cloned().unwrap_or(Value::Null);
+            if let Some(s) = stashed.as_str() {
+                stashed = serde_json::from_str(s).unwrap_or(Value::Null);
+            }
+            let old_param_count = stashed.as_object().map(|o| o.len() as i64).unwrap_or(0);
+            let old_obj_count = if top[1].is_some() { 1 } else { 0 };
 
             let new_param_count = self.count_config_params(new_config);
             let new_obj_count = new_config
@@ -1253,11 +1554,20 @@ impl SystemtenderService {
                     ),
                 ));
             }
-            Ok((true, format!("Compatible: {} params, {} objectives", old_param_count, old_obj_count)))
+            Ok((
+                true,
+                format!(
+                    "Compatible: {} params, {} objectives",
+                    old_param_count, old_obj_count
+                ),
+            ))
         })() {
             Ok(v) => v,
             Err(e) => {
-                warn!("Could not check trial compatibility: {}", e);
+                warn!(
+                    "Trial compatibility check failed for {}: {}",
+                    systemtender_id, e
+                );
                 (true, format!("Compatibility check skipped: {}", e))
             }
         }

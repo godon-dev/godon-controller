@@ -771,7 +771,239 @@ fn get_survives_the_table_build_window() {
     assert!(repo.read_state_verdict("systemtender_x").is_err());
 }
 
-// SKIPPED, named: the create-executor tests (python leaf by ruling).
+// ── the create executor (TestAsyncCreate's executor half) ────────
+// The last python body, ported: the heavy half of create's 202 with
+// no caller - preflight, archive DB + state table, worker launches,
+// the marker drop. python's tests patched _await_state_table out;
+// the fake answers the state-table read (ready at once, no sleeps).
+
+const EXECUTOR_ROW_ID: &str = "550e8400-e29b-41d4-a716-446655440001";
+
+fn executor_db() -> Arc<FakeDb> {
+    let definition = serde_json::to_string(&json!({
+        "systemtender": {"type": "linux_performance"},
+        "run": {"parallel": 1},
+        "effectuation": {"targets": [{"id": "t1", "type": "ssh_host", "address": "host-a"}]},
+        "cooperation": {"active": true},
+    }))
+    .unwrap();
+    arc_db(move |_db, q| {
+        // the state-table build (its own multi-statement string, with
+        // the seed INSERT) - before any generic CREATE catcher
+        if q.contains("CREATE TABLE IF NOT EXISTS systemtender_state") {
+            return Ok(None);
+        }
+        // the await read: the table answers ready at once
+        if q.contains("SELECT COUNT(*) FROM systemtender_state") {
+            return Ok(Some(vec![]));
+        }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![row(&[
+                Some(EXECUTOR_ROW_ID),
+                Some("bench-tender"),
+                Some("2026-10-10 09:00:00+00"),
+                Some(&definition),
+            ])]));
+        }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
+        if q.trim_start().starts_with("UPDATE systemtender_meta_data") {
+            return Ok(None);
+        }
+        if q.contains("INSERT INTO systemtender_lifecycle") {
+            return Ok(None);
+        }
+        if q.contains("DELETE FROM systemtender_lifecycle") {
+            return Ok(None);
+        }
+        Ok(None)
+    })
+}
+
+#[test]
+fn executor_flips_the_row_live() {
+    let wmill = Arc::new(FakeWindmill::default());
+    wmill.queue_sync(json!({"result": "SUCCESS"})); // the preflight
+    wmill.queue_async(Ok("job-1".to_string())); // the worker launch
+    let db = executor_db();
+    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+
+    let r = svc.create_systemtender_executor(EXECUTOR_ROW_ID);
+
+    assert_eq!(r["result"], "SUCCESS");
+    assert_eq!(r["data"]["status"], "active");
+    assert_eq!(r["data"]["id"], json!(EXECUTOR_ROW_ID));
+    // the DB ts renders as python's aware isoformat (createdAt and
+    // the worker's creation_ts arg are the same string)
+    assert_eq!(r["data"]["createdAt"], "2026-10-10T09:00:00+00:00");
+    // heavy half ran: db + state table + the preflight + one worker
+    assert_eq!(db.queries().iter().filter(|q| q.contains("CREATE DATABASE")).count(), 1);
+    assert_eq!(
+        db.queries()
+            .iter()
+            .filter(|q| q.contains("CREATE TABLE IF NOT EXISTS systemtender_state"))
+            .count(),
+        1
+    );
+    assert_eq!(wmill.sync_ran.lock().unwrap().len(), 1);
+    assert_eq!(
+        wmill.sync_ran.lock().unwrap()[0].0,
+        "f/systemtender/strains/linux_performance/preflight"
+    );
+    assert_eq!(wmill.dispatched.lock().unwrap().len(), 1);
+    {
+        let d = wmill.dispatched.lock().unwrap();
+        assert_eq!(d[0].0, "f/systemtender/engine/systemtender_worker");
+        assert_eq!(d[0].2.as_deref(), Some("systemtender"));
+        assert_eq!(d[0].1["config"]["creation_ts"], "2026-10-10T09:00:00+00:00");
+    }
+    // job ids persisted for the delete path
+    let booked = db
+        .queries()
+        .into_iter()
+        .find(|q| q.trim_start().starts_with("UPDATE systemtender_meta_data"))
+        .expect("the booking flew");
+assert!(booked.contains("\"worker_job_ids\":[\"job-1\"]"));
+    // the stored definition keeps python's shape: creation_ts rode
+    // the per-worker configs only, never the stored row
+    assert!(!booked.contains("creation_ts"));
+    // live: the marker drops, no failure lifecycle written
+    assert_eq!(
+        db.queries()
+            .iter()
+            .filter(|q| q.contains("DELETE FROM systemtender_lifecycle"))
+            .count(),
+        1
+    );
+    assert!(!db.queries().iter().any(|q| q.contains("INSERT INTO systemtender_lifecycle")));
+}
+
+#[test]
+fn executor_failure_flags_create_failed_and_keeps_the_row() {
+    let wmill = Arc::new(FakeWindmill::default());
+    wmill.queue_sync(json!({"result": "SUCCESS"}));
+    wmill.queue_async(Err("worker refused".to_string()));
+    let db = executor_db();
+    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+
+    let r = svc.create_systemtender_executor(EXECUTOR_ROW_ID);
+
+    assert_eq!(r["result"], "FAILURE");
+    assert_eq!(r["data"]["status"], "create-failed");
+    assert!(r["error"].as_str().unwrap().contains("worker refused"));
+    // the row is the receipt: create-failed + the reason, on the row
+    let flagged = db
+        .queries()
+        .into_iter()
+        .find(|q| q.contains("INSERT INTO systemtender_lifecycle"))
+        .expect("the row is flagged");
+    assert!(flagged.contains(EXECUTOR_ROW_ID));
+    assert!(flagged.contains("'create-failed'"));
+    assert!(flagged.contains("worker refused"));
+    // half-made archive db gone, row stays
+    assert_eq!(db.queries().iter().filter(|q| q.contains("DROP DATABASE IF EXISTS")).count(), 1);
+    assert!(!db.queries().iter().any(|q| q.contains("DELETE FROM systemtender_meta_data")));
+    assert!(!db.queries().iter().any(|q| q.contains("DELETE FROM systemtender_lifecycle")));
+    // nothing launched, nothing to cancel
+    assert!(wmill.cancelled.lock().unwrap().is_empty());
+}
+
+#[test]
+fn executor_missing_row() {
+    // row vanished before the executor ran (deleted mid-create):
+    // honest FAILURE, no lifecycle written
+    let db = arc_db(|_db, q| {
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![]));
+        }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let r = svc.create_systemtender_executor(EXECUTOR_ROW_ID);
+    assert_eq!(r["result"], "FAILURE");
+    assert_eq!(r["error"], "Systemtender not found");
+    assert!(!db.queries().iter().any(|q| q.contains("INSERT INTO systemtender_lifecycle")));
+}
+
+#[test]
+fn executor_script_passthrough() {
+    // the wrapper's glue, pinned: a missing id answers before any
+    // service exists; a present id is the whole call into
+    // create_systemtender_executor (the success half rides the
+    // service-level tests above - env-only services take no fakes)
+    let r = dispatch("systemtender_create_executor", &json!({}));
+    assert_eq!(r["result"], "FAILURE");
+    assert_eq!(r["error"], "Missing systemtender_id");
+    let r2 = dispatch("systemtender_create_executor", &json!({"systemtender_id": ""}));
+    assert_eq!(r2["result"], "FAILURE");
+    assert_eq!(r2["error"], "Missing systemtender_id");
+}
+
+#[test]
+fn trial_check_reads_the_ledgers_trials_not_optuna() {
+    // GROUND (10-17): the old rust read (studies/trial_params/
+    // trial_values) queried tables nothing creates - on a live tender
+    // it always fell to the skip arm. python's live read is the
+    // worker's `trials` ledger row: attrs.effectuation_params +
+    // value. Pinned here so the fantasy path cannot return.
+    let new_config = json!({
+        "settings": {"sysctl": {"a": {"constraints": [{}]}, "b": {"constraints": [{}]}}},
+        "objectives": [{"name": "latency"}],
+    });
+    // a COMPLETE row with 2 stashed params and a value: compatible
+    let db = arc_db(|_db, q| {
+        if q.contains("FROM trials WHERE state = 'COMPLETE'") {
+            return Ok(Some(vec![row(&[
+                Some(r#"{"effectuation_params": {"a": 1, "b": 2}}"#),
+                Some("12.5"),
+            ])]));
+        }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let (ok, detail) = svc.check_trial_compatibility(EXECUTOR_ROW_ID, &new_config, false);
+    assert!(ok);
+    assert_eq!(detail, "Compatible: 2 params, 1 objectives");
+    // the objective count diverges: refused, with python's words
+    let db = arc_db(|_db, q| {
+        if q.contains("FROM trials WHERE state = 'COMPLETE'") {
+            return Ok(Some(vec![row(&[
+                Some(r#"{"effectuation_params": {"a": 1, "b": 2}}"#),
+                Some("12.5"),
+            ])]));
+        }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let (ok, detail) = svc.check_trial_compatibility(EXECUTOR_ROW_ID, &json!({"objectives": []}), false);
+    assert!(!ok);
+    assert_eq!(
+        detail,
+        "Trial data incompatible: Parameter count: existing trials have 2, new config has 0; Objective count: existing trials have 1, new config has 0. Use force=true to clear trial history and start fresh."
+    );
+    // no COMPLETE rows: nothing to hold against
+    let db = arc_db(|_db, q| {
+        if q.contains("FROM trials WHERE state = 'COMPLETE'") {
+            return Ok(Some(vec![]));
+        }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let (ok, detail) = svc.check_trial_compatibility(EXECUTOR_ROW_ID, &new_config, false);
+    assert!(ok);
+    assert_eq!(detail, "No existing trial data found");
+    // the read itself fails (no DB): skipped, never a refusal
+    let db = arc_db(|_db, _q| Err(godon_controller::database::DbError("db does not exist".to_string())));
+    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let (ok, detail) = svc.check_trial_compatibility(EXECUTOR_ROW_ID, &new_config, false);
+    assert!(ok);
+    assert_eq!(detail, "Compatibility check skipped: db does not exist");
+}
+
 
 // ── death relaunch (rung 8, TestDeathRelaunch) ─────────────────────
 // The three formerly-BLOCKED tests: the service now carries the

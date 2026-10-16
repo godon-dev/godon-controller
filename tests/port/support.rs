@@ -135,6 +135,10 @@ impl FakeWindmill {
             .push_back(Ok(v));
         self
     }
+    pub fn queue_sync(&self, v: Value) -> &Self {
+        self.sync_results.lock().unwrap().push_back(Ok(v));
+        self
+    }
     pub fn queue_job(&self, v: Option<Value>) -> &Self {
         self.job_results.lock().unwrap().push_back(Ok(v));
         self

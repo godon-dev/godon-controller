@@ -1,8 +1,8 @@
 //! Verb dispatch - one verb per windmill script path (f/controller/*),
 //! envelopes exactly as the python verbs answered them.
 //!
-//! Landed: the systemtender lifecycle set (minus the create executor,
-//! which stays a python leaf - it owns the optuna schema init) and the
+//! Landed: the full systemtender lifecycle set (the create executor
+//! included - its python-leaf reason died with optuna) and the
 //! steerwish set. Next: credentials and targets.
 
 use crate::database::{DbConfig, MetadataDatabaseRepository};
@@ -19,6 +19,7 @@ pub fn dispatch(verb: &str, args: &Value) -> Value {
     let rd = request_data(args);
     match verb {
         "systemtender_create" => systemtender_create(rd),
+        "systemtender_create_executor" => systemtender_create_executor(rd),
         "systemtender_get" => systemtender_get(rd),
         "systemtender_update" => systemtender_update(rd),
         "systemtender_delete" => systemtender_delete(rd),
@@ -86,6 +87,20 @@ fn systemtender_create(rd: &Value) -> Value {
     }
     let service = SystemtenderService::new();
     service.create_systemtender(config.clone(), name.as_str().unwrap_or(""))
+}
+
+// The create executor's wrapper (python's
+// executors/systemtender_create_executor.py): the async half of
+// create's 202, dispatched as its own job - no caller is waiting on
+// this run. Glue pinned: a missing id answers before any service
+// exists; a present id is the whole call.
+fn systemtender_create_executor(rd: &Value) -> Value {
+    let id = rd.get("systemtender_id").and_then(|v| v.as_str());
+    let Some(systemtender_id) = id.filter(|s| !s.is_empty()) else {
+        return json!({"result": "FAILURE", "error": "Missing systemtender_id"});
+    };
+    let service = SystemtenderService::new();
+    service.create_systemtender_executor(systemtender_id)
 }
 
 fn systemtender_get(rd: &Value) -> Value {
