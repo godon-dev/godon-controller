@@ -301,6 +301,47 @@ impl WishService {
                 None => return Ok(None),
             };
         }
+
+        // The seek's return mirror: the worker banks its RETURN in the
+        // serving tender's own ledger (seek_return::<wish_id>); whoever
+        // reads the wish pulls it into the event trail ONCE - the same
+        // lazy-mirror discipline the book fold-in uses. A dead tender
+        // reads as no return, never an error.
+        if row.len() > 10 && row[10].as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+            if let Some(archive) = &self.archive_repo {
+                let events_so_far = self.repo.fetch_wish_events(wish_id).map_err(|e| e.0)?;
+                let has_returned = events_so_far
+                    .iter()
+                    .any(|e| e[0].as_deref() == Some("returned"));
+                if !has_returned {
+                    for e in &events_so_far {
+                        if e[0].as_deref() != Some("assigned") {
+                            continue;
+                        }
+                        let detail = e.get(2).and_then(|c| c.as_deref()).unwrap_or("");
+                        let d: Value = serde_json::from_str(detail).unwrap_or(Value::Null);
+                        let db_name = d
+                            .get("db")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let Some(db_name) = db_name else {
+                            continue;
+                        };
+                        if let Some(payload) = archive.read_seek_return(&db_name, wish_id) {
+                            self.repo
+                                .insert_wish_event(wish_id, "returned", Some(&payload))
+                                .map_err(|e| e.0)?;
+                            row = match self.repo.fetch_wish_by_id(wish_id).map_err(|e| e.0)? {
+                                Some(r) => r,
+                                None => return Ok(None),
+                            };
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         let events = self.repo.fetch_wish_events(wish_id).map_err(|e| e.0)?;
         let mut wish = self.format_wish(&row, &events);
 

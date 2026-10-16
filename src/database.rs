@@ -323,28 +323,50 @@ impl ArchiveDatabaseRepository {
     /// when the table cannot be read - both live wordings for "the
     /// table is not there" (pgsql's "does not exist" and YB's
     /// "not found in Raft group").
+    ///
+    /// The instruments column is rollout-order guarded, message-matched
+    /// (the worker's own beat-guard pattern): a state row born before
+    /// the column - fresh tender, worker has not stamped yet - reads
+    /// the three verdict columns alone, instruments None.
     pub fn read_state_verdict(&self, systemtender_db_name: &str) -> DbResult<Option<Value>> {
         let db_config = self.base_config.with_database(systemtender_db_name);
-        let rows = match self.db.execute_query(
-            &db_config,
-            "SELECT finished_at IS NOT NULL, \
-             EXTRACT(EPOCH FROM (now() - updated_at)), \
-             beat_interval_secs FROM systemtender_state LIMIT 1",
-            true,
-        ) {
-            Ok(r) => r,
-            Err(e) => {
-                let error_text = e.0.clone();
-                if error_text.contains("does not exist")
-                    || error_text.to_lowercase().contains("not found in raft group")
-                {
-                    // Nothing readable, no verdict. The lifecycle row
-                    // speaks.
-                    return Ok(None);
+        let rows = (|| -> DbResult<Option<Vec<TextRow>>> {
+            let rows = match self.db.execute_query(
+                &db_config,
+                "SELECT finished_at IS NOT NULL, \
+                 EXTRACT(EPOCH FROM (now() - updated_at)), \
+                 beat_interval_secs, instruments \
+                 FROM systemtender_state LIMIT 1",
+                true,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    if !(e.0.contains("instruments") && e.0.contains("does not exist")) {
+                        return Err(e);
+                    }
+                    self.db.execute_query(
+                        &db_config,
+                        "SELECT finished_at IS NOT NULL, \
+                         EXTRACT(EPOCH FROM (now() - updated_at)), \
+                         beat_interval_secs FROM systemtender_state LIMIT 1",
+                        true,
+                    )?
                 }
-                return Err(e);
+            };
+            Ok(rows)
+        })()
+        .or_else(|e| {
+            let error_text = e.0.clone();
+            if error_text.contains("does not exist")
+                || error_text.to_lowercase().contains("not found in raft group")
+            {
+                // Nothing readable, no verdict. The lifecycle row
+                // speaks.
+                Ok(None)
+            } else {
+                Err(e)
             }
-        };
+        })?;
         if let Some(rows) = rows {
             if let Some(row) = rows.first() {
                 if let Some(finished) = cell_bool(&row[0]) {
@@ -364,6 +386,16 @@ impl ArchiveDatabaseRepository {
                             None => Value::Null,
                         },
                     );
+                    // the worker's JSON stamp, parsed leniently - a
+                    // torn payload reads as absent, never as a failed
+                    // read
+                    let mut instruments = Value::Null;
+                    if let Some(stamp) = row.get(3).and_then(|c| c.as_deref()) {
+                        if let Ok(v) = serde_json::from_str::<Value>(stamp) {
+                            instruments = v;
+                        }
+                    }
+                    m.insert("instruments".to_string(), instruments);
                     return Ok(Some(Value::Object(m)));
                 }
             }
@@ -419,6 +451,30 @@ impl ArchiveDatabaseRepository {
             systemtender_db_name, wish_id
         );
         Ok(())
+    }
+
+    /// The seek's RETURN from the serving tender's own ledger.
+    ///
+    /// The worker writes seek_return::<wish_id> into its ledger_state
+    /// when the seek completes (robots #241); this read surfaces it to
+    /// the wish's event trail. Returns the stored JSON string or None
+    /// - an absent db or table (the tender gone, the ledger never
+    /// created) reads as no return, never an error: the mirror must
+    /// not break a wish read because its tender died.
+    pub fn read_seek_return(&self, systemtender_db_name: &str, wish_id: &str) -> Option<String> {
+        let db_config = self.base_config.with_database(systemtender_db_name);
+        let wish_id_sql = wish_id.replace('\'', "''");
+        let query = format!(
+            "SELECT value_json FROM ledger_state WHERE key = 'seek_return::{}';",
+            wish_id_sql
+        );
+        let rows = self
+            .db
+            .execute_query(&db_config, &query, true)
+            .ok()
+            .flatten()?;
+        let row = rows.first()?;
+        row[0].clone()
     }
 
     /// Check if shutdown has been requested for a systemtender.

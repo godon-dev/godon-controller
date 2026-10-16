@@ -277,7 +277,7 @@ impl SystemtenderService {
         }
     }
 
-    fn assign_watermark_slot(&self, systemtender_config: &mut Value) {
+    pub fn assign_watermark_slot(&self, systemtender_config: &mut Value) {
         let max_slots = 6;
         let mut used_slots: Vec<i64> = Vec::new();
 
@@ -626,7 +626,11 @@ impl SystemtenderService {
             let db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
             let mut status = "active".to_string();
             let mut liveness: Value = Value::Null;
-            if let Ok(Some(state)) = self.archive_repo.read_state_verdict(&db_name) {
+            let state = self
+                .archive_repo
+                .read_state_verdict(&db_name)
+                .map_err(|e| e.0)?;
+            if let Some(state) = &state {
                 let interval = state
                     .get("interval_secs")
                     .and_then(|v| v.as_f64())
@@ -648,6 +652,15 @@ impl SystemtenderService {
                     "stale_threshold_secs": threshold,
                 });
             }
+
+            // The worker's instruments (rung-7 field-sets), stamped in
+            // its own state row - passed through verbatim; absent until
+            // the worker has stamped once.
+            let instruments = state
+                .as_ref()
+                .and_then(|s| s.get("instruments"))
+                .cloned()
+                .unwrap_or(Value::Null);
 
             let lifecycle = self.metadata_repo.get_lifecycle(systemtender_id).ok().flatten();
             let mut deletion_reason: Value = Value::Null;
@@ -679,6 +692,7 @@ impl SystemtenderService {
                     "deletion_reason": deletion_reason,
                     "creation_reason": creation_reason,
                     "liveness": liveness,
+                    "instruments": instruments,
                     "createdAt": row.get(2).and_then(|c| c.as_ref()).and_then(|t| pg_ts_to_iso(t)),
                     "config": config,
                 }
