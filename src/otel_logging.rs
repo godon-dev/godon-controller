@@ -5,14 +5,18 @@
 //! observability collector; the `log` macros the verbs already speak
 //! (python's exact instrumented points) ride the bridge. Endpoint and
 //! service name come from the same two env vars python read, with the
-//! same defaults. Like python's BatchLogProcessor, export failures
-//! drop in the background - the door never waits on telemetry.
+//! same defaults; the signal path (/v1/logs) is appended by the
+//! exporter, as python's exporter did with its explicit endpoint.
+//! Like python's BatchLogProcessor, export failures drop in the
+//! background - the door never waits on telemetry.
 
-use opentelemetry::logs::SdkLoggerProvider;
 use opentelemetry::KeyValue;
-use opentelemetry::Resource;
-use opentelemetry_appender_log::OpentelemetryLogBridge;
+use opentelemetry::logs::LoggerProvider as _;
+use opentelemetry_appender_log::OpenTelemetryLogBridge;
 use opentelemetry_otlp::LogExporter;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::logs::SdkLoggerProvider;
+use opentelemetry_sdk::Resource;
 
 pub fn init_telemetry() {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap_or_else(|_| {
@@ -23,7 +27,8 @@ pub fn init_telemetry() {
         std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "godon-controller".to_string());
 
     let exporter = LogExporter::builder()
-        .with_http_endpoint(format!("{}/v1/logs", endpoint))
+        .with_http()
+        .with_endpoint(endpoint)
         .build()
         .expect("build the OTLP log exporter");
 
@@ -38,7 +43,7 @@ pub fn init_telemetry() {
 
     // python's get_logger attached the OTLP handler and set DEBUG;
     // the bridge makes every log:: macro in the crate flow to it
-    let bridge = OpentelemetryLogBridge::new(provider);
+    let bridge = OpenTelemetryLogBridge::new(&provider);
     log::set_boxed_logger(Box::new(bridge)).expect("install the otel log bridge");
     log::set_max_level(log::LevelFilter::Debug);
 }
