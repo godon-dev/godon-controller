@@ -12,7 +12,7 @@ use chrono::Local;
 pub fn now_iso_naive() -> String {
     let dt = Local::now().naive_local();
     let base = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let micros = (dt.nanos() / 1000) % 1_000_000;
+    let micros = (dt.nanosecond() / 1000) % 1_000_000;
     if micros != 0 {
         format!("{}.{:06}", base, micros)
     } else {

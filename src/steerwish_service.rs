@@ -4,8 +4,7 @@
 //! this service asks, never computes. State is the latest lifecycle
 //! event, derived on read, never stored.
 
-use crate::config::DbConfig;
-use crate::database::{ArchiveDatabaseRepository, DbGateway, MetadataDatabaseRepository, TextRow};
+use crate::database::{ArchiveDatabaseRepository, DbConfig, DbGateway, MetadataDatabaseRepository, TextRow};
 use crate::timefmt::pg_ts_to_iso;
 use crate::wmill::CausalClient;
 use log::{debug, info, warn};
@@ -868,7 +867,7 @@ impl SteerwishService {
                 json!({
                     "type": e[0].clone().unwrap_or_default(),
                     "at": e.get(1).and_then(|c| c.as_ref()).and_then(|t| pg_ts_to_iso(t)),
-                    "detail": e[2].clone().unwrap_or(Value::Null.to_string()).map(Value::String).unwrap_or(Value::Null),
+                    "detail": e[2].clone().map(Value::String).unwrap_or(Value::Null),
                 })
             })
             .collect();

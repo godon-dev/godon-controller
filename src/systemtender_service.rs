@@ -12,9 +12,9 @@
 //! python went through optuna's ORM; the statements here carry the
 //! same meaning. The executor leaf owns that schema.
 
-use crate::config::{validate_minimal, DbConfig};
+use crate::config::validate_minimal;
 use crate::database::{
-    ArchiveDatabaseRepository, DbGateway, MetadataDatabaseRepository, TextRow,
+    ArchiveDatabaseRepository, DbConfig, DbGateway, MetadataDatabaseRepository, TextRow,
 };
 use crate::timefmt::{now_iso_naive, pg_ts_to_iso};
 use crate::wmill::{CausalClient, WindmillGateway};
@@ -291,8 +291,11 @@ impl SystemtenderService {
                 let existing_id = row[0].clone().unwrap_or_default();
                 if let Ok(meta_row) = self.metadata_repo.fetch_meta_data(&existing_id) {
                     if let Some(first) = meta_row.first() {
-                        if let Some(cfg_text) = first.get(3) {
-                            if let Ok(cfg) = serde_json::from_str::<Value>(&cfg_text) {
+                        if let Some(cfg) = first
+                            .get(3)
+                            .and_then(|c| c.as_deref())
+                            .and_then(|t| serde_json::from_str::<Value>(t).ok())
+                        {
                                 if let Some(slot) = cfg
                                     .get("systemtender")
                                     .and_then(|s| s.get("watermark_slot"))
@@ -301,7 +304,6 @@ impl SystemtenderService {
                                     used_slots.push(slot);
                                 }
                             }
-                        }
                     }
                 }
             }
@@ -1025,7 +1027,7 @@ impl SystemtenderService {
                 if let Some(first) = meta.first() {
                     if let Some(cfg) = first
                         .get(3)
-                        .and_then(|c| c.as_ref())
+                        .and_then(|c| c.as_deref())
                         .and_then(|t| serde_json::from_str::<Value>(t).ok())
                     {
                         let bgroup = cfg
@@ -1084,7 +1086,7 @@ impl SystemtenderService {
         }
 
         let db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
-        let run = |sql: &str| -> Result<Option<TextRow>, String> {
+        let run = |sql: &str| -> Result<Option<Vec<TextRow>>, String> {
             let cfg = DbConfig::archive_from_env();
             let repo = ArchiveDatabaseRepository::with_gateway(cfg, self.archive_repo_gateway());
             repo.raw_query(&db_name, sql).map_err(|e| e.0)
