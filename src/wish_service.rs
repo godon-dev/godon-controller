@@ -371,8 +371,8 @@ impl WishService {
         if options.0 == "now" {
             self.ask_causal_to_plan(
                 &wish_id,
-                Some(&claims),
-                Some(&terms),
+                claims.as_array(),
+                terms.as_array(),
                 limits.filter(|l| !l.is_null()),
                 budget,
                 Some(&options.1),
@@ -630,8 +630,8 @@ impl WishService {
             let budget = row[4].as_ref().and_then(|t| t.parse::<i64>().ok());
             self.ask_causal_to_plan(
                 wish_id,
-                Some(&claims),
-                Some(&terms),
+                claims.as_array(),
+                terms.as_array(),
                 limits.as_ref(),
                 budget,
                 standard,
