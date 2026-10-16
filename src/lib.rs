@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod database;
+pub mod otel_logging;
 pub mod seek_grammar;
 pub mod steer_grammar;
 pub mod wish_service;
