@@ -143,14 +143,14 @@ fn systemtenders_get(_rd: &Value) -> Value {
     service.list_systemtenders()
 }
 
-// ── steerwishes ────────────────────────────────────────────────────
+// ── wishes ────────────────────────────────────────────────────
 
 fn wish_create(rd: &Value) -> Value {
     let service = WishService::new(true);
-    match service.create_steerwish(rd) {
+    match service.create_wish(rd) {
         Ok(wish) => wish,
         Err(e) => {
-            log::error!("Failed to declare steerwish: {}", e);
+            log::error!("Failed to declare wish: {}", e);
             json!({"result": "FAILURE", "error": e})
         }
     }
@@ -162,11 +162,11 @@ fn wish_get(rd: &Value) -> Value {
         return json!({"result": "FAILURE", "error": "Missing wish_id"});
     };
     let service = WishService::new(false);
-    match service.get_steerwish(wish_id) {
+    match service.get_wish(wish_id) {
         Ok(Some(wish)) => wish,
         Ok(None) => json!({"result": "FAILURE", "error": format!("steerwish not found: {}", wish_id)}),
         Err(e) => {
-            log::error!("Failed to fetch steerwish: {}", e);
+            log::error!("Failed to fetch wish: {}", e);
             json!({"result": "FAILURE", "error": e})
         }
     }
@@ -178,11 +178,11 @@ fn wish_close(rd: &Value) -> Value {
         return json!({"result": "FAILURE", "error": "Missing wish_id"});
     };
     let service = WishService::new(true);
-    match service.close_steerwish(wish_id) {
+    match service.close_wish(wish_id) {
         Ok(Some(wish)) => wish,
         Ok(None) => json!({"result": "FAILURE", "error": format!("steerwish not found: {}", wish_id)}),
         Err(e) => {
-            log::error!("Failed to close steerwish: {}", e);
+            log::error!("Failed to close wish: {}", e);
             json!({"result": "FAILURE", "error": e})
         }
     }
@@ -208,7 +208,7 @@ fn wish_update(rd: &Value) -> Value {
         "budget": rd.get("budget").cloned().unwrap_or(Value::Null),
         "reason": rd.get("reason").cloned().unwrap_or(Value::Null),
     });
-    match service.update_steerwish(wish_id, &payload) {
+    match service.update_wish(wish_id, &payload) {
         Ok(wish) => wish,
         Err(e) => json!({"result": "FAILURE", "error": e}),
     }
@@ -225,10 +225,10 @@ fn wish_delete(rd: &Value) -> Value {
 
 fn wishes_get(_rd: &Value) -> Value {
     let service = WishService::new(false);
-    match service.list_steerwishes() {
+    match service.list_wishes() {
         Ok(summaries) => Value::Array(summaries),
         Err(e) => {
-            log::error!("Failed to list steerwishes: {}", e);
+            log::error!("Failed to list wishes: {}", e);
             json!({"result": "FAILURE", "error": e})
         }
     }

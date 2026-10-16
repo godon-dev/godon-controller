@@ -136,7 +136,7 @@ impl WishService {
         self.repo.create_wish_tables().map_err(|e| e.0)
     }
 
-    pub fn create_steerwish(&self, payload: &Value) -> Result<Value, String> {
+    pub fn create_wish(&self, payload: &Value) -> Result<Value, String> {
         let empty = Map::new();
         let payload_obj = payload.as_object().unwrap_or(&empty);
 
@@ -283,13 +283,13 @@ impl WishService {
             budget,
         );
 
-        match self.get_steerwish(&wish_id)? {
+        match self.get_wish(&wish_id)? {
             Some(wish) => Ok(wish),
             None => Err(format!("inserted steerwish vanished: {}", wish_id)),
         }
     }
 
-    pub fn get_steerwish(&self, wish_id: &str) -> Result<Option<Value>, String> {
+    pub fn get_wish(&self, wish_id: &str) -> Result<Option<Value>, String> {
         self.ensure_registry()?;
         let mut row = match self.repo.fetch_wish_by_id(wish_id).map_err(|e| e.0)? {
             Some(r) => r,
@@ -319,7 +319,7 @@ impl WishService {
         Ok(Some(wish))
     }
 
-    pub fn list_steerwishes(&self) -> Result<Vec<Value>, String> {
+    pub fn list_wishes(&self) -> Result<Vec<Value>, String> {
         self.ensure_registry()?;
         let rows = self.repo.fetch_wishes_list().map_err(|e| e.0)?;
         for row in &rows {
@@ -342,8 +342,8 @@ impl WishService {
         Ok(summaries)
     }
 
-    pub fn close_steerwish(&self, wish_id: &str) -> Result<Option<Value>, String> {
-        let Some(wish) = self.get_steerwish(wish_id)? else {
+    pub fn close_wish(&self, wish_id: &str) -> Result<Option<Value>, String> {
+        let Some(wish) = self.get_wish(wish_id)? else {
             return Ok(None);
         };
         if wish.get("state") == Some(&Value::String("closed".to_string())) {
@@ -353,14 +353,14 @@ impl WishService {
             .insert_wish_event(wish_id, "closed", None)
             .map_err(|e| e.0)?;
         self.unassign_wish(&wish);
-        self.get_steerwish(wish_id)
+        self.get_wish(wish_id)
     }
 
-    pub fn update_steerwish(&self, wish_id: &str, payload: &Value) -> Result<Value, String> {
+    pub fn update_wish(&self, wish_id: &str, payload: &Value) -> Result<Value, String> {
         let empty = Map::new();
         let payload_obj = payload.as_object().unwrap_or(&empty);
 
-        let Some(wish) = self.get_steerwish(wish_id)? else {
+        let Some(wish) = self.get_wish(wish_id)? else {
             return Err(format!("unknown wish: {}", wish_id));
         };
         if wish.get("state") == Some(&Value::String("closed".to_string())) {
@@ -464,7 +464,7 @@ impl WishService {
         );
 
         self.ask_causal_to_plan(wish_id, Some(&claims), Some(&terms), limits, budget);
-        self.get_steerwish(wish_id)?
+        self.get_wish(wish_id)?
             .ok_or_else(|| format!("inserted steerwish vanished: {}", wish_id))
     }
 
@@ -513,7 +513,7 @@ impl WishService {
                 })
             };
 
-            match self.close_steerwish(wish_id) {
+            match self.close_wish(wish_id) {
                 Ok(None) => {
                     return Ok(fail("wish vanished mid-deletion; retry the delete".to_string()))
                 }
