@@ -1652,4 +1652,3 @@ fn list_columns_in_summary_order() {
     assert!(q[head_end..].contains("w.created_at"));
 }
 
-// SKIPPED, named: the create-executor tests (python leaf by ruling).

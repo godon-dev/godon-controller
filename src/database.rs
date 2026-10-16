@@ -1584,5 +1584,5 @@ impl MetadataDatabaseRepository {
     }
 }
 
-// Tests port beside the code they exercise (the python suite under
-// tests/unit/ is the parity bar); this module stays empty.
+// Tests port beside the code they exercise (tests/port is the parity
+// record since the python body died); this module stays empty.
