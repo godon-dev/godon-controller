@@ -94,10 +94,51 @@ fn checked_steer_claim_band(claim: &Value, where_: &str) -> Result<Value, String
     }
 }
 
+/// The two caller-stated declaration options (design §XIX) - family
+/// grammar, both wish types: answer timing and standard, intent only
+/// the wisher holds. Both optional with sealed defaults: answer
+/// 'later' (the consult's answers surface at serving time and in
+/// status), standard 'all' for holds (a half-kept state is a lying
+/// state) and 'best' for walks (a seek's candidates by nature).
+/// Returns (answer, standard).
+pub fn checked_declaration_options(
+    body: &Value,
+    default_standard: &str,
+) -> Result<(String, String), String> {
+    let answer = match body.get("answer") {
+        None | Some(Value::Null) => "later".to_string(),
+        Some(a) => a
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| a.to_string()),
+    };
+    if answer != "now" && answer != "later" {
+        return Err(format!(
+            "answer must be 'now' or 'later' (got: {}) - when the reachability consult answers: in the same breath, or at serving time",
+            answer
+        ));
+    }
+    let standard = match body.get("standard") {
+        None | Some(Value::Null) => default_standard.to_string(),
+        Some(s) => s
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| s.to_string()),
+    };
+    if standard != "all" && standard != "best" {
+        return Err(format!(
+            "standard must be all or best (got: {}) - one kept state, or the best of several",
+            standard
+        ));
+    }
+    Ok((answer, standard))
+}
+
 pub struct WishService {
     pub repo: MetadataDatabaseRepository,
     pub archive_repo: Option<ArchiveDatabaseRepository>,
     pub causal: Arc<dyn CausalClient>,
+    pub wmill: Arc<dyn crate::wmill::WindmillGateway>,
 }
 
 impl WishService {
@@ -110,11 +151,13 @@ impl WishService {
                 None
             },
             causal: Arc::new(crate::wmill::HttpCausal),
+            wmill: Arc::new(crate::wmill::HttpWindmill),
         }
     }
 
     pub fn with_parts(
         db: Arc<dyn DbGateway>,
+        wmill: Arc<dyn crate::wmill::WindmillGateway>,
         causal: Arc<dyn CausalClient>,
         with_archive: bool,
     ) -> Self {
@@ -129,6 +172,7 @@ impl WishService {
                 None
             },
             causal,
+            wmill,
         }
     }
 
@@ -140,7 +184,42 @@ impl WishService {
         let empty = Map::new();
         let payload_obj = payload.as_object().unwrap_or(&empty);
 
+        // §XVII: two discriminators, flat - type picks the grammar
+        // (steer or omitted-era hold; seek = the walk), form is a
+        // field of the walk grammar only.
+        let wish_type = match payload.get("type") {
+            None | Some(Value::Null) => {
+                return Err(
+                    "the wish speaks its type: steer or seek (no omission)".to_string(),
+                );
+            }
+            Some(t) => t
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| t.to_string()),
+        };
+        if wish_type == "seek" {
+            // The walk wishes: a commissioned walk, not a hold. Their
+            // door is their own grammar (form, region, criterion,
+            // budget, candidates); the registry row carries the body
+            // in its own column - never inside claims, whose meaning
+            // stays pinned.
+            return self.create_seek_wish(payload);
+        }
+        if wish_type != "steer" {
+            return Err(format!(
+                "unknown wish type: {} (steer or seek)",
+                wish_type
+            ));
+        }
+        if payload.get("form").map(|f| !f.is_null()).unwrap_or(false) {
+            return Err(
+                "form belongs to seek wishes - a hold speaks claims and terms".to_string(),
+            );
+        }
+
         if payload_obj.contains_key("outcome") && !payload_obj.get("outcome").unwrap().is_null()
+
             || payload_obj.contains_key("band") && !payload_obj.get("band").unwrap().is_null()
         {
             return Err(
@@ -226,6 +305,11 @@ impl WishService {
             ));
         }
 
+        // The two caller-stated declaration options (§XIX): answer
+        // timing (default later) and standard (holds default
+        // all - a half-kept state is a lying state).
+        let options = checked_declaration_options(payload, "all")?;
+
         let limits = payload.get("limits");
         if let Some(l) = limits {
             if !l.is_null() && !l.is_object() {
@@ -268,6 +352,9 @@ impl WishService {
                 regime,
                 Some(&Value::Array(claims.clone())),
                 Some(&Value::Array(terms.clone())),
+                None,
+                &options.0,
+                &options.1,
             )
             .map_err(|e| e.0)?;
         self.repo
@@ -275,18 +362,282 @@ impl WishService {
             .map_err(|e| e.0)?;
         info!("Steerwish declared: {} (outcome: {})", wish_id, outcome);
 
-        self.ask_causal_to_plan(
-            &wish_id,
-            Some(&claims),
-            Some(&terms),
-            limits.filter(|l| !l.is_null()),
-            budget,
-        );
+        // ── the ask: causal learns the wish and plans it ────────────────
+        // Answer timing (§XIX): 'now' asks in the same breath - the
+        // consult's answer (planned, or a refusal with numbers) is in
+        // this very response; 'later' (the default) dispatches the ask
+        // as its own job - the wish stands declared, the answers land
+        // as events and surface at serving time and in status.
+        if options.0 == "now" {
+            self.ask_causal_to_plan(
+                &wish_id,
+                Some(&claims),
+                Some(&terms),
+                limits.filter(|l| !l.is_null()),
+                budget,
+                Some(&options.1),
+            );
+        } else {
+            self.dispatch_plan_ask(&wish_id);
+        }
 
         match self.get_wish(&wish_id)? {
             Some(wish) => Ok(wish),
             None => Err(format!("inserted steerwish vanished: {}", wish_id)),
         }
+    }
+
+    fn create_seek_wish(&self, payload: &Value) -> Result<Value, String> {
+        /// Declare a seek wish: validate its body at the door, insert
+        /// with regime 'seek' (the body rides its own column - claims
+        /// keep their pinned meaning), stamp 'declared', ask causal to
+        /// plan.
+        ///
+        /// The ask's refusal is a valid answer: causal's map_reads_it
+        /// carries the reading INSIDE the refusal detail, and the
+        /// wish's events carry it to the declarer - the refusal is the
+        /// answer.
+        let walk = crate::seek_grammar::checked_wish_body(payload)?;
+        let outcome = walk
+            .get("criterion")
+            .filter(|c| !c.is_null())
+            .and_then(|c| c.get("outcome"))
+            .and_then(|o| o.as_str())
+            .unwrap_or("cover_now")
+            .to_string();
+        // Walk wishes default to best (§XIX): a seek's
+        // candidates are partial service by nature.
+        let options = checked_declaration_options(payload, "best")?;
+
+        let wish_id = Uuid::new_v4().to_string();
+        self.ensure_registry()?;
+        self.repo
+            .insert_wish(
+                &wish_id,
+                &outcome,
+                &Value::Null,
+                None,
+                walk.get("budget").and_then(|b| b.as_i64()),
+                "seek",
+                None,
+                None,
+                Some(&walk),
+                &options.0,
+                &options.1,
+            )
+            .map_err(|e| e.0)?;
+        self.repo
+            .insert_wish_event(&wish_id, "declared", None)
+            .map_err(|e| e.0)?;
+        info!(
+            "Seek wish declared: {} (form: {}, outcome: {})",
+            wish_id,
+            walk.get("form").and_then(|f| f.as_str()).unwrap_or(""),
+            outcome
+        );
+
+        if options.0 == "now" {
+            self.ask_causal_to_plan_seek(&wish_id, &walk, Some(&options.1));
+        } else {
+            self.dispatch_plan_ask(&wish_id);
+        }
+
+        self.get_wish(&wish_id)?
+            .ok_or_else(|| format!("inserted seek wish vanished: {}", wish_id))
+    }
+
+    fn ask_causal_to_plan_seek(&self, wish_id: &str, walk: &Value, standard: Option<&str>) {
+        /// One HTTP ask seeds causal's book with the seek. The wire is
+        /// re-pinned (§XVII): the ask carries type 'seek' and the
+        /// admitted walk body under 'seek' - one dialect end to end,
+        /// form-keyed; a planned answer names the serving tender (its
+        /// dials are the region's); any other answer is a refusal -
+        /// map_reads_it arrives with the reading in its detail, and
+        /// the event carries it to the declarer verbatim.
+        let mut plan_request = json!({
+            "wish_id": wish_id,
+            "type": "seek",
+            "seek": walk,
+        });
+        if let Some(s) = standard {
+            plan_request["standard"] = json!(s);
+        }
+        let plan_response = match self.causal.ask_to_plan(&plan_request) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Wish {}: seek plan ask failed: {}", wish_id, e);
+                let detail = json!({"error": e});
+                let _ = self.repo.insert_wish_event(
+                    wish_id,
+                    "plan_error",
+                    Some(&serde_json::to_string(&detail).unwrap_or_default()),
+                );
+                return;
+            }
+        };
+
+        if plan_response.get("status") == Some(&Value::String("planned".to_string())) {
+            let _ = self.repo.insert_wish_event(
+                wish_id,
+                "planned",
+                Some(&serde_json::to_string(&plan_response).unwrap_or_default()),
+            );
+            let sender = plan_response
+                .get("sender")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string());
+            let Some(sender) = sender else {
+                warn!("Wish {}: planned but no serving tender named", wish_id);
+                return;
+            };
+            let Some(archive) = &self.archive_repo else {
+                warn!(
+                    "Wish {}: planned on {} but no archive config - assignment not written",
+                    wish_id, sender
+                );
+                return;
+            };
+            let (alive, reason) = self.sender_alive(&sender);
+            if !alive {
+                let detail = json!({
+                    "error": format!(
+                        "sender {} not alive: {} - assignment not planted",
+                        sender, reason
+                    )
+                });
+                let _ = self.repo.insert_wish_event(
+                    wish_id,
+                    "plan_error",
+                    Some(&serde_json::to_string(&detail).unwrap_or_default()),
+                );
+                warn!(
+                    "Wish {}: sender {} not alive ({}) - no note planted",
+                    wish_id, sender, reason
+                );
+                return;
+            }
+            let db_name = format!("systemtender_{}", sender.replace('-', "_"));
+            match archive.write_wish_assignment(&db_name, wish_id, "sender") {
+                Ok(()) => {
+                    let detail = json!({"sender": sender, "db": db_name});
+                    let _ = self.repo.insert_wish_event(
+                        wish_id,
+                        "assigned",
+                        Some(&serde_json::to_string(&detail).unwrap_or_default()),
+                    );
+                    info!("Seek wish {} assigned to {}", wish_id, db_name);
+                }
+                Err(e) => {
+                    warn!("Wish {}: assignment write failed: {}", wish_id, e.0);
+                    let detail = json!({"error": format!("assignment write failed: {}", e.0)});
+                    let _ = self.repo.insert_wish_event(
+                        wish_id,
+                        "plan_error",
+                        Some(&serde_json::to_string(&detail).unwrap_or_default()),
+                    );
+                }
+            }
+        } else {
+            let detail = json!({
+                "reason": plan_response.get("reason").cloned().unwrap_or(Value::Null),
+                "detail": plan_response.get("detail").cloned().unwrap_or(Value::Null),
+            });
+            let _ = self.repo.insert_wish_event(
+                wish_id,
+                "refused",
+                Some(&serde_json::to_string(&detail).unwrap_or_default()),
+            );
+            info!(
+                "Wish {} refused: {}",
+                wish_id,
+                plan_response
+                    .get("reason")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("")
+            );
+        }
+    }
+
+    fn dispatch_plan_ask(&self, wish_id: &str) {
+        /// Answer 'later' (§XIX): the consult rides its own job and
+        /// the door returns at 'declared'. Every answer - planned,
+        /// refused with numbers, plan_error - lands on the wish's
+        /// event record when the job runs; status and serving time
+        /// surface it. A dispatch that cannot fly asks inline instead:
+        /// the wish is never left unasked.
+        let args = json!({"wish_id": wish_id});
+        match self
+            .wmill
+            .run_script_by_path_async("f/controller/steerwish_plan", &args, None)
+        {
+            Ok(_) => info!("Wish {}: plan ask dispatched (answer: later)", wish_id),
+            Err(e) => {
+                warn!(
+                    "Wish {}: plan ask dispatch failed ({}) - asking inline",
+                    wish_id, e
+                );
+                self.plan_wish(wish_id);
+            }
+        }
+    }
+
+    /// The plan ask from stored terms (the dispatched job's body, and
+    /// any re-ask): identical answers and event stamps as the inline
+    /// path - one ask discipline, two timings. Returns the wish, or
+    /// None when the id is unknown.
+    pub fn plan_wish(&self, wish_id: &str) -> Option<Value> {
+        if self.ensure_registry().is_err() {
+            return None;
+        }
+        let row = match self.repo.fetch_wish_by_id(wish_id) {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
+        let Some(row) = row else {
+            warn!("Plan ask for unknown wish: {}", wish_id);
+            return None;
+        };
+        let standard = row.get(12).and_then(|c| c.as_deref());
+        if row[5].as_deref() == Some("seek") {
+            let walk = row
+                .get(10)
+                .and_then(|c| c.as_deref())
+                .and_then(|t| serde_json::from_str::<Value>(t).ok());
+            let Some(walk) = walk else {
+                warn!("Wish {}: seek row carries no walk body", wish_id);
+                return None;
+            };
+            self.ask_causal_to_plan_seek(wish_id, &walk, standard);
+        } else {
+            let parse = |cell: &Option<String>| -> Value {
+                cell.as_ref()
+                    .and_then(|t| serde_json::from_str(t).ok())
+                    .unwrap_or(Value::Null)
+            };
+            let stored_claims = parse(&row.get(8).cloned().flatten());
+            let claims = if stored_claims.is_null() {
+                json!([{
+                    "outcome": row[1].clone().unwrap_or_default(),
+                    "band": parse(&row[2].clone()),
+                }])
+            } else {
+                stored_claims
+            };
+            let terms = parse(&row.get(9).cloned().flatten());
+            let terms = if terms.is_null() { json!([]) } else { terms };
+            let limits = parse(&row[3].clone());
+            let limits = if limits.is_null() { None } else { Some(limits.clone()) };
+            let budget = row[4].as_ref().and_then(|t| t.parse::<i64>().ok());
+            self.ask_causal_to_plan(
+                wish_id,
+                claims.as_array(),
+                terms.as_array(),
+                limits.as_ref(),
+                budget,
+                standard,
+            );
+        }
+        self.get_wish(wish_id).ok().flatten()
     }
 
     pub fn get_wish(&self, wish_id: &str) -> Result<Option<Value>, String> {
@@ -301,6 +652,47 @@ impl WishService {
                 None => return Ok(None),
             };
         }
+
+        // The seek's return mirror: the worker banks its RETURN in the
+        // serving tender's own ledger (seek_return::<wish_id>); whoever
+        // reads the wish pulls it into the event trail ONCE - the same
+        // lazy-mirror discipline the book fold-in uses. A dead tender
+        // reads as no return, never an error.
+        if row.len() > 10 && row[10].as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+            if let Some(archive) = &self.archive_repo {
+                let events_so_far = self.repo.fetch_wish_events(wish_id).map_err(|e| e.0)?;
+                let has_returned = events_so_far
+                    .iter()
+                    .any(|e| e[0].as_deref() == Some("returned"));
+                if !has_returned {
+                    for e in &events_so_far {
+                        if e[0].as_deref() != Some("assigned") {
+                            continue;
+                        }
+                        let detail = e.get(2).and_then(|c| c.as_deref()).unwrap_or("");
+                        let d: Value = serde_json::from_str(detail).unwrap_or(Value::Null);
+                        let db_name = d
+                            .get("db")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let Some(db_name) = db_name else {
+                            continue;
+                        };
+                        if let Some(payload) = archive.read_seek_return(&db_name, wish_id) {
+                            self.repo
+                                .insert_wish_event(wish_id, "returned", Some(&payload))
+                                .map_err(|e| e.0)?;
+                            row = match self.repo.fetch_wish_by_id(wish_id).map_err(|e| e.0)? {
+                                Some(r) => r,
+                                None => return Ok(None),
+                            };
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         let events = self.repo.fetch_wish_events(wish_id).map_err(|e| e.0)?;
         let mut wish = self.format_wish(&row, &events);
 
@@ -463,7 +855,24 @@ impl WishService {
             terms.len()
         );
 
-        self.ask_causal_to_plan(wish_id, Some(&claims), Some(&terms), limits, budget);
+        // the world moved. The plan ask decides the assignment's fate:
+        // a plan with moves re-plants the note (new dial); a zero-move
+        // hold keeps the existing note and dial untouched. Tearing the
+        // note out before the ask would release a wish the corrected
+        // terms already satisfy. A correction is a deliberate holder
+        // act - the mover's ask answers in the same breath (§XIX).
+        let stored_standard = wish
+            .get("standard")
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string());
+        self.ask_causal_to_plan(
+            wish_id,
+            Some(&claims),
+            Some(&terms),
+            limits,
+            budget,
+            stored_standard.as_deref(),
+        );
         self.get_wish(wish_id)?
             .ok_or_else(|| format!("inserted steerwish vanished: {}", wish_id))
     }
@@ -617,6 +1026,7 @@ impl WishService {
         terms: Option<&Vec<Value>>,
         limits: Option<&Value>,
         budget: Option<i64>,
+        standard: Option<&str>,
     ) {
         let claims = claims.cloned().unwrap_or_default();
         let terms_list = terms.cloned().unwrap_or_default();
@@ -655,6 +1065,9 @@ impl WishService {
         }
         if let Some(l) = limits {
             plan_request["limits"] = l.clone();
+        }
+        if let Some(s) = standard {
+            plan_request["standard"] = json!(s);
         }
 
         let plan_response = match self.causal.ask_to_plan(&plan_request) {
@@ -883,6 +1296,19 @@ impl WishService {
             "regime": row[5].clone().unwrap_or_default(),
             "createdAt": row.get(6).and_then(|c| c.as_ref()).and_then(|t| pg_ts_to_iso(t)),
             "state": row[7].clone().unwrap_or_default(),
+            "seek": parse_json(&row.get(10).cloned().flatten()),
+            "answer": row
+                .get(11)
+                .cloned()
+                .flatten()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+            "standard": row
+                .get(12)
+                .cloned()
+                .flatten()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
             "events": events_val,
         })
     }
