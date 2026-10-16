@@ -5,7 +5,7 @@
 
 pub mod config;
 pub mod database;
-pub mod steerwish_service;
+pub mod wish_service;
 pub mod systemtender_service;
 pub mod timefmt;
 pub mod verbs;
