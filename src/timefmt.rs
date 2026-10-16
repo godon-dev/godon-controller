@@ -42,7 +42,8 @@ pub fn pg_ts_to_iso(cell: &str) -> Option<String> {
     let mut base = dt.replace(' ', "T");
     let frac_digits: String = frac.chars().take(6).collect();
     if !frac_digits.is_empty() {
-        let micros: u32 = frac_digits.parse().ok()?;
+        let scale = 10u32.pow(6 - frac_digits.len() as u32);
+        let micros: u32 = frac_digits.parse::<u32>().unwrap_or(0) * scale;
         if micros != 0 {
             base = format!("{}.{:06}", base, micros);
         }
