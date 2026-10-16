@@ -10,7 +10,7 @@
 use std::io::Read;
 
 fn main() {
-    env_logger::init();
+    godon_controller::otel_logging::init_telemetry();
 
     let verb = std::env::args().nth(1).unwrap_or_default();
     let mut input = String::new();
