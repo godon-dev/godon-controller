@@ -586,6 +586,16 @@ fn sender_and_receiver_notes_planted() {
     let declared = svc.create_wish(&declare_wish_payload());
     let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
     let queries = db.queries();
+    let assignments: Vec<&String> = queries
+        .iter()
+        .filter(|q| q.contains("INSERT INTO wish_assignments"))
+        .collect();
+    assert!(
+        !assignments.is_empty() || true,
+        "debug: {} assignment inserts, queries: {:#?}",
+        assignments.len(),
+        queries
+    );
     assert!(queries.iter().any(|q| q.contains("INSERT INTO wish_assignments") && q.contains("systemtender_f0e0fb34") && q.contains("'sender'")));
     assert!(queries.iter().any(|q| q.contains("INSERT INTO wish_assignments") && q.contains("systemtender_92a33fa9") && q.contains("'receiver'")));
 }
