@@ -36,9 +36,9 @@ fn service_with_jobs(
         if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") {
             return Ok(None);
         }
-        // claim: RETURNING row = claimed, no row = someone else holds it
+        // claim: RETURNING row = claimed (this executor owns it)
         if q.contains("RETURNING systemtender_id") {
-            return Ok(Some(vec![]));
+            return Ok(Some(vec![row(&[Some("row-id")])]));
         }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[
@@ -572,6 +572,7 @@ fn sender_and_receiver_notes(planned: Value) -> (WishService, Arc<FakeDb>, Arc<F
 fn declare_wish_payload() -> Value {
     json!({
         "claims": [{"outcome": "rcv/objective_0", "band": {"lo": 1.7, "hi": 2.0, "target": 1.85}}],
+        "answer": "now",
     })
 }
 
@@ -611,7 +612,7 @@ fn create_config() -> Value {
         "systemtender": {"type": "linux_performance"},
         "objectives": [{"name": "latency", "reconnaissance": {"service": "prometheus", "query": "rate(x)"}}],
         "run": {"parallel": 1},
-        "effectuation": {"targetRefs": []},
+        "effectuation": {"targetRefs": ["t1"]},
         "settings": {"sysctl": {"vm.swappiness": {"constraints": [{"step": 5, "lower": 0, "upper": 100}]}}},
         "cooperation": {"active": true},
     })
@@ -619,6 +620,9 @@ fn create_config() -> Value {
 
 fn fast_create_db() -> Arc<FakeDb> {
     arc_db(|_db, q| {
+        if q.contains("FROM targets") {
+            return Ok(Some(vec![row(&[Some("t1"), Some("t1"), Some("ssh"), Some(r#"{"address": "host-a"}"#), None, Some("2026-10-10 09:00:00+00"), None])])); 
+        }
         if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
         if q.contains("SELECT id, name, creation_tsz FROM") { return Ok(Some(vec![])); }
         if q.contains("FROM systemtender_meta_data WHERE id") { return Ok(Some(vec![])); }
@@ -667,6 +671,9 @@ fn duplicate_name_answers_the_visible_state() {
         let existing_id = "550e8400-e29b-41d4-a716-446655440000";
         let db = arc_db(move |_db, q| {
             if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
+            if q.contains("FROM targets") {
+                return Ok(Some(vec![row(&[Some("t1"), Some("t1"), Some("ssh"), Some(r#"{"address": "host-a"}"#), None, Some("2026-10-10 09:00:00+00"), None])]));
+            }
             if q.contains("SELECT id, name, creation_tsz FROM") {
                 return Ok(Some(vec![row(&[Some(existing_id), Some("bench-tender"), Some("2026-10-10 09:00:00+00")])]));
             }
