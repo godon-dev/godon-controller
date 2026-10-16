@@ -104,7 +104,7 @@ fn service(known_sender: bool) -> (WishService, std::sync::Arc<FakeDb>, std::syn
 fn events_inserted(db: &FakeDb) -> Vec<String> {
     db.queries()
         .into_iter()
-        .filter(|q| q.starts_with("INSERT INTO steerwish_events"))
+        .filter(|q| q.trim_start().starts_with("INSERT INTO steerwish_events"))
         .collect()
 }
 

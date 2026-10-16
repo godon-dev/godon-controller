@@ -91,7 +91,7 @@ fn service(
 fn returned_inserts(db: &FakeDb) -> Vec<String> {
     db.queries()
         .into_iter()
-        .filter(|q| q.starts_with("INSERT INTO steerwish_events") && q.contains("'returned'"))
+        .filter(|q| q.trim_start().starts_with("INSERT INTO steerwish_events") && q.contains("'returned'"))
         .collect()
 }
 
