@@ -709,7 +709,7 @@ fn get_answers_creating_with_creation_reason() {
 
 #[test]
 fn deletion_claim_takes_over_create_failed_rows() {
-    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig};
+    use godon_controller::database::{DbConfig, MetadataDatabaseRepository};
     let db = arc_db(|_db, q| {
         if q.contains("RETURNING systemtender_id") {
             return Ok(Some(vec![row(&[Some("claimed")])]));
@@ -723,7 +723,7 @@ fn deletion_claim_takes_over_create_failed_rows() {
 
 #[test]
 fn get_survives_a_missing_archive_db() {
-    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError, MetadataDatabaseRepository};
+    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError};
     let db = arc_db(|_db, _q| {
         Err(DbError("connection to server at \"localhost\" (::1), port 5432 failed: FATAL:  database \"systemtender_x\" does not exist".to_string()))
     });
@@ -733,7 +733,7 @@ fn get_survives_a_missing_archive_db() {
 
 #[test]
 fn get_survives_the_table_build_window() {
-    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError, MetadataDatabaseRepository};
+    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError};
     let unreadable = [
         "relation \"systemtender_state\" does not exist",
         "column \"finished_at\" does not exist",
