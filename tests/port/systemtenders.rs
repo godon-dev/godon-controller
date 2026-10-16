@@ -33,12 +33,13 @@ fn service_with_jobs(
         serde_json::to_string(&d).unwrap()
     };
     let db = arc_db(move |db_name, q| {
-        if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") {
-            return Ok(None);
-        }
-        // claim: RETURNING row = claimed (this executor owns it)
+        // the claim is an INSERT that RETURNS rows - answer it before
+        // the insert-catcher swallows it
         if q.contains("RETURNING systemtender_id") {
             return Ok(Some(vec![row(&[Some("row-id")])]));
+        }
+        if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") {
+            return Ok(None);
         }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[
@@ -579,7 +580,8 @@ fn declare_wish_payload() -> Value {
 #[test]
 fn sender_and_receiver_notes_planted() {
     let (svc, db, _c) = sender_and_receiver_notes(planned_response());
-    let _ = svc.create_wish(&declare_wish_payload());
+    let declared = svc.create_wish(&declare_wish_payload());
+    let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
     let queries = db.queries();
     assert!(queries.iter().any(|q| q.contains("INSERT INTO wish_assignments") && q.contains("systemtender_f0e0fb34") && q.contains("'sender'")));
     assert!(queries.iter().any(|q| q.contains("INSERT INTO wish_assignments") && q.contains("systemtender_92a33fa9") && q.contains("'receiver'")));
@@ -588,7 +590,8 @@ fn sender_and_receiver_notes_planted() {
 #[test]
 fn write_wish_assignment_defaults_to_sender_role() {
     let (svc, db, _c) = sender_and_receiver_notes(planned_response());
-    let _ = svc.create_wish(&declare_wish_payload());
+    let declared = svc.create_wish(&declare_wish_payload());
+    let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
     let first = db.queries().into_iter().find(|q| q.contains("INSERT INTO wish_assignments")).expect("planted");
     assert!(first.contains("'sender'"));
 }
@@ -599,7 +602,8 @@ fn no_receiver_note_when_self_wish() {
     plan["path"] = json!(["f0e0fb34-aaaa-bbbb-cccc-ddddeeeeffff"]);
     plan["moves"][0]["sender"] = json!("f0e0fb34-aaaa-bbbb-cccc-ddddeeeeffff");
     let (svc, db, _c) = sender_and_receiver_notes(plan);
-    let _ = svc.create_wish(&declare_wish_payload());
+    let declared = svc.create_wish(&declare_wish_payload());
+    let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
     let count = db.queries().iter().filter(|q| q.contains("INSERT INTO wish_assignments")).count();
     assert_eq!(count, 1);
 }
@@ -611,7 +615,7 @@ fn create_config() -> Value {
         "meta": {"configVersion": "0.3"},
         "systemtender": {"type": "linux_performance"},
         "objectives": [{"name": "latency", "reconnaissance": {"service": "prometheus", "query": "rate(x)"}}],
-        "run": {"parallel": 1},
+        "run": {"parallel": 2},
         "effectuation": {"targetRefs": ["t1"]},
         "settings": {"sysctl": {"vm.swappiness": {"constraints": [{"step": 5, "lower": 0, "upper": 100}]}}},
         "cooperation": {"active": true},
