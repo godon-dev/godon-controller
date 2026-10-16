@@ -1003,7 +1003,10 @@ impl MetadataDatabaseRepository {
         );
         ALTER TABLE {}
         ADD COLUMN IF NOT EXISTS claims JSONB,
-        ADD COLUMN IF NOT EXISTS terms JSONB;
+        ADD COLUMN IF NOT EXISTS terms JSONB,
+        ADD COLUMN IF NOT EXISTS seek JSONB,
+        ADD COLUMN IF NOT EXISTS answer VARCHAR(16),
+        ADD COLUMN IF NOT EXISTS standard VARCHAR(16);
         "#,
             self.steerwishes_table_name, self.steerwishes_table_name
         );
@@ -1206,6 +1209,9 @@ impl MetadataDatabaseRepository {
         regime: &str,
         claims: Option<&Value>,
         terms: Option<&Value>,
+        seek: Option<&Value>,
+        answer: &str,
+        standard: &str,
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
         let band_json = format!("'{}'", serde_json::to_string(band).unwrap_or_default().replace('\'', "''"));
@@ -1227,12 +1233,18 @@ impl MetadataDatabaseRepository {
             Some(t) if !py_falsy(t) => format!("'{}'::jsonb", serde_json::to_string(t).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
+        let seek_json = match seek {
+            Some(s) if !py_falsy(s) => format!("'{}'::jsonb", serde_json::to_string(s).unwrap_or_default().replace('\'', "''")),
+            _ => "NULL".to_string(),
+        };
+        let answer_sql = answer.replace('\'', "''");
+        let standard_sql = standard.replace('\'', "''");
 
         let query = format!(
             r#"
         INSERT INTO {}
-        (id, outcome, band, limits, budget, regime, claims, terms)
-        VALUES('{}', '{}', {}::jsonb, {}, {}, '{}', {}, {});
+        (id, outcome, band, limits, budget, regime, claims, terms, seek, answer, standard)
+        VALUES('{}', '{}', {}::jsonb, {}, {}, '{}', {}, {}, {}, '{}', '{}');
         "#,
             self.steerwishes_table_name,
             wish_id,
@@ -1242,7 +1254,10 @@ impl MetadataDatabaseRepository {
             budget_sql,
             regime_sql,
             claims_json,
-            terms_json
+            terms_json,
+            seek_json,
+            answer_sql,
+            standard_sql
         );
         self.db.execute_query(&db_config, &query, false)?;
         info!("Inserted steerwish {} for outcome: {}", wish_id, outcome);
@@ -1257,11 +1272,13 @@ impl MetadataDatabaseRepository {
         let query = format!(
             r#"
         SELECT w.id, w.outcome, w.band, w.limits, w.budget, w.regime, w.created_at,
-               COALESCE((SELECT e.event_type FROM {} e
+               COALESCE((SELECT CASE WHEN e.event_type = 'refused' THEN 'unservable'
+                                     ELSE e.event_type END
+                         FROM {} e
                          WHERE e.wish_id = w.id
                          AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
                          ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state,
-               w.claims, w.terms
+               w.claims, w.terms, w.seek, w.answer, w.standard
         FROM {} w
         WHERE w.id = '{}';
         "#,
@@ -1281,7 +1298,9 @@ impl MetadataDatabaseRepository {
         let query = format!(
             r#"
         SELECT w.id, w.outcome,
-               COALESCE((SELECT e.event_type FROM {} e
+               COALESCE((SELECT CASE WHEN e.event_type = 'refused' THEN 'unservable'
+                                     ELSE e.event_type END
+                         FROM {} e
                          WHERE e.wish_id = w.id
                          AND e.event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
                          ORDER BY e.at DESC, e.id DESC LIMIT 1), 'declared') AS state,

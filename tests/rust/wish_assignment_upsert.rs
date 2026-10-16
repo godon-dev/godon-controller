@@ -13,7 +13,7 @@ use godon_controller::database::{ArchiveDatabaseRepository, DbConfig};
 /// statements (create, alter, insert) come back in order.
 fn read_assignment_queries() -> Vec<String> {
     let db = FakeDb::capture();
-    let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db);
+    let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db.clone());
     repo.write_wish_assignment("systemtender_test_1", "wish-abc", "receiver")
         .unwrap();
     db.queries()

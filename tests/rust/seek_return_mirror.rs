@@ -5,7 +5,7 @@
 //! wish GET pulls it into the event trail once (idempotent), and a
 //! dead tender reads as no return, never an error.
 
-use crate::harness::{row, FakeCausal, FakeDb};
+use crate::harness::{row, FakeCausal, FakeDb, FakeWindmill};
 use godon_controller::wish_service::WishService;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -25,8 +25,8 @@ fn return_payload() -> String {
     r#"{"verdict": "RETURNED", "stop_reason": "converged", "spend_count": 12, "finding": {"params": {"param_0": 62.5}, "reading": 0.91, "bars": 0.02}}"#.to_string()
 }
 
-/// The wish row: fetch_wish_by_id's 11 columns; index 10 is the seek
-/// body.
+/// The wish row: fetch_wish_by_id's 13 columns; index 10 is the seek
+/// body, 11 answer, 12 standard.
 fn wish_row(seek: Option<&str>) -> godon_controller::database::TextRow {
     row(&[
         Some("w1"),
@@ -40,6 +40,8 @@ fn wish_row(seek: Option<&str>) -> godon_controller::database::TextRow {
         None,
         None,
         seek,
+        Some("later"),
+        Some("best"),
     ])
 }
 
@@ -79,7 +81,7 @@ fn service(
         }
         Ok(None)
     });
-    let svc = WishService::with_parts(db.clone(), FakeCausal::new(), true);
+    let svc = WishService::with_parts(db.clone(), FakeWindmill::new(), FakeCausal::new(), true);
     (svc, db)
 }
 

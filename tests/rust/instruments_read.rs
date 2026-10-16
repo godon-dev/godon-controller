@@ -9,7 +9,7 @@ use godon_controller::database::{ArchiveDatabaseRepository, DbConfig};
 use serde_json::json;
 
 fn repo(db: std::sync::Arc<FakeDb>) -> ArchiveDatabaseRepository {
-    ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db)
+    ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db.clone())
 }
 
 #[test]

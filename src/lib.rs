@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod database;
+pub mod seek_grammar;
 pub mod wish_service;
 pub mod systemtender_service;
 pub mod timefmt;
