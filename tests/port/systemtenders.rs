@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::support::{row, FakeCausal, FakeDb, FakeWindmill};
+use crate::support::{arc_db, row, FakeCausal, FakeDb, FakeWindmill};
 
 const DEFINITION: &str = r#"{"worker_job_ids": ["job-1"], "interference_detection": {"group": "bench"}}"#;
 
