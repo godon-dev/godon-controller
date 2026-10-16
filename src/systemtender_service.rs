@@ -636,7 +636,11 @@ impl SystemtenderService {
                     .and_then(|v| v.as_f64())
                     .filter(|v| *v != 0.0)
                     .unwrap_or(60.0);
+                // python's max keeps its argument: the floor wins as
+                // the int 90, the interval wins as a float - the
+                // envelope carries that shape (parity)
                 let threshold = (90.0f64).max(6.0 * interval);
+                let threshold_json = if 6.0 * interval > 90.0 { json!(threshold) } else { json!(90) };
                 let finished = state.get("finished") == Some(&Value::Bool(true));
                 let age = state.get("age_secs").and_then(|v| v.as_f64());
                 if finished {
@@ -649,7 +653,7 @@ impl SystemtenderService {
                 liveness = json!({
                     "age_secs": state.get("age_secs"),
                     "interval_secs": state.get("interval_secs"),
-                    "stale_threshold_secs": threshold,
+                    "stale_threshold_secs": threshold_json,
                 });
             }
 

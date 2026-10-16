@@ -33,12 +33,13 @@ fn service_with_jobs(
         serde_json::to_string(&d).unwrap()
     };
     let db = arc_db(move |db_name, q| {
+        // the claim is an INSERT that RETURNS rows - answer it before
+        // the insert-catcher swallows it
+        if q.contains("RETURNING systemtender_id") {
+            return Ok(Some(vec![row(&[Some("row-id")])]));
+        }
         if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") {
             return Ok(None);
-        }
-        // claim: RETURNING row = claimed, no row = someone else holds it
-        if q.contains("RETURNING systemtender_id") {
-            return Ok(Some(vec![]));
         }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[
@@ -261,7 +262,9 @@ fn delete_rides_along_when_an_executor_holds_the_claim() {
 #[test]
 fn delete_waits_for_terminal_jobs_before_drop() {
     let wmill = FakeWindmill::default();
-    // round 1: both jobs still running; round 2: both gone (terminal)
+    // rounds 1 and 2: both jobs still running; round 3: both gone
+    wmill.queue_job(Some(json!({"status": "Running"})));
+    wmill.queue_job(Some(json!({"status": "Running"})));
     wmill.queue_job(Some(json!({"status": "Running"})));
     wmill.queue_job(Some(json!({"status": "Running"})));
     let (svc, db) = service_with_jobs(&["job-1", "job-2"], Arc::new(wmill));
@@ -571,24 +574,35 @@ fn sender_and_receiver_notes(planned: Value) -> (WishService, Arc<FakeDb>, Arc<F
 
 fn declare_wish_payload() -> Value {
     json!({
+        "type": "steer",
         "claims": [{"outcome": "rcv/objective_0", "band": {"lo": 1.7, "hi": 2.0, "target": 1.85}}],
+        "answer": "now",
     })
 }
 
 #[test]
 fn sender_and_receiver_notes_planted() {
     let (svc, db, _c) = sender_and_receiver_notes(planned_response());
-    let _ = svc.create_wish(&declare_wish_payload());
-    let queries = db.queries();
-    assert!(queries.iter().any(|q| q.contains("INSERT INTO wish_assignments") && q.contains("systemtender_f0e0fb34") && q.contains("'sender'")));
-    assert!(queries.iter().any(|q| q.contains("INSERT INTO wish_assignments") && q.contains("systemtender_92a33fa9") && q.contains("'receiver'")));
+    let declared = svc.create_wish(&declare_wish_payload());
+    let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
+    // the db name is the call's TARGET, never the query text - read
+    // the recorded (database, query) pairs
+    let calls = db.calls.lock().unwrap().clone();
+    let note = |db_frag: &str, role: &str| {
+        calls.iter().any(|(d, q)| {
+            d.contains(db_frag) && q.contains("INSERT INTO wish_assignments") && q.contains(role)
+        })
+    };
+    assert!(note("systemtender_f0e0fb34", "'sender'"), "calls: {:#?}", calls);
+    assert!(note("systemtender_92a33fa9", "'receiver'"), "calls: {:#?}", calls);
 }
 
 #[test]
 fn write_wish_assignment_defaults_to_sender_role() {
     let (svc, db, _c) = sender_and_receiver_notes(planned_response());
-    let _ = svc.create_wish(&declare_wish_payload());
-    let first = db.queries().iter().find(|q| q.contains("INSERT INTO wish_assignments")).expect("planted");
+    let declared = svc.create_wish(&declare_wish_payload());
+    let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
+    let first = db.queries().into_iter().find(|q| q.contains("INSERT INTO wish_assignments")).expect("planted");
     assert!(first.contains("'sender'"));
 }
 
@@ -598,7 +612,8 @@ fn no_receiver_note_when_self_wish() {
     plan["path"] = json!(["f0e0fb34-aaaa-bbbb-cccc-ddddeeeeffff"]);
     plan["moves"][0]["sender"] = json!("f0e0fb34-aaaa-bbbb-cccc-ddddeeeeffff");
     let (svc, db, _c) = sender_and_receiver_notes(plan);
-    let _ = svc.create_wish(&declare_wish_payload());
+    let declared = svc.create_wish(&declare_wish_payload());
+    let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
     let count = db.queries().iter().filter(|q| q.contains("INSERT INTO wish_assignments")).count();
     assert_eq!(count, 1);
 }
@@ -610,8 +625,8 @@ fn create_config() -> Value {
         "meta": {"configVersion": "0.3"},
         "systemtender": {"type": "linux_performance"},
         "objectives": [{"name": "latency", "reconnaissance": {"service": "prometheus", "query": "rate(x)"}}],
-        "run": {"parallel": 1},
-        "effectuation": {"targetRefs": []},
+        "run": {"parallel": 2},
+        "effectuation": {"targetRefs": ["t1"]},
         "settings": {"sysctl": {"vm.swappiness": {"constraints": [{"step": 5, "lower": 0, "upper": 100}]}}},
         "cooperation": {"active": true},
     })
@@ -619,6 +634,9 @@ fn create_config() -> Value {
 
 fn fast_create_db() -> Arc<FakeDb> {
     arc_db(|_db, q| {
+        if q.contains("FROM targets") {
+            return Ok(Some(vec![row(&[Some("t1"), Some("t1"), Some("ssh"), Some(r#"{"address": "host-a"}"#), None, Some("2026-10-10 09:00:00+00"), None])])); 
+        }
         if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
         if q.contains("SELECT id, name, creation_tsz FROM") { return Ok(Some(vec![])); }
         if q.contains("FROM systemtender_meta_data WHERE id") { return Ok(Some(vec![])); }
@@ -630,10 +648,10 @@ fn fast_create_db() -> Arc<FakeDb> {
 
 #[test]
 fn create_plants_row_creating_and_dispatches_executor() {
-    let wmill = FakeWindmill::default();
+    let wmill = Arc::new(FakeWindmill::default());
     wmill.queue_async(Ok("executor-job".to_string()));
     let db = fast_create_db();
-    let svc = SystemtenderService::with_parts(db.clone(), Arc::new(wmill.clone()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
     let result = svc.create_systemtender(create_config(), "bench-tender");
     assert_eq!(result["result"], "SUCCESS");
     assert_eq!(result["data"]["status"], "creating");
@@ -667,6 +685,9 @@ fn duplicate_name_answers_the_visible_state() {
         let existing_id = "550e8400-e29b-41d4-a716-446655440000";
         let db = arc_db(move |_db, q| {
             if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
+            if q.contains("FROM targets") {
+                return Ok(Some(vec![row(&[Some("t1"), Some("t1"), Some("ssh"), Some(r#"{"address": "host-a"}"#), None, Some("2026-10-10 09:00:00+00"), None])]));
+            }
             if q.contains("SELECT id, name, creation_tsz FROM") {
                 return Ok(Some(vec![row(&[Some(existing_id), Some("bench-tender"), Some("2026-10-10 09:00:00+00")])]));
             }
@@ -709,14 +730,14 @@ fn get_answers_creating_with_creation_reason() {
 
 #[test]
 fn deletion_claim_takes_over_create_failed_rows() {
-    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig};
+    use godon_controller::database::{DbConfig, MetadataDatabaseRepository};
     let db = arc_db(|_db, q| {
         if q.contains("RETURNING systemtender_id") {
             return Ok(Some(vec![row(&[Some("claimed")])]));
         }
         Ok(None)
     });
-    let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db.clone());
+    let repo = MetadataDatabaseRepository::with_gateway(DbConfig::default(), db.clone());
     assert!(repo.claim_for_deletion("some-uuid", 300).unwrap());
     assert!(db.queries().iter().any(|q| q.contains("state = 'create-failed'")));
 }
