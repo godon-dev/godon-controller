@@ -585,19 +585,16 @@ fn sender_and_receiver_notes_planted() {
     let (svc, db, _c) = sender_and_receiver_notes(planned_response());
     let declared = svc.create_wish(&declare_wish_payload());
     let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
-    let queries = db.queries();
-    let assignments: Vec<&String> = queries
-        .iter()
-        .filter(|q| q.contains("INSERT INTO wish_assignments"))
-        .collect();
-    assert!(
-        !assignments.is_empty() || true,
-        "debug: {} assignment inserts, queries: {:#?}",
-        assignments.len(),
-        queries
-    );
-    assert!(queries.iter().any(|q| q.contains("INSERT INTO wish_assignments") && q.contains("systemtender_f0e0fb34") && q.contains("'sender'")));
-    assert!(queries.iter().any(|q| q.contains("INSERT INTO wish_assignments") && q.contains("systemtender_92a33fa9") && q.contains("'receiver'")));
+    // the db name is the call's TARGET, never the query text - read
+    // the recorded (database, query) pairs
+    let calls = db.calls.lock().unwrap().clone();
+    let note = |db_frag: &str, role: &str| {
+        calls.iter().any(|(d, q)| {
+            d.contains(db_frag) && q.contains("INSERT INTO wish_assignments") && q.contains(role)
+        })
+    };
+    assert!(note("systemtender_f0e0fb34", "'sender'"), "calls: {:#?}", calls);
+    assert!(note("systemtender_92a33fa9", "'receiver'"), "calls: {:#?}", calls);
 }
 
 #[test]
