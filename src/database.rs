@@ -82,6 +82,20 @@ fn text_cell(cell: Option<&str>) -> Option<String> {
     cell.map(|s| s.to_string())
 }
 
+/// Python stored NULL for falsy JSON values, and the api's defaults
+/// ARE falsy (metadata {} arrives on every credential/target create) -
+/// so the NULL-vs-'{}' split is live stored state, not a quirk.
+fn py_falsy(v: &Value) -> bool {
+    match v {
+        Value::Null => true,
+        Value::Bool(b) => !*b,
+        Value::Number(n) => n.as_f64().map(|f| f == 0.0).unwrap_or(false),
+        Value::String(s) => s.is_empty(),
+        Value::Array(a) => a.is_empty(),
+        Value::Object(o) => o.is_empty(),
+    }
+}
+
 fn rows_from_simple(messages: &[postgres::SimpleQueryMessage]) -> Vec<TextRow> {
     messages
         .iter()
@@ -811,7 +825,7 @@ impl MetadataDatabaseRepository {
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
         let metadata_json = match metadata {
-            Some(m) if !m.is_null() => format!("'{}'", serde_json::to_string(m).unwrap_or_default().replace('\'', "''")),
+            Some(m) if !py_falsy(m) => format!("'{}'", serde_json::to_string(m).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
         let description_escaped = match description {
@@ -1076,7 +1090,7 @@ impl MetadataDatabaseRepository {
         let db_config = self._get_db_config();
         let band_json = format!("'{}'::jsonb", serde_json::to_string(band).unwrap_or_default().replace('\'', "''"));
         let limits_json = match limits {
-            Some(l) if !l.is_null() => format!("'{}'::jsonb", serde_json::to_string(l).unwrap_or_default().replace('\'', "''")),
+            Some(l) if !py_falsy(l) => format!("'{}'::jsonb", serde_json::to_string(l).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
         let budget_sql = match budget {
@@ -1140,7 +1154,7 @@ impl MetadataDatabaseRepository {
         let db_config = self._get_db_config();
         let band_json = format!("'{}'", serde_json::to_string(band).unwrap_or_default().replace('\'', "''"));
         let limits_json = match limits {
-            Some(l) if !l.is_null() => format!("'{}'::jsonb", serde_json::to_string(l).unwrap_or_default().replace('\'', "''")),
+            Some(l) if !py_falsy(l) => format!("'{}'::jsonb", serde_json::to_string(l).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
         let budget_sql = match budget {
@@ -1150,11 +1164,11 @@ impl MetadataDatabaseRepository {
         let outcome_sql = outcome.replace('\'', "''");
         let regime_sql = regime.replace('\'', "''");
         let claims_json = match claims {
-            Some(c) if !c.is_null() => format!("'{}'::jsonb", serde_json::to_string(c).unwrap_or_default().replace('\'', "''")),
+            Some(c) if !py_falsy(c) => format!("'{}'::jsonb", serde_json::to_string(c).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
         let terms_json = match terms {
-            Some(t) if !t.is_null() => format!("'{}'::jsonb", serde_json::to_string(t).unwrap_or_default().replace('\'', "''")),
+            Some(t) if !py_falsy(t) => format!("'{}'::jsonb", serde_json::to_string(t).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
 
@@ -1377,7 +1391,7 @@ impl MetadataDatabaseRepository {
             spec.as_str().map(|s| s.to_string()).unwrap_or_default()
         };
         let metadata_json = match metadata {
-            Some(m) if !m.is_null() => format!("'{}'::jsonb", serde_json::to_string(m).unwrap_or_default().replace('\'', "''")),
+            Some(m) if !py_falsy(m) => format!("'{}'::jsonb", serde_json::to_string(m).unwrap_or_default().replace('\'', "''")),
             _ => "NULL".to_string(),
         };
 
