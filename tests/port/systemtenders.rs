@@ -262,7 +262,9 @@ fn delete_rides_along_when_an_executor_holds_the_claim() {
 #[test]
 fn delete_waits_for_terminal_jobs_before_drop() {
     let wmill = FakeWindmill::default();
-    // round 1: both jobs still running; round 2: both gone (terminal)
+    // rounds 1 and 2: both jobs still running; round 3: both gone
+    wmill.queue_job(Some(json!({"status": "Running"})));
+    wmill.queue_job(Some(json!({"status": "Running"})));
     wmill.queue_job(Some(json!({"status": "Running"})));
     wmill.queue_job(Some(json!({"status": "Running"})));
     let (svc, db) = service_with_jobs(&["job-1", "job-2"], Arc::new(wmill));
@@ -572,6 +574,7 @@ fn sender_and_receiver_notes(planned: Value) -> (WishService, Arc<FakeDb>, Arc<F
 
 fn declare_wish_payload() -> Value {
     json!({
+        "type": "steer",
         "claims": [{"outcome": "rcv/objective_0", "band": {"lo": 1.7, "hi": 2.0, "target": 1.85}}],
         "answer": "now",
     })
