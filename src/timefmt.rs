@@ -7,7 +7,7 @@
 //!   "+HH:MM" offset with colon, six-digit fraction only when nonzero
 //!   (what psycopg2's datetimes produced)
 
-use chrono::Local;
+use chrono::{Local, Timelike};
 
 pub fn now_iso_naive() -> String {
     let dt = Local::now().naive_local();

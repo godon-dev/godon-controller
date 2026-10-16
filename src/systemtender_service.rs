@@ -1109,7 +1109,7 @@ impl SystemtenderService {
             let Some(last) = last else {
                 return Ok((true, "No completed trials".to_string()));
             };
-            let trial_id = last[0].clone().unwrap_or_default();
+            let trial_id = last[0][0].clone().unwrap_or_default();
             let params = run(&format!(
                 "SELECT COUNT(*) FROM trial_params WHERE trial_id = '{}';",
                 trial_id
@@ -1117,7 +1117,7 @@ impl SystemtenderService {
             let old_param_count: i64 = params
                 .and_then(|r| r.first().cloned())
                 .and_then(|row| row[0].clone())
-                .and_then(|t| t.parse())
+                .and_then(|t| t.parse().ok())
                 .unwrap_or(0);
             let values = run(&format!(
                 "SELECT COUNT(*) FROM trial_values WHERE trial_id = '{}';",
@@ -1126,7 +1126,7 @@ impl SystemtenderService {
             let old_obj_count: i64 = values
                 .and_then(|r| r.first().cloned())
                 .and_then(|row| row[0].clone())
-                .and_then(|t| t.parse())
+                .and_then(|t| t.parse().ok())
                 .unwrap_or(0);
 
             let new_param_count = self.count_config_params(new_config);
