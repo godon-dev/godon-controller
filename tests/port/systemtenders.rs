@@ -278,7 +278,7 @@ fn delete_waits_for_terminal_jobs_before_drop() {
 fn wait_fails_closed_when_a_job_never_quiesces() {
     // the bounded wait itself (the service path rides the same fn with
     // the estate's 30s bound - too slow for CI, pinned here at 1s)
-    let wmill = FakeWindmill::default();
+    let wmill = Arc::new(FakeWindmill::default());
     wmill.queue_job(Some(json!({"status": "Running"})));
     let stragglers = wait_for_jobs_to_quiesce(wmill.as_ref(), &["job-stuck".to_string()], 1);
     assert_eq!(stragglers, vec!["job-stuck".to_string()]);
@@ -562,7 +562,7 @@ fn wish_door_db(heartbeat: &'static str) -> Arc<FakeDb> {
 }
 
 fn sender_and_receiver_notes(planned: Value) -> (WishService, Arc<FakeDb>, Arc<FakeCausal>) {
-    let causal = FakeCausal::default();
+    let causal = Arc::new(FakeCausal::default());
     causal.queue_ask(Ok(planned));
     let db = wish_door_db("5.0");
     let svc = WishService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), causal.clone(), true);
