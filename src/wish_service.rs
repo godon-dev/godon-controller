@@ -371,8 +371,8 @@ impl WishService {
         if options.0 == "now" {
             self.ask_causal_to_plan(
                 &wish_id,
-                claims.as_array(),
-                terms.as_array(),
+                Some(&claims),
+                Some(&terms),
                 limits.filter(|l| !l.is_null()),
                 budget,
                 Some(&options.1),
