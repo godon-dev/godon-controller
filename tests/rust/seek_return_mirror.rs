@@ -64,11 +64,14 @@ fn service(
         if q.contains("INSERT INTO steerwish_events") {
             return Ok(None);
         }
-        if q.contains("FROM steerwish_events") {
-            return Ok(Some(events.clone()));
-        }
+        // the wish fetch embeds an events subquery and names BOTH
+        // tables - the wish-table check must come first, as the real
+        // database resolves by table, not by substring.
         if q.contains("FROM steerwishes") {
             return Ok(Some(vec![wish_row(seek.as_deref())]));
+        }
+        if q.contains("FROM steerwish_events") {
+            return Ok(Some(events.clone()));
         }
         if q.contains("FROM steerwish_lifecycle") {
             return Ok(Some(vec![]));
