@@ -6,7 +6,7 @@
 //! steerwish set. Next: credentials and targets.
 
 use crate::database::{DbConfig, MetadataDatabaseRepository};
-use crate::steerwish_service::SteerwishService;
+use crate::wish_service::WishService;
 use crate::systemtender_service::SystemtenderService;
 use crate::timefmt::pg_ts_to_iso;
 use serde_json::{json, Value};
@@ -25,12 +25,12 @@ pub fn dispatch(verb: &str, args: &Value) -> Value {
         "systemtender_start" => systemtender_start(rd),
         "systemtender_stop" => systemtender_stop(rd),
         "systemtenders_get" => systemtenders_get(rd),
-        "steerwish_create" => steerwish_create(rd),
-        "steerwish_get" => steerwish_get(rd),
-        "steerwish_close" => steerwish_close(rd),
-        "steerwish_update" => steerwish_update(rd),
-        "steerwish_delete" => steerwish_delete(rd),
-        "steerwishes_get" => steerwishes_get(rd),
+        "steerwish_create" => wish_create(rd),
+        "steerwish_get" => wish_get(rd),
+        "steerwish_close" => wish_close(rd),
+        "steerwish_update" => wish_update(rd),
+        "steerwish_delete" => wish_delete(rd),
+        "steerwishes_get" => wishes_get(rd),
         "credential_create" => credential_create(rd),
         "credential_get" => credential_get(rd),
         "credential_delete" => credential_delete(rd),
@@ -145,8 +145,8 @@ fn systemtenders_get(_rd: &Value) -> Value {
 
 // ── steerwishes ────────────────────────────────────────────────────
 
-fn steerwish_create(rd: &Value) -> Value {
-    let service = SteerwishService::new(true);
+fn wish_create(rd: &Value) -> Value {
+    let service = WishService::new(true);
     match service.create_steerwish(rd) {
         Ok(wish) => wish,
         Err(e) => {
@@ -156,12 +156,12 @@ fn steerwish_create(rd: &Value) -> Value {
     }
 }
 
-fn steerwish_get(rd: &Value) -> Value {
+fn wish_get(rd: &Value) -> Value {
     let wish_id = rd.get("wish_id").and_then(|v| v.as_str());
     let Some(wish_id) = wish_id.filter(|s| !s.is_empty()) else {
         return json!({"result": "FAILURE", "error": "Missing wish_id"});
     };
-    let service = SteerwishService::new(false);
+    let service = WishService::new(false);
     match service.get_steerwish(wish_id) {
         Ok(Some(wish)) => wish,
         Ok(None) => json!({"result": "FAILURE", "error": format!("steerwish not found: {}", wish_id)}),
@@ -172,12 +172,12 @@ fn steerwish_get(rd: &Value) -> Value {
     }
 }
 
-fn steerwish_close(rd: &Value) -> Value {
+fn wish_close(rd: &Value) -> Value {
     let wish_id = rd.get("wish_id").and_then(|v| v.as_str());
     let Some(wish_id) = wish_id.filter(|s| !s.is_empty()) else {
         return json!({"result": "FAILURE", "error": "Missing wish_id"});
     };
-    let service = SteerwishService::new(true);
+    let service = WishService::new(true);
     match service.close_steerwish(wish_id) {
         Ok(Some(wish)) => wish,
         Ok(None) => json!({"result": "FAILURE", "error": format!("steerwish not found: {}", wish_id)}),
@@ -188,7 +188,7 @@ fn steerwish_close(rd: &Value) -> Value {
     }
 }
 
-fn steerwish_update(rd: &Value) -> Value {
+fn wish_update(rd: &Value) -> Value {
     let wish_id = rd.get("wish_id").and_then(|v| v.as_str());
     let Some(wish_id) = wish_id.filter(|s| !s.is_empty()) else {
         return json!({"result": "FAILURE", "error": "Missing wish_id"});
@@ -200,7 +200,7 @@ fn steerwish_update(rd: &Value) -> Value {
             "error": "Missing claims ([{outcome, band}]) - the sugar shape is retired"
         });
     }
-    let service = SteerwishService::new(true);
+    let service = WishService::new(true);
     let payload = json!({
         "claims": rd.get("claims").cloned().unwrap_or(Value::Null),
         "terms": rd.get("terms").cloned().unwrap_or(Value::Null),
@@ -214,17 +214,17 @@ fn steerwish_update(rd: &Value) -> Value {
     }
 }
 
-fn steerwish_delete(rd: &Value) -> Value {
+fn wish_delete(rd: &Value) -> Value {
     let wish_id = rd.get("wish_id").and_then(|v| v.as_str());
     let Some(wish_id) = wish_id.filter(|s| !s.is_empty()) else {
         return json!({"result": "FAILURE", "error": "Missing wish_id"});
     };
-    let service = SteerwishService::new(true);
-    service.delete_steerwish(wish_id)
+    let service = WishService::new(true);
+    service.delete_wish(wish_id)
 }
 
-fn steerwishes_get(_rd: &Value) -> Value {
-    let service = SteerwishService::new(false);
+fn wishes_get(_rd: &Value) -> Value {
+    let service = WishService::new(false);
     match service.list_steerwishes() {
         Ok(summaries) => Value::Array(summaries),
         Err(e) => {

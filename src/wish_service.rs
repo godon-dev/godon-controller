@@ -1,5 +1,5 @@
-//! The steerwish registry + lifecycle, ported from
-//! controller/steerwish_service.py. The controller owns the wish
+//! The wish registry + lifecycle, ported from
+//! controller/wish_service.py. The controller owns the wish
 //! OBJECT and its lifecycle; causal owns the steering CALCULATION -
 //! this service asks, never computes. State is the latest lifecycle
 //! event, derived on read, never stored.
@@ -21,7 +21,7 @@ pub fn heartbeat_fallback_ttl_secs() -> f64 {
         .unwrap_or(60.0)
 }
 
-pub fn checked_band(band: &Value, where_: &str) -> Result<Value, String> {
+pub fn checked_steer_band(band: &Value, where_: &str) -> Result<Value, String> {
     let is_band = band
         .as_object()
         .map(|o| o.contains_key("lo") && o.contains_key("hi"))
@@ -56,7 +56,7 @@ pub fn checked_band(band: &Value, where_: &str) -> Result<Value, String> {
     Ok(band.clone())
 }
 
-pub fn checked_claim(claim: &Value, where_: &str) -> Result<Value, String> {
+pub fn checked_steer_claim(claim: &Value, where_: &str) -> Result<Value, String> {
     if !claim.is_object() {
         return Err(format!("{} must be an object (outcome, band)", where_));
     }
@@ -77,7 +77,7 @@ pub fn checked_claim(claim: &Value, where_: &str) -> Result<Value, String> {
             where_
         ));
     }
-    let band = checked_claim_band(claim, where_)?;
+    let band = checked_steer_claim_band(claim, where_)?;
     let mut m = Map::new();
     m.insert(
         "outcome".to_string(),
@@ -87,20 +87,20 @@ pub fn checked_claim(claim: &Value, where_: &str) -> Result<Value, String> {
     Ok(Value::Object(m))
 }
 
-fn checked_claim_band(claim: &Value, where_: &str) -> Result<Value, String> {
+fn checked_steer_claim_band(claim: &Value, where_: &str) -> Result<Value, String> {
     match claim.get("band") {
-        Some(b) => checked_band(b, &format!("{}.band", where_)),
+        Some(b) => checked_steer_band(b, &format!("{}.band", where_)),
         None => Err(format!("{}.band requires lo and hi (in the outcome measurement units)", where_)),
     }
 }
 
-pub struct SteerwishService {
+pub struct WishService {
     pub repo: MetadataDatabaseRepository,
     pub archive_repo: Option<ArchiveDatabaseRepository>,
     pub causal: Arc<dyn CausalClient>,
 }
 
-impl SteerwishService {
+impl WishService {
     pub fn new(with_archive: bool) -> Self {
         Self {
             repo: MetadataDatabaseRepository::new(DbConfig::meta_from_env()),
@@ -133,7 +133,7 @@ impl SteerwishService {
     }
 
     fn ensure_registry(&self) -> Result<(), String> {
-        self.repo.create_steerwish_tables().map_err(|e| e.0)
+        self.repo.create_wish_tables().map_err(|e| e.0)
     }
 
     pub fn create_steerwish(&self, payload: &Value) -> Result<Value, String> {
@@ -166,11 +166,11 @@ impl SteerwishService {
 
         let mut claims: Vec<Value> = Vec::new();
         for (i, c) in claims_list.iter().enumerate() {
-            claims.push(checked_claim(c, &format!("claims[{}]", i))?);
+            claims.push(checked_steer_claim(c, &format!("claims[{}]", i))?);
         }
         let mut terms: Vec<Value> = Vec::new();
         for (i, t) in terms_list.iter().enumerate() {
-            terms.push(checked_claim(t, &format!("terms[{}]", i))?);
+            terms.push(checked_steer_claim(t, &format!("terms[{}]", i))?);
         }
 
         let mut names: Vec<String> = Vec::new();
@@ -259,7 +259,7 @@ impl SteerwishService {
         let wish_id = Uuid::new_v4().to_string();
         self.ensure_registry()?;
         self.repo
-            .insert_steerwish(
+            .insert_wish(
                 &wish_id,
                 &outcome,
                 &band,
@@ -271,7 +271,7 @@ impl SteerwishService {
             )
             .map_err(|e| e.0)?;
         self.repo
-            .insert_steerwish_event(&wish_id, "declared", None)
+            .insert_wish_event(&wish_id, "declared", None)
             .map_err(|e| e.0)?;
         info!("Steerwish declared: {} (outcome: {})", wish_id, outcome);
 
@@ -291,17 +291,17 @@ impl SteerwishService {
 
     pub fn get_steerwish(&self, wish_id: &str) -> Result<Option<Value>, String> {
         self.ensure_registry()?;
-        let mut row = match self.repo.fetch_steerwish_by_id(wish_id).map_err(|e| e.0)? {
+        let mut row = match self.repo.fetch_wish_by_id(wish_id).map_err(|e| e.0)? {
             Some(r) => r,
             None => return Ok(None),
         };
         if self.fold_in_book(wish_id) > 0 {
-            row = match self.repo.fetch_steerwish_by_id(wish_id).map_err(|e| e.0)? {
+            row = match self.repo.fetch_wish_by_id(wish_id).map_err(|e| e.0)? {
                 Some(r) => r,
                 None => return Ok(None),
             };
         }
-        let events = self.repo.fetch_steerwish_events(wish_id).map_err(|e| e.0)?;
+        let events = self.repo.fetch_wish_events(wish_id).map_err(|e| e.0)?;
         let mut wish = self.format_wish(&row, &events);
 
         if let Some(lifecycle) = self.repo.get_wish_lifecycle(wish_id).map_err(|e| e.0)? {
@@ -321,13 +321,13 @@ impl SteerwishService {
 
     pub fn list_steerwishes(&self) -> Result<Vec<Value>, String> {
         self.ensure_registry()?;
-        let rows = self.repo.fetch_steerwishes_list().map_err(|e| e.0)?;
+        let rows = self.repo.fetch_wishes_list().map_err(|e| e.0)?;
         for row in &rows {
             if row[2].as_deref() != Some("closed") {
                 self.fold_in_book(&row[0].clone().unwrap_or_default());
             }
         }
-        let rows = self.repo.fetch_steerwishes_list().map_err(|e| e.0)?;
+        let rows = self.repo.fetch_wishes_list().map_err(|e| e.0)?;
         let markers = self.repo.get_all_wish_lifecycle().map_err(|e| e.0)?;
         let mut summaries: Vec<Value> = rows.iter().map(|r| self.format_summary(r)).collect();
         for summary in summaries.iter_mut() {
@@ -350,7 +350,7 @@ impl SteerwishService {
             return Ok(Some(wish));
         }
         self.repo
-            .insert_steerwish_event(wish_id, "closed", None)
+            .insert_wish_event(wish_id, "closed", None)
             .map_err(|e| e.0)?;
         self.unassign_wish(&wish);
         self.get_steerwish(wish_id)
@@ -383,7 +383,7 @@ impl SteerwishService {
         };
         let mut claims: Vec<Value> = Vec::new();
         for (i, c) in claims_list.iter().enumerate() {
-            claims.push(checked_claim(c, &format!("claims[{}]", i))?);
+            claims.push(checked_steer_claim(c, &format!("claims[{}]", i))?);
         }
         let terms_list: Vec<Value> = payload
             .get("terms")
@@ -392,7 +392,7 @@ impl SteerwishService {
             .unwrap_or_default();
         let mut terms: Vec<Value> = Vec::new();
         for (i, t) in terms_list.iter().enumerate() {
-            terms.push(checked_claim(t, &format!("terms[{}]", i))?);
+            terms.push(checked_steer_claim(t, &format!("terms[{}]", i))?);
         }
 
         let mut names: Vec<String> = Vec::new();
@@ -439,7 +439,7 @@ impl SteerwishService {
 
         self.ensure_registry()?;
         self.repo
-            .update_steerwish_terms(
+            .update_wish_terms(
                 wish_id,
                 &claims[0].get("band").cloned().unwrap_or(Value::Null),
                 limits,
@@ -450,7 +450,7 @@ impl SteerwishService {
             .map_err(|e| e.0)?;
         let corrected_detail = json!({"reason": reason, "previous_band": old_band});
         self.repo
-            .insert_steerwish_event(
+            .insert_wish_event(
                 wish_id,
                 "corrected",
                 Some(&serde_json::to_string(&corrected_detail).unwrap_or_default()),
@@ -468,10 +468,10 @@ impl SteerwishService {
             .ok_or_else(|| format!("inserted steerwish vanished: {}", wish_id))
     }
 
-    pub fn delete_steerwish(&self, wish_id: &str) -> Value {
+    pub fn delete_wish(&self, wish_id: &str) -> Value {
         let outcome = (|| -> Result<Value, String> {
             self.ensure_registry()?;
-            if self.repo.fetch_steerwish_by_id(wish_id).map_err(|e| e.0)?.is_none() {
+            if self.repo.fetch_wish_by_id(wish_id).map_err(|e| e.0)?.is_none() {
                 self.repo.remove_wish_lifecycle(wish_id).map_err(|e| e.0)?;
                 info!("Delete of steerwish {}: already gone", wish_id);
                 return Ok(json!({
@@ -526,7 +526,7 @@ impl SteerwishService {
                 Ok(Some(_)) => {}
             }
 
-            self.repo.delete_steerwish(wish_id).map_err(|e| e.0)?;
+            self.repo.delete_wish(wish_id).map_err(|e| e.0)?;
             self.repo.remove_wish_lifecycle(wish_id).map_err(|e| e.0)?;
             info!("Steerwish purged: {}", wish_id);
             Ok(json!({
@@ -589,14 +589,14 @@ impl SteerwishService {
             let Some(event) = e.get("event").and_then(|ev| ev.as_str()) else {
                 continue;
             };
-            let Ok(seen) = self.repo.has_steerwish_event_at(wish_id, event, tsz) else {
+            let Ok(seen) = self.repo.has_wish_event_at(wish_id, event, tsz) else {
                 continue;
             };
             if seen {
                 continue;
             }
             let detail = json!({"at": tsz, "book": e.get("detail").cloned().unwrap_or(Value::Null)});
-            if let Err(ex) = self.repo.insert_steerwish_event_at(
+            if let Err(ex) = self.repo.insert_wish_event_at(
                 wish_id,
                 event,
                 &serde_json::to_string(&detail).unwrap_or_default(),
@@ -662,7 +662,7 @@ impl SteerwishService {
             Err(e) => {
                 warn!("Wish {}: plan ask failed: {}", wish_id, e);
                 let detail = json!({"error": e});
-                let _ = self.repo.insert_steerwish_event(
+                let _ = self.repo.insert_wish_event(
                     wish_id,
                     "plan_error",
                     Some(&serde_json::to_string(&detail).unwrap_or_default()),
@@ -672,7 +672,7 @@ impl SteerwishService {
         };
 
         if plan_response.get("status") == Some(&Value::String("planned".to_string())) {
-            let _ = self.repo.insert_steerwish_event(
+            let _ = self.repo.insert_wish_event(
                 wish_id,
                 "planned",
                 Some(&serde_json::to_string(&plan_response).unwrap_or_default()),
@@ -713,7 +713,7 @@ impl SteerwishService {
                             sender, reason
                         )
                     });
-                    let _ = self.repo.insert_steerwish_event(
+                    let _ = self.repo.insert_wish_event(
                         wish_id,
                         "plan_error",
                         Some(&serde_json::to_string(&detail).unwrap_or_default()),
@@ -724,7 +724,7 @@ impl SteerwishService {
                     match archive.write_wish_assignment(&db_name, wish_id, "sender") {
                         Ok(()) => {
                             let detail = json!({"sender": sender, "db": db_name});
-                            let _ = self.repo.insert_steerwish_event(
+                            let _ = self.repo.insert_wish_event(
                                 wish_id,
                                 "assigned",
                                 Some(&serde_json::to_string(&detail).unwrap_or_default()),
@@ -734,7 +734,7 @@ impl SteerwishService {
                         Err(e) => {
                             warn!("Wish {}: assignment write failed: {}", wish_id, e.0);
                             let detail = json!({"error": format!("assignment write failed: {}", e.0)});
-                            let _ = self.repo.insert_steerwish_event(
+                            let _ = self.repo.insert_wish_event(
                                 wish_id,
                                 "plan_error",
                                 Some(&serde_json::to_string(&detail).unwrap_or_default()),
@@ -752,7 +752,7 @@ impl SteerwishService {
                                         "db": receiver_db,
                                         "role": "receiver",
                                     });
-                                    let _ = self.repo.insert_steerwish_event(
+                                    let _ = self.repo.insert_wish_event(
                                         wish_id,
                                         "assigned",
                                         Some(&serde_json::to_string(&detail).unwrap_or_default()),
@@ -763,7 +763,7 @@ impl SteerwishService {
                                     warn!("Wish {}: receiver note failed: {}", wish_id, e.0);
                                     let detail =
                                         json!({"error": format!("receiver note failed: {}", e.0)});
-                                    let _ = self.repo.insert_steerwish_event(
+                                    let _ = self.repo.insert_wish_event(
                                         wish_id,
                                         "plan_error",
                                         Some(&serde_json::to_string(&detail).unwrap_or_default()),
@@ -781,7 +781,7 @@ impl SteerwishService {
                 "reason": plan_response.get("reason").cloned().unwrap_or(Value::Null),
                 "detail": plan_response.get("detail").cloned().unwrap_or(Value::Null),
             });
-            let _ = self.repo.insert_steerwish_event(
+            let _ = self.repo.insert_wish_event(
                 wish_id,
                 "refused",
                 Some(&serde_json::to_string(&detail).unwrap_or_default()),

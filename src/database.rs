@@ -927,10 +927,10 @@ impl MetadataDatabaseRepository {
         Ok(())
     }
 
-    /// Create the steerwish registry + lifecycle event tables. The wish
+    /// Create the wish registry + lifecycle event tables. The wish
     /// OBJECT and its lifecycle live here (controller-owned); all
     /// steering CALCULATION lives in causal, keyed by wish id.
-    pub fn create_steerwish_tables(&self) -> DbResult<()> {
+    pub fn create_wish_tables(&self) -> DbResult<()> {
         let db_config = self._get_db_config();
 
         let query = format!(
@@ -1078,7 +1078,7 @@ impl MetadataDatabaseRepository {
 
     /// Holder correction: restate the terms on the same identity. NULL
     /// (absent) claims/terms leave the stored column untouched.
-    pub fn update_steerwish_terms(
+    pub fn update_wish_terms(
         &self,
         wish_id: &str,
         band: &Value,
@@ -1128,7 +1128,7 @@ impl MetadataDatabaseRepository {
     }
 
     /// Administrative purge: remove the registry row; events cascade.
-    pub fn delete_steerwish(&self, wish_id: &str) -> DbResult<()> {
+    pub fn delete_wish(&self, wish_id: &str) -> DbResult<()> {
         let db_config = self._get_db_config();
         let wid = wish_id.replace('\'', "''");
         let query = format!("DELETE FROM {} WHERE id = '{}';", self.steerwishes_table_name, wid);
@@ -1140,7 +1140,7 @@ impl MetadataDatabaseRepository {
     /// Insert a declared steerwish (the 'declared' event is appended by
     /// the caller).
     #[allow(clippy::too_many_arguments)]
-    pub fn insert_steerwish(
+    pub fn insert_wish(
         &self,
         wish_id: &str,
         outcome: &str,
@@ -1194,7 +1194,7 @@ impl MetadataDatabaseRepository {
     }
 
     /// Fetch one steerwish row with its derived state (latest event).
-    pub fn fetch_steerwish_by_id(&self, wish_id: &str) -> DbResult<Option<TextRow>> {
+    pub fn fetch_wish_by_id(&self, wish_id: &str) -> DbResult<Option<TextRow>> {
         let db_config = self._get_db_config();
         let wish_id_sql = wish_id.replace('\'', "''");
 
@@ -1219,7 +1219,7 @@ impl MetadataDatabaseRepository {
     }
 
     /// Fetch all steerwishes with derived state, newest first.
-    pub fn fetch_steerwishes_list(&self) -> DbResult<Vec<TextRow>> {
+    pub fn fetch_wishes_list(&self) -> DbResult<Vec<TextRow>> {
         let db_config = self._get_db_config();
 
         let query = format!(
@@ -1243,7 +1243,7 @@ impl MetadataDatabaseRepository {
     }
 
     /// Append a lifecycle event to a wish.
-    pub fn insert_steerwish_event(
+    pub fn insert_wish_event(
         &self,
         wish_id: &str,
         event_type: &str,
@@ -1270,7 +1270,7 @@ impl MetadataDatabaseRepository {
     }
 
     /// Fetch a wish's lifecycle events, oldest first.
-    pub fn fetch_steerwish_events(&self, wish_id: &str) -> DbResult<Vec<TextRow>> {
+    pub fn fetch_wish_events(&self, wish_id: &str) -> DbResult<Vec<TextRow>> {
         let db_config = self._get_db_config();
         let wish_id_sql = wish_id.replace('\'', "''");
 
@@ -1293,7 +1293,7 @@ impl MetadataDatabaseRepository {
     /// Append an event stamped at a book timestamp - the lazy fold-in's
     /// write. Mirrored events carry causal's own time so the registry's
     /// ordering matches the book's.
-    pub fn insert_steerwish_event_at(
+    pub fn insert_wish_event_at(
         &self,
         wish_id: &str,
         event_type: &str,
@@ -1323,7 +1323,7 @@ impl MetadataDatabaseRepository {
     }
 
     /// The fold-in's dedupe: this book event already mirrored?
-    pub fn has_steerwish_event_at(&self, wish_id: &str, event_type: &str, at_epoch: f64) -> DbResult<bool> {
+    pub fn has_wish_event_at(&self, wish_id: &str, event_type: &str, at_epoch: f64) -> DbResult<bool> {
         let db_config = self._get_db_config();
         let wish_id_sql = wish_id.replace('\'', "''");
         let event_type_sql = event_type.replace('\'', "''");
