@@ -297,13 +297,13 @@ fn delete_proceeds_when_job_history_is_gone() {
 
 #[test]
 fn terminal_state_maps_status_wordings() {
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.queue_job(Some(json!({"status": "Canceled"})));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.queue_job(Some(json!({"status": "Canceling"})));
     assert!(!job_reached_terminal_state(w.as_ref(), "job-x"));
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.queue_job(Some(json!({"status": "completed"})));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
 }
@@ -311,12 +311,12 @@ fn terminal_state_maps_status_wordings() {
 #[test]
 fn terminal_state_reads_v2_type_shape() {
     for word in ["CompletedJob", "CanceledJob", "FailedJob"] {
-        let w = FakeWindmill::default();
+        let w = Arc::new(FakeWindmill::default());
         w.queue_job(Some(json!({"type": word, "workspace_id": "godon"})));
         assert!(job_reached_terminal_state(w.as_ref(), "job-x"), "{word}");
     }
     for word in ["RunningJob", "QueuedJob"] {
-        let w = FakeWindmill::default();
+        let w = Arc::new(FakeWindmill::default());
         w.queue_job(Some(json!({"type": word})));
         assert!(!job_reached_terminal_state(w.as_ref(), "job-x"), "{word}");
     }
@@ -324,14 +324,14 @@ fn terminal_state_reads_v2_type_shape() {
 
 #[test]
 fn terminal_state_counts_404_as_gone() {
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.job_results.lock().unwrap().push_back(Err("HTTP 404 Not Found".to_string()));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
 }
 
 #[test]
 fn no_job_row_at_all_is_terminal() {
-    let w = FakeWindmill::default(); // default: gone
+    let w = Arc::new(FakeWindmill::default()); // default: gone
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
 }
 
@@ -345,7 +345,7 @@ fn plain_service_never_panics_on_empty_ground() {
 
 #[test]
 fn terminal_state_falls_back_to_completed_on_endpoint_error() {
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.job_results.lock().unwrap().push_back(Err("HTTP 400: Bad Request".to_string()));
     w.queue_completed(Some(json!({"completed": true, "success": false, "started": true})));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
@@ -353,11 +353,11 @@ fn terminal_state_falls_back_to_completed_on_endpoint_error() {
 
 #[test]
 fn terminal_state_counts_cancelled_never_started_as_gone() {
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.job_results.lock().unwrap().push_back(Err("HTTP 404: Not Found".to_string()));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
 
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.job_results.lock().unwrap().push_back(Err("HTTP 400: Bad Request".to_string()));
     w.queue_completed(Some(json!({"completed": false, "started": false})));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
@@ -365,7 +365,7 @@ fn terminal_state_counts_cancelled_never_started_as_gone() {
 
 #[test]
 fn terminal_state_raw_surface_running_stays_non_terminal() {
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.queue_job(Some(json!({"type": "RunningJob"})));
     w.queue_completed(Some(json!({"completed": false, "started": true})));
     assert!(!job_reached_terminal_state(w.as_ref(), "job-x"));
@@ -373,11 +373,11 @@ fn terminal_state_raw_surface_running_stays_non_terminal() {
 
 #[test]
 fn terminal_state_fails_closed_when_running_or_probe_errors() {
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.job_results.lock().unwrap().push_back(Err("HTTP 400: Bad Request".to_string()));
     w.queue_completed(Some(json!({"completed": false, "started": true})));
     assert!(!job_reached_terminal_state(w.as_ref(), "job-x"));
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.job_results.lock().unwrap().push_back(Err("HTTP 400: Bad Request".to_string()));
     w.completed_results.lock().unwrap().push_back(Err("HTTP 500".to_string()));
     assert!(!job_reached_terminal_state(w.as_ref(), "job-x"));
@@ -448,9 +448,9 @@ fn start_unknown_tender_answers_not_found() {
 #[test]
 fn cancel_job_success_and_failure() {
     use godon_controller::systemtender_service::cancel_job_by_id;
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     assert!(cancel_job_by_id(w.as_ref(), "test-job-id", None));
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     w.cancel_results.lock().unwrap().push_back(Err("refused".to_string()));
     assert!(!cancel_job_by_id(w.as_ref(), "test-job-id", None));
 }
@@ -458,7 +458,7 @@ fn cancel_job_success_and_failure() {
 #[test]
 fn cancel_carries_the_reason_to_the_api() {
     use godon_controller::systemtender_service::cancel_job_by_id;
-    let w = FakeWindmill::default();
+    let w = Arc::new(FakeWindmill::default());
     assert!(cancel_job_by_id(w.as_ref(), "test-job-id", Some("Test cancellation")));
     let calls = w.cancelled.lock().unwrap();
     assert_eq!(calls.len(), 1);
