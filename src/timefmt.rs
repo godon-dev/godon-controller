@@ -1,13 +1,15 @@
 //! Timestamps - the classic silent port fault, handled where everyone
-//! can see it. Two shapes the estate's clients read today:
+//! can see it. Three shapes the estate's clients read today:
 //!
 //! - naive now() strings: "T" separator, microseconds only when
 //!   nonzero (python datetime.now().isoformat())
+//! - aware UTC now() strings: the same, with a "+00:00" offset
+//!   (python datetime.now(timezone.utc).isoformat())
 //! - database timestamptz cells rendered as aware isoformat:
 //!   "+HH:MM" offset with colon, six-digit fraction only when nonzero
 //!   (what psycopg2's datetimes produced)
 
-use chrono::{Local, Timelike};
+use chrono::{Local, Timelike, Utc};
 
 pub fn now_iso_naive() -> String {
     let dt = Local::now().naive_local();
@@ -17,6 +19,20 @@ pub fn now_iso_naive() -> String {
         format!("{}.{:06}", base, micros)
     } else {
         base
+    }
+}
+
+/// python's datetime.now(timezone.utc).isoformat(): "T" separator,
+/// "+00:00" offset, microseconds only when nonzero. The relaunch
+/// history's ts is the estate's live reader of this shape.
+pub fn now_iso_utc_aware() -> String {
+    let dt = Utc::now().naive_utc();
+    let base = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let micros = (dt.nanosecond() / 1000) % 1_000_000;
+    if micros != 0 {
+        format!("{}.{:06}+00:00", base, micros)
+    } else {
+        format!("{}+00:00", base)
     }
 }
 

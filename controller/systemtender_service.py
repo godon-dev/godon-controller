@@ -455,9 +455,9 @@ class SystemtenderService:
 
         The async create contract (designs/2026-10-10): the caller's
         connection is held only for fast reads — the heavy half
-        (preflight, archive DB, Optuna schema, worker launches) is the
-        executor's own job. The row is the state machine; an aborted
-        caller wait owns nothing.
+        (preflight, archive DB, worker launches) is the executor's
+        own job. The row is the state machine; an aborted caller
+        wait owns nothing.
 
         Args:
             systemtender_config: The systemtender configuration
@@ -580,8 +580,7 @@ class SystemtenderService:
 
         Runs as its own windmill job; no caller is waiting. Reads the
         row the fast path planted in `creating` and does the heavy
-        half: preflight, archive DB + state table, Optuna schema,
-        worker launches.
+        half: preflight, archive DB + state table, worker launches.
 
         Success drops the lifecycle marker — the row reads active from
         its own state table (running once the workers heartbeat). Any
@@ -789,10 +788,10 @@ class SystemtenderService:
         """Wait for the systemtender_state table to be fully committed
         and accessible.
 
-        This prevents YugabyteDB serialization conflicts when Optuna
-        starts its DDL operations. Executor-side step
-        (designs/2026-10-10): the wait lives where no caller holds a
-        connection for it.
+        This prevents YugabyteDB serialization conflicts between the
+        table build and the workers booting against it. Executor-side
+        step (designs/2026-10-10): the wait lives where no caller
+        holds a connection for it.
         """
         from f.controller.database import get_db_connection
         max_wait = 10  # seconds
