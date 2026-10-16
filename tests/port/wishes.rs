@@ -18,7 +18,8 @@
 
 use godon_controller::database::{DbConfig, DbError, MetadataDatabaseRepository, TextRow};
 use godon_controller::verbs::dispatch;
-use godon_controller::wish_service::{checked_steer_band, WishService};
+use godon_controller::steer_grammar::checked_steer_band;
+use godon_controller::wish_service::WishService;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
