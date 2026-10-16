@@ -57,7 +57,7 @@ impl FakeDb {
     /// Always raise (python's `side_effect=Exception(...)`).
     pub fn err(text: &str) -> Self {
         let text = text.to_string();
-        Self::from_fn(move |_, _| Err(DbError(text)))
+        Self::from_fn(move |_, _| Err(DbError(text.clone())))
     }
 
     pub fn queries(&self) -> Vec<String> {
@@ -164,7 +164,7 @@ impl WindmillGateway for FakeWindmill {
         args: &Value,
         tag: Option<&str>,
     ) -> Result<String, String> {
-        self.dispatched.lock().unwrap().push_back((
+        self.dispatched.lock().unwrap().push((
             path.to_string(),
             args.clone(),
             tag.map(|t| t.to_string()),
@@ -208,12 +208,12 @@ impl CausalClient for FakeCausal {
     }
 
     fn ask_to_plan(&self, plan_request: &Value) -> Result<Value, String> {
-        self.asks.lock().unwrap().push_back(plan_request.clone());
+        self.asks.lock().unwrap().push_back(Ok(plan_request.clone()));
         pop(&self.asks, Ok(Value::Null))
     }
 
     fn purge_curves(&self, systemtender_id: &str) -> Result<u16, String> {
-        self.purged.lock().unwrap().push_back(systemtender_id.to_string());
+        self.purged.lock().unwrap().push(systemtender_id.to_string());
         pop(&self.purge_results, Ok(200))
     }
 }
