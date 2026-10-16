@@ -879,7 +879,7 @@ impl SteerwishService {
             "claims": claims,
             "terms": terms,
             "limits": parse_json(&row[3].clone()),
-            "budget": row[4].as_ref().and_then(|t| t.parse::<i64>().ok()).map(json!).unwrap_or(Value::Null),
+            "budget": row[4].as_ref().and_then(|t| t.parse::<i64>().ok()).map(|b| json!(b)).unwrap_or(Value::Null),
             "regime": row[5].clone().unwrap_or_default(),
             "createdAt": row.get(6).and_then(|c| c.as_ref()).and_then(|t| pg_ts_to_iso(t)),
             "state": row[7].clone().unwrap_or_default(),
