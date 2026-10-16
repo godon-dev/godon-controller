@@ -32,7 +32,7 @@ fn service_with_jobs(
         d["interference_detection"] = json!({"group": "bench"});
         serde_json::to_string(&d).unwrap()
     };
-    let db = FakeDb::from_fn(move |db_name, q| {
+    let db = arc_db(move |db_name, q| {
         if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") {
             return Ok(None);
         }
@@ -83,7 +83,7 @@ fn get_missing_id_fails() {
 
 #[test]
 fn get_unknown_tender_answers_not_found() {
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") {
             return Ok(None);
         }
@@ -100,7 +100,7 @@ fn get_unknown_tender_answers_not_found() {
 
 #[test]
 fn get_returns_the_row_with_its_liveness() {
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") {
             return Ok(None);
         }
@@ -133,7 +133,7 @@ fn get_returns_the_row_with_its_liveness() {
 
 #[test]
 fn list_empty_answers_success_with_empty_data() {
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") {
             return Ok(None);
         }
@@ -150,7 +150,7 @@ fn list_empty_answers_success_with_empty_data() {
 
 #[test]
 fn list_answers_every_row() {
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") {
             return Ok(None);
         }
@@ -207,7 +207,7 @@ fn delete_fails_closed_when_cancel_request_fails() {
 
 #[test]
 fn delete_is_idempotent_when_tender_already_gone() {
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") {
             return Ok(None);
         }
@@ -233,7 +233,7 @@ fn delete_is_idempotent_when_tender_already_gone() {
 #[test]
 fn delete_rides_along_when_an_executor_holds_the_claim() {
     // claim answers no row: another executor owns the deletion
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") {
             return Ok(None);
         }
@@ -393,7 +393,7 @@ fn stop_missing_id_fails() {
 }
 
 fn missing_tender_db() -> Arc<FakeDb> {
-    FakeDb::from_fn(|_db, q| {
+    arc_db(|_db, q| {
         if q.contains("CREATE TABLE") { return Ok(None); }
         if q.contains("FROM systemtender_meta_data WHERE id") { return Ok(Some(vec![])); }
         Ok(None)
@@ -410,7 +410,7 @@ fn stop_unknown_tender_answers_not_found() {
 
 #[test]
 fn stop_sets_the_graceful_flag() {
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") { return Ok(None); }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[Some("t-1"), Some("bench-tender"), Some("2026-10-10 09:00:00+00"), Some("{}")])]));
@@ -470,7 +470,7 @@ fn cancel_carries_the_reason_to_the_api() {
 
 #[test]
 fn get_response_carries_the_contract_keys() {
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") { return Ok(None); }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[Some("t-1"), Some("n"), Some("2026-01-01 00:00:00+00"), Some(r#"{"type": "x"}"#)])]));
@@ -492,7 +492,7 @@ fn liveness_db(finished: &str, age: &str, interval: &str) -> Arc<FakeDb> {
     let finished = finished.to_string();
     let age = age.to_string();
     let interval = interval.to_string();
-    FakeDb::from_fn(move |_db, q| {
+    arc_db(move |_db, q| {
         if q.contains("CREATE TABLE") { return Ok(None); }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[Some("row-id"), Some("test-tender"), Some("2026-09-26 18:00:00+00"), Some("{}")])]));
@@ -540,7 +540,7 @@ fn planned_response() -> Value {
 }
 
 fn wish_door_db(heartbeat: &'static str) -> Arc<FakeDb> {
-    FakeDb::from_fn(move |_db, q| {
+    arc_db(move |_db, q| {
         if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
         if q.contains("EXTRACT(EPOCH") {
             return Ok(Some(vec![row(&[Some(heartbeat), Some("10.0")])]));
@@ -618,7 +618,7 @@ fn create_config() -> Value {
 }
 
 fn fast_create_db() -> Arc<FakeDb> {
-    FakeDb::from_fn(|_db, q| {
+    arc_db(|_db, q| {
         if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
         if q.contains("SELECT id, name, creation_tsz FROM") { return Ok(Some(vec![])); }
         if q.contains("FROM systemtender_meta_data WHERE id") { return Ok(Some(vec![])); }
@@ -665,7 +665,7 @@ fn create_dispatch_failure_rolls_the_row_back() {
 fn duplicate_name_answers_the_visible_state() {
     for state in ["creating", "create-failed", "deleting", "deletion-failed", "active"] {
         let existing_id = "550e8400-e29b-41d4-a716-446655440000";
-        let db = FakeDb::from_fn(move |_db, q| {
+        let db = arc_db(move |_db, q| {
             if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
             if q.contains("SELECT id, name, creation_tsz FROM") {
                 return Ok(Some(vec![row(&[Some(existing_id), Some("bench-tender"), Some("2026-10-10 09:00:00+00")])]));
@@ -690,7 +690,7 @@ fn duplicate_name_answers_the_visible_state() {
 
 #[test]
 fn get_answers_creating_with_creation_reason() {
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("CREATE TABLE") { return Ok(None); }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[Some("row-id"), Some("bench-tender"), Some("2026-10-10 09:00:00+00"), Some("{}")])]));
@@ -710,7 +710,7 @@ fn get_answers_creating_with_creation_reason() {
 #[test]
 fn deletion_claim_takes_over_create_failed_rows() {
     use godon_controller::database::{ArchiveDatabaseRepository, DbConfig};
-    let db = FakeDb::from_fn(|_db, q| {
+    let db = arc_db(|_db, q| {
         if q.contains("RETURNING systemtender_id") {
             return Ok(Some(vec![row(&[Some("claimed")])]));
         }
@@ -724,7 +724,7 @@ fn deletion_claim_takes_over_create_failed_rows() {
 #[test]
 fn get_survives_a_missing_archive_db() {
     use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError};
-    let db = FakeDb::from_fn(|_db, _q| {
+    let db = arc_db(|_db, _q| {
         Err(DbError("connection to server at \"localhost\" (::1), port 5432 failed: FATAL:  database \"systemtender_x\" does not exist".to_string()))
     });
     let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db);
@@ -741,11 +741,11 @@ fn get_survives_the_table_build_window() {
         "Table <unknown_table_name> (000040010000300080010000000004e1) not found in Raft group 0000000000000000000000000000000000",
     ];
     for text in unreadable {
-        let db = FakeDb::from_fn(move |_db, _q| Err(DbError(text.to_string())));
+        let db = arc_db(move |_db, _q| Err(DbError(text.to_string())));
         let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db);
         assert!(repo.read_state_verdict("systemtender_x").unwrap().is_none(), "{text}");
     }
-    let db = FakeDb::from_fn(|_db, _q| Err(DbError("connection refused".to_string())));
+    let db = arc_db(|_db, _q| Err(DbError("connection refused".to_string())));
     let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db);
     assert!(repo.read_state_verdict("systemtender_x").is_err());
 }
