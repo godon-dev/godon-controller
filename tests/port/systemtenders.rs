@@ -588,7 +588,7 @@ fn sender_and_receiver_notes_planted() {
 fn write_wish_assignment_defaults_to_sender_role() {
     let (svc, db, _c) = sender_and_receiver_notes(planned_response());
     let _ = svc.create_wish(&declare_wish_payload());
-    let first = db.queries().iter().find(|q| q.contains("INSERT INTO wish_assignments")).expect("planted");
+    let first = db.queries().into_iter().find(|q| q.contains("INSERT INTO wish_assignments")).expect("planted");
     assert!(first.contains("'sender'"));
 }
 
@@ -630,10 +630,10 @@ fn fast_create_db() -> Arc<FakeDb> {
 
 #[test]
 fn create_plants_row_creating_and_dispatches_executor() {
-    let wmill = FakeWindmill::default();
+    let wmill = Arc::new(FakeWindmill::default());
     wmill.queue_async(Ok("executor-job".to_string()));
     let db = fast_create_db();
-    let svc = SystemtenderService::with_parts(db.clone(), Arc::new(wmill.clone()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
     let result = svc.create_systemtender(create_config(), "bench-tender");
     assert_eq!(result["result"], "SUCCESS");
     assert_eq!(result["data"]["status"], "creating");
@@ -716,14 +716,14 @@ fn deletion_claim_takes_over_create_failed_rows() {
         }
         Ok(None)
     });
-    let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db.clone());
+    let repo = MetadataDatabaseRepository::with_gateway(DbConfig::default(), db.clone());
     assert!(repo.claim_for_deletion("some-uuid", 300).unwrap());
     assert!(db.queries().iter().any(|q| q.contains("state = 'create-failed'")));
 }
 
 #[test]
 fn get_survives_a_missing_archive_db() {
-    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError};
+    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError, MetadataDatabaseRepository};
     let db = arc_db(|_db, _q| {
         Err(DbError("connection to server at \"localhost\" (::1), port 5432 failed: FATAL:  database \"systemtender_x\" does not exist".to_string()))
     });
@@ -733,7 +733,7 @@ fn get_survives_a_missing_archive_db() {
 
 #[test]
 fn get_survives_the_table_build_window() {
-    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError};
+    use godon_controller::database::{ArchiveDatabaseRepository, DbConfig, DbError, MetadataDatabaseRepository};
     let unreadable = [
         "relation \"systemtender_state\" does not exist",
         "column \"finished_at\" does not exist",
