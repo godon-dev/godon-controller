@@ -13,6 +13,7 @@ Controller Logic that Manages Godon Systemtender Lifecycles
   assigned, refused, acted, landed, missed, re_opened, corrected,
   returned, closed, plan_error). State derives from the latest event,
   never stored. Windmill scripts: `steerwish_create`, `steerwish_get`,
+  `steerwish_update`, `steerwish_delete`, `steerwish_plan`,
   `steerwishes_get`, `steerwish_close` (folder `f/controller/`).
 
 ## Division of labor on wishes
