@@ -8,7 +8,14 @@
 use serde_json::Value;
 
 fn request_data(args: &Value) -> &Value {
-    args
+    // Python's script signature bound the job arguments' keys to
+    // main()'s parameters, so a caller's {"request_data": {...}}
+    // reached the verb as the inner object. The platform door receives
+    // the raw arguments (fetched verbatim from the job row), so the
+    // descent happens here - one thin layer at the dispatch seam, no
+    // verb logic touched. Arguments without a request_data key (the
+    // flat kwarg shape) pass through unchanged.
+    args.get("request_data").unwrap_or(args)
 }
 
 pub fn dispatch(verb: &str, args: &Value) -> Value {
@@ -27,6 +34,7 @@ pub fn dispatch(verb: &str, args: &Value) -> Value {
         "steerwish_close" => crate::wish_close::run(rd),
         "steerwish_update" => crate::wish_update::run(rd),
         "steerwish_delete" => crate::wish_delete::run(rd),
+        "steerwish_plan" => crate::wish_plan::run(rd),
         "steerwishes_get" => crate::wishes_get::run(rd),
         "credential_create" => crate::credential_create::run(rd),
         "credential_get" => crate::credential_get::run(rd),
