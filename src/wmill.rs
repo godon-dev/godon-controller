@@ -40,8 +40,13 @@ pub trait CausalClient: Send + Sync {
 }
 
 fn windmill_base() -> String {
-    std::env::var("BASE_URL")
+    // The platform's internal url first, then the job-local API - the
+    // family order (the engine's client, this binary's own args fetch).
+    // BASE_URL is the platform's ADVERTISED url; in-sandbox it can name
+    // a route only the outside resolves, so it never leads.
+    std::env::var("BASE_INTERNAL_URL")
         .or_else(|_| std::env::var("WM_BASE_URL"))
+        .or_else(|_| std::env::var("BASE_URL"))
         .unwrap_or_else(|_| "http://localhost:8000".to_string())
 }
 
