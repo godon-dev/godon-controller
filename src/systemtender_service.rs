@@ -966,7 +966,7 @@ impl SystemtenderService {
                 });
             }
 
-            // The worker's instruments (rung-7 field-sets), stamped in
+            // The worker's instruments, stamped in
             // its own state row - passed through verbatim; absent until
             // the worker has stamped once.
             let instruments = state
@@ -996,7 +996,7 @@ impl SystemtenderService {
                 .and_then(|t| serde_json::from_str(t).ok())
                 .unwrap_or(Value::Null);
 
-            // Rung 8: a death-resume is history, never covered - the
+            // A death-resume is history, never covered - the
             // count and the last one ride every read.
             let history: Vec<Value> = config
                 .get("relaunch_history")
@@ -1051,7 +1051,7 @@ impl SystemtenderService {
 
             let db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
 
-            // Rung 8 (designs/2026-10-11 XX): the resume is explicit -
+            // (designs/2026-10-11 XX): the resume is explicit -
             // name the case this start resolves, never cover a death
             // as a fresh start. Same reads the GET verdict uses: a set
             // stop flag means STOPPED (a deliberate exit); heartbeat

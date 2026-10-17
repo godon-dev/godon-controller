@@ -1,4 +1,4 @@
-//! The python test-suite port (rung 10, the parity bar).
+//! The python test-suite port (the parity bar).
 //!
 //! One rust module per ported python test file - the file map and
 //! every assertion trace back to the python originals, which died

@@ -1,4 +1,4 @@
-//! Ported from tests/unit/test_instruments_read.py - rung 9, the
+//! Ported from tests/unit/test_instruments_read.py - the
 //! instruments door's read side: the verdict read picks up the
 //! worker's JSON stamp with a rollout-order guard (message-matched,
 //! the worker's own beat-guard pattern); a torn payload reads as

@@ -1005,7 +1005,7 @@ fn trial_check_reads_the_ledgers_trials_not_optuna() {
 }
 
 
-// ── death relaunch (rung 8, TestDeathRelaunch) ─────────────────────
+// ── death relaunch (TestDeathRelaunch) ─────────────────────────────
 // The three formerly-BLOCKED tests: the service now carries the
 // relaunch surfaces (the named resume, the history booking, the
 // relaunches/last_relaunch reads), so they land unchanged in their
