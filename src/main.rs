@@ -39,8 +39,8 @@ fn main() {
             godon_controller::verbs::dispatch(&verb, &args)
         }
         None => match std::env::var("WM_JOB_PATH") {
-            Ok(_) => match fetch_job_args() {
-                Ok(args) => platform::serve(args),
+            Ok(job_path) => match fetch_job_args() {
+                Ok(args) => platform::serve(&job_path, args),
                 Err(e) => serde_json::json!({
                     "result": "FAILURE",
                     "error": format!("platform run cannot read its arguments: {e}"),

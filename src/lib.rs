@@ -24,6 +24,7 @@ pub mod wish_close;
 pub mod wish_create;
 pub mod wish_delete;
 pub mod wish_get;
+pub mod wish_plan;
 pub mod wish_update;
 pub mod wishes_get;
 pub mod systemtender_create;
