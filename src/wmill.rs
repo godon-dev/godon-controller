@@ -50,6 +50,12 @@ fn windmill_base() -> String {
         .unwrap_or_else(|_| "http://localhost:8000".to_string())
 }
 
+/// The API root - every endpoint hangs off {platform base}/api, the
+/// platform's own clients compose it the same way.
+fn api_base() -> String {
+    format!("{}/api", windmill_base())
+}
+
 fn windmill_token() -> String {
     std::env::var("WM_TOKEN").unwrap_or_default()
 }
@@ -102,7 +108,7 @@ impl WindmillGateway for HttpWindmill {
         let resp = client()
             .get(format!(
                 "{}/w/{}/jobs_u/get/{}",
-                windmill_base(),
+                api_base(),
                 windmill_workspace(),
                 job_id
             ))
@@ -115,14 +121,16 @@ impl WindmillGateway for HttpWindmill {
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
-        Ok(resp.json::<Value>().ok())
+        resp.json::<Value>()
+            .map(Some)
+            .map_err(|e| format!("job row not json: {e}"))
     }
 
     fn get_completed_maybe(&self, job_id: &str) -> Result<Option<Value>, String> {
         let resp = client()
             .get(format!(
                 "{}/w/{}/jobs_u/completed/get_result_maybe/{}?get_started=true",
-                windmill_base(),
+                api_base(),
                 windmill_workspace(),
                 job_id
             ))
@@ -135,7 +143,9 @@ impl WindmillGateway for HttpWindmill {
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
-        Ok(resp.json::<Value>().ok())
+        resp.json::<Value>()
+            .map(Some)
+            .map_err(|e| format!("result poll body not json: {e}"))
     }
 
     fn run_script_by_path_async(
@@ -144,54 +154,65 @@ impl WindmillGateway for HttpWindmill {
         args: &Value,
         tag: Option<&str>,
     ) -> Result<String, String> {
-        let mut payload = serde_json::json!({ "args": args });
+        // The dispatch endpoint takes the args as the body and the job
+        // tree linkage as query params - the platform client's shape.
+        let mut query: Vec<(&str, String)> = Vec::new();
+        if let Ok(job) = std::env::var("WM_JOB_ID") {
+            if !job.is_empty() {
+                query.push(("parent_job", job));
+            }
+        }
+        if let Ok(root) = std::env::var("WM_ROOT_FLOW_JOB_ID") {
+            if !root.is_empty() {
+                query.push(("root_job", root));
+            }
+        }
         if let Some(tag) = tag {
-            payload["tag"] = Value::String(tag.to_string());
+            query.push(("tag", tag.to_string()));
         }
         let resp = client()
             .post(format!(
-                "{}/w/{}/scripts/run/p/{}",
-                windmill_base(),
+                "{}/w/{}/jobs/run/p/{}",
+                api_base(),
                 windmill_workspace(),
                 path
             ))
+            .query(&query)
             .bearer_auth(windmill_token())
-            .json(&payload)
+            .json(args)
             .send()
             .map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
-        let body = resp.json::<Value>().map_err(|e| e.to_string())?;
-        match &body {
-            Value::String(s) => Ok(s.clone()),
-            Value::Object(_) => {
-                if let Some(id) = body.get("job_id").or_else(|| body.get("id")) {
-                    Ok(id.as_str().unwrap_or_default().to_string())
-                } else {
-                    Err(format!("unexpected dispatch answer: {}", body))
-                }
-            }
-            other => Err(format!("unexpected dispatch answer: {}", other)),
+        // The answer is the job id as plain text - the platform client
+        // reads it the same way.
+        let job_id = resp.text().map_err(|e| e.to_string())?;
+        let job_id = job_id.trim();
+        if job_id.is_empty() {
+            return Err("dispatch answer is empty".to_string());
         }
+        Ok(job_id.to_string())
     }
 
     fn run_script_by_path(&self, path: &str, args: &Value) -> Result<Value, String> {
-        let resp = client()
-            .post(format!(
-                "{}/w/{}/scripts/run/p/{}?wait=true",
-                windmill_base(),
-                windmill_workspace(),
-                path
-            ))
-            .bearer_auth(windmill_token())
-            .json(&serde_json::json!({ "args": args }))
-            .send()
-            .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
+        // The platform client's synchronous run: dispatch, then poll
+        // the completed endpoint until the job answers.
+        let job_id = self.run_script_by_path_async(path, args, None)?;
+        loop {
+            if let Some(done) = self.get_completed_maybe(&job_id)? {
+                let success = done.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                if success {
+                    return Ok(done.get("result").cloned().unwrap_or(Value::Null));
+                }
+                let error = done
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                return Err(format!("Job {job_id} was not successful: {error}"));
+            }
+            std::thread::sleep(Duration::from_millis(500));
         }
-        resp.json::<Value>().map_err(|e| e.to_string())
     }
 }
 
