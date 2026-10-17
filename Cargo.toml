@@ -2,7 +2,7 @@
 name = "godon-controller"
 version = "0.59.26"
 edition = "2021"
-description = "The godon controller - lifecycle verbs and the data layer (rung 10 rust port)"
+description = "The godon controller - lifecycle verbs and the data layer"
 
 [lib]
 name = "godon_controller"

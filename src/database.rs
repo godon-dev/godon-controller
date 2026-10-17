@@ -479,7 +479,7 @@ impl ArchiveDatabaseRepository {
 
     /// The stop flag's current value, or None when unreadable.
     ///
-    /// Rung 8 (designs/2026-10-11 XX): the start door names the case
+    /// (designs/2026-10-11 XX): the start door names the case
     /// it resolves - a set flag means the tender was STOPPED (a
     /// deliberate exit), heartbeat silence without the flag means the
     /// worker DIED. The door never covers the difference.
