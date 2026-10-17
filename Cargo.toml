@@ -20,7 +20,7 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 opentelemetry = "0.33"
 opentelemetry_sdk = "0.33"
-opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-rustls", "logs"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "logs"] }
 opentelemetry-appender-log = "0.33"
 uuid = { version = "1.0", features = ["v4"] }
 sha2 = "0.10"
