@@ -53,6 +53,7 @@ fn main() {
         },
     };
     finish(result);
+    godon_controller::otel_logging::shutdown_telemetry();
 }
 
 fn finish(result: Value) {
