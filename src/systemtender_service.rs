@@ -15,7 +15,8 @@
 
 use crate::config::validate_minimal;
 use crate::database::{
-    ArchiveDatabaseRepository, DbConfig, DbGateway, MetadataDatabaseRepository, TextRow,
+    ArchiveDatabaseRepository, DbConfig, DbGateway, DeletionWitness, MetadataDatabaseRepository,
+    TextRow,
 };
 use crate::timefmt::{now_iso_naive, now_iso_utc_aware, pg_ts_to_iso};
 use crate::wmill::{CausalClient, WindmillGateway};
@@ -29,7 +30,21 @@ use uuid::Uuid;
 pub const JOB_QUIESCE_POLL_SECONDS: u64 = 2;
 pub const JOB_QUIESCE_TIMEOUT_SECONDS: u64 = 30;
 pub const JOB_CLAIM_STALE_SECONDS: i64 = 300;
+/// A reconcile tick that dies mid-flight loses its claim here; the next
+/// tick reclaims. Reconciles fire every 60s with a 120s script budget.
+pub const RECONCILE_CLAIM_STALE_SECONDS: i64 = 240;
+/// The creating family's re-drive patience, before and per attempt.
+pub const RECONCILE_REDRIVE_BASE_STALE_SECONDS: i64 = 300;
+pub const RECONCILE_REDRIVE_MAX_ATTEMPTS: i64 = 3;
 const TERMINAL_JOB_STATES: [&str; 3] = ["completed", "canceled", "failed"];
+
+/// One family step's outcome inside a reconcile tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReconcileStep {
+    Dropped,
+    Waiting,
+    Failed(String),
+}
 
 pub fn cancel_job_by_id(w: &dyn WindmillGateway, job_id: &str, reason: Option<&str>) -> bool {
     match w.cancel_job(job_id, reason) {
@@ -1209,7 +1224,7 @@ impl SystemtenderService {
         }
     }
 
-    pub fn delete_systemtender(&self, systemtender_id: &str, _force: bool) -> Value {
+    pub fn delete_systemtender(&self, systemtender_id: &str, force: bool) -> Value {
         let outcome = (|| -> Result<Value, String> {
             self.metadata_repo.create_table().map_err(|e| e.0)?;
             let rows = self
@@ -1233,7 +1248,7 @@ impl SystemtenderService {
 
             if !self
                 .metadata_repo
-                .claim_for_deletion(systemtender_id, JOB_CLAIM_STALE_SECONDS)
+                .claim_for_deletion(systemtender_id, JOB_CLAIM_STALE_SECONDS, force)
                 .map_err(|e| e.0)?
             {
                 let lifecycle = self.metadata_repo.get_lifecycle(systemtender_id).ok().flatten();
@@ -1258,69 +1273,212 @@ impl SystemtenderService {
                 }));
             }
 
-            let fail = |reason: String| -> Value {
-                error!("Deletion failed for systemtender {}: {}", systemtender_id, reason);
-                let _ = self
-                    .metadata_repo
-                    .set_lifecycle(systemtender_id, "deletion-failed", Some(&reason));
-                json!({
-                    "result": "FAILURE",
-                    "error": reason,
-                    "data": {
-                        "systemtender_id": systemtender_id,
-                        "status": "deletion-failed",
-                    }
-                })
-            };
-
-            let config: Value = rows[0]
-                .get(3)
-                .and_then(|c| c.as_ref())
-                .and_then(|t| serde_json::from_str(t).ok())
-                .unwrap_or_else(|| json!({}));
-            let worker_job_ids: Vec<String> = config
-                .get("worker_job_ids")
-                .and_then(|w| w.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-
+            // THE DEATH DOOR (designs/2026-10-18-worker-death-door.md):
+            // the verb marks and delivers; convergence lives in the
+            // reconciler. Delivery rides the tender's own stop channel - the
+            // flag the worker's existing read answers to. The reconciler's
+            // cancel is the untrusted hint, re-sent every tick; the
+            // stamps are the witness that gates the drop.
             let db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
-
-            let mut canceled_count = 0;
-            for job_id in &worker_job_ids {
-                if !cancel_job_by_id(
-                    self.wmill.as_ref(),
-                    job_id,
-                    Some(&format!("Deleting systemtender {}", systemtender_id)),
-                ) {
-                    return Ok(fail(format!(
-                        "cancel refused by windmill API for job {} - nothing dropped; retry the delete",
-                        job_id
-                    )));
-                }
-                canceled_count += 1;
+            if let Err(e) = self.archive_repo.set_shutdown_requested(&db_name, true) {
+                warn!(
+                    "Stop-flag delivery for {} failed (the reconciler re-delivers by verdict): {}",
+                    systemtender_id, e.0
+                );
             }
+
             info!(
-                "Cancelled {}/{} worker jobs for systemtender {}",
-                canceled_count,
-                worker_job_ids.len(),
-                systemtender_id
+                "Deletion marked for systemtender: {} (forced={}); the reconciler converges",
+                systemtender_id, force
             );
+            Ok(json!({
+                "result": "SUCCESS",
+                "data": {
+                    "systemtender_id": systemtender_id,
+                    "delete_type": "marked",
+                    "status": "deleting",
+                    "force": force,
+                }
+            }))
+        })();
+        match outcome {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Failed to delete systemtender {}: {}", systemtender_id, e);
+                json!({ "result": "FAILURE", "error": e })
+            }
+        }
+    }
 
-            let stragglers =
-                wait_for_jobs_to_quiesce(self.wmill.as_ref(), &worker_job_ids, JOB_QUIESCE_TIMEOUT_SECONDS);
-            if !stragglers.is_empty() {
-                return Ok(fail(format!(
-                    "worker job(s) not terminal within {}s - windmill wedged, nothing dropped: {}",
-                    JOB_QUIESCE_TIMEOUT_SECONDS,
-                    stragglers.join(", ")
-                )));
+    // ── the reconciler: one tick of the eternal reconciler ──────────────
+
+    /// One full tick: claim, converge the families, stamp. The tick is
+    /// idempotent and level-triggered - a paused reconcile delays, never
+    /// loses. Enveloped like every verb; nothing here gates on the
+    /// platform's word (the stamps are the witness).
+    pub fn reconcile_tick(&self) -> Value {
+        let mut deletions_converged = 0;
+        let mut deletions_waiting = 0;
+        let mut deletions_failed = 0;
+        let mut creations_redriven = 0;
+        let mut creations_waiting = 0;
+        let mut creations_failed = 0;
+        let mut skipped = false;
+
+        let outcome = (|| -> Result<(), String> {
+            self.metadata_repo.ensure_reconcile_state_table().map_err(|e| e.0)?;
+            if !self
+                .metadata_repo
+                .claim_reconcile_tick(RECONCILE_CLAIM_STALE_SECONDS)
+                .map_err(|e| e.0)?
+            {
+                info!("Reconcile tick skipped - another tick holds the claim");
+                skipped = true;
+                return Ok(());
             }
 
+            // family: deletions - hint, gate, maybe drop
+            let deleting = self
+                .metadata_repo
+                .scan_lifecycle_state("deleting")
+                .map_err(|e| e.0)?;
+            for (id, forced, _attempts, _age) in deleting {
+                match self.reconcile_step_deletion(&id, forced) {
+                    ReconcileStep::Dropped => deletions_converged += 1,
+                    ReconcileStep::Waiting => deletions_waiting += 1,
+                    ReconcileStep::Failed(reason) => {
+                        error!("Deletion convergence failed for {}: {}", id, reason);
+                        let _ = self.metadata_repo.set_lifecycle(
+                            &id,
+                            "deletion-failed",
+                            Some(&reason),
+                        );
+                        deletions_failed += 1;
+                    }
+                }
+            }
+
+            // family: crashed creates - re-drive the executor, capped loud
+            let creating = self
+                .metadata_repo
+                .scan_lifecycle_state("creating")
+                .map_err(|e| e.0)?;
+            for (id, _forced, attempts, claimed_age) in creating {
+                let stale_after =
+                    RECONCILE_REDRIVE_BASE_STALE_SECONDS << attempts.min(RECONCILE_REDRIVE_MAX_ATTEMPTS);
+                if (claimed_age as i64) < stale_after {
+                    creations_waiting += 1;
+                    continue;
+                }
+                if attempts >= RECONCILE_REDRIVE_MAX_ATTEMPTS {
+                    error!("Executor wedged for {} after {} reconcile re-drives", id, attempts);
+                    let _ = self.metadata_repo.set_lifecycle(
+                        &id,
+                        "create-failed",
+                        Some("executor wedged after repeated reconcile re-drives"),
+                    );
+                    creations_failed += 1;
+                    continue;
+                }
+                match self.wmill.run_script_by_path_async(
+                    "f/controller/systemtender_create_executor",
+                    &json!({"request_data": {"systemtender_id": id}}),
+                    None,
+                ) {
+                    Ok(_job) => {
+                        let _ = self.metadata_repo.bump_lifecycle_attempts(&id);
+                        let _ = self.metadata_repo.set_lifecycle(&id, "creating", None);
+                        creations_redriven += 1;
+                    }
+                    Err(e) => {
+                        warn!("Reconcile re-drive dispatch failed for {} (next tick retries): {}", id, e);
+                        creations_waiting += 1;
+                    }
+                }
+            }
+
+            self.metadata_repo.stamp_reconcile_tick().map_err(|e| e.0)?;
+            Ok(())
+        })();
+
+        match outcome {
+            Ok(()) => json!({
+                "result": "SUCCESS",
+                "data": {
+                    "skipped": skipped,
+                    "deletions": {
+                        "converged": deletions_converged,
+                        "waiting": deletions_waiting,
+                        "failed": deletions_failed,
+                    },
+                    "creations": {
+                        "redriven": creations_redriven,
+                        "waiting": creations_waiting,
+                        "failed": creations_failed,
+                    },
+                }
+            }),
+            Err(e) => json!({ "result": "FAILURE", "error": e }),
+        }
+    }
+
+    /// One deleting row: send the untrusted hint, read the estate's
+    /// witness, drop when the gate opens. Force drops on sight.
+    fn reconcile_step_deletion(&self, systemtender_id: &str, forced: bool) -> ReconcileStep {
+        let rows = match self.metadata_repo.fetch_meta_data(systemtender_id) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    "Reconcile meta read failed for {} (next tick retries): {}",
+                    systemtender_id, e.0
+                );
+                return ReconcileStep::Waiting;
+            }
+        };
+        if rows.is_empty() {
+            // the row is gone; only the marker remains - sweep it
+            if let Err(e) = self.metadata_repo.remove_lifecycle(systemtender_id) {
+                return ReconcileStep::Failed(e.0);
+            }
+            return ReconcileStep::Dropped;
+        }
+
+        let config: Value = rows[0]
+            .get(3)
+            .and_then(|c| c.as_ref())
+            .and_then(|t| serde_json::from_str(t).ok())
+            .unwrap_or_else(|| json!({}));
+        let worker_job_ids: Vec<String> = config
+            .get("worker_job_ids")
+            .and_then(|w| w.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+        let db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
+
+        // the hint: sent every tick, never believed - cancel answered
+        // success while the container lived (receipt 2026-10-18)
+        for job_id in &worker_job_ids {
+            let _ = cancel_job_by_id(
+                self.wmill.as_ref(),
+                job_id,
+                Some(&format!("Deleting systemtender {}", systemtender_id)),
+            );
+        }
+
+        // the gate: force drops now; otherwise the estate's own witness
+        // decides - finished, silent past the presumed-dead threshold,
+        // or no store left to protect
+        if !forced {
+            match self.archive_repo.deletion_witness(&db_name) {
+                DeletionWitness::Terminal | DeletionWitness::Gone => {}
+                DeletionWitness::Live | DeletionWitness::Unreadable => {
+                    return ReconcileStep::Waiting;
+                }
+            }
+        }
+
+        // the drop (the old executor's sequence, verbatim)
+        let dropped = (|| -> Result<(), String> {
             let group_id = config
                 .get("interference_detection")
                 .or_else(|| config.get("detection"))
@@ -1355,23 +1513,15 @@ impl SystemtenderService {
             self.metadata_repo
                 .remove_lifecycle(systemtender_id)
                 .map_err(|e| e.0)?;
-
-            info!("Successfully deleted systemtender: {}", systemtender_id);
-            Ok(json!({
-                "result": "SUCCESS",
-                "data": {
-                    "systemtender_id": systemtender_id,
-                    "delete_type": "executed",
-                    "workers_cancelled": canceled_count,
-                }
-            }))
+            Ok(())
         })();
-        match outcome {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Failed to delete systemtender {}: {}", systemtender_id, e);
-                json!({ "result": "FAILURE", "error": e })
+
+        match dropped {
+            Ok(()) => {
+                info!("Reconcile converged deletion for systemtender: {}", systemtender_id);
+                ReconcileStep::Dropped
             }
+            Err(e) => ReconcileStep::Failed(e),
         }
     }
 

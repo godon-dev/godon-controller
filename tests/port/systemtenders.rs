@@ -56,7 +56,7 @@ fn service_with_jobs(
             return Ok(Some(vec![]));
         }
         if q.contains("FROM systemtender_state") {
-            // a live tender: finished, fresh beat
+            // a live tender: finished, fresh stamp
             return Ok(Some(vec![row(&[Some("f"), Some("5.0"), Some("10.0")])]));
         }
         if q.contains("SELECT id, name, creation_tsz FROM") {
@@ -71,6 +71,133 @@ fn service_with_jobs(
 
 fn plain_service() -> (SystemtenderService, Arc<FakeDb>) {
     service_with_jobs(&[], Arc::new(FakeWindmill::default()))
+}
+
+/// The reconciler's view: deleting rows (id, forced, attempts, claimed age),
+/// creating rows (id, attempts, claimed age), and the tender's own
+/// state-row answer (the witness: live / terminal / empty = gone).
+fn reconcile_service(
+    deleting: &[(&str, bool, i64, f64)],
+    creating: &[(&str, i64, f64)],
+    state_rows: Vec<TextRow>,
+) -> (SystemtenderService, Arc<FakeDb>, Arc<FakeWindmill>) {
+    let wmill = Arc::new(FakeWindmill::default());
+    reconcile_service_with_wmill(deleting, creating, state_rows, wmill)
+}
+
+fn reconcile_service_claim_refused(
+    deleting: &[(&str, bool, i64, f64)],
+    state_rows: Vec<TextRow>,
+) -> (SystemtenderService, Arc<FakeDb>, Arc<FakeWindmill>) {
+    let wmill = Arc::new(FakeWindmill::default());
+    let deleting: Vec<(String, bool, i64, f64)> = deleting
+        .iter()
+        .map(|(id, f, a, age)| (id.to_string(), *f, *a, *age))
+        .collect();
+    let creating: Vec<(String, i64, f64)> = Vec::new();
+    let db = arc_db(move |_db_name, q| {
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
+        // the claim answers no row: another tick holds it
+        if q.contains("UPDATE reconcile_state") && q.contains("RETURNING id") {
+            return Ok(Some(vec![]));
+        }
+        if q.contains("FROM systemtender_lifecycle WHERE state = 'deleting'") {
+            let rows: Vec<TextRow> = deleting
+                .iter()
+                .map(|(id, f, a, age)| {
+                    let (a, age) = (a.to_string(), age.to_string());
+                    row(&[
+                        Some(id.as_str()),
+                        Some(if *f { "true" } else { "false" }),
+                        Some(a.as_str()),
+                        Some(age.as_str()),
+                    ])
+                })
+                .collect();
+            return Ok(Some(rows));
+        }
+        if q.contains("FROM systemtender_lifecycle WHERE state = 'creating'") {
+            return Ok(Some(vec![]));
+        }
+        if q.contains("FROM systemtender_state") {
+            return Ok(Some(state_rows.clone()));
+        }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    (svc, db, wmill)
+}
+
+fn reconcile_service_with_wmill(
+    deleting: &[(&str, bool, i64, f64)],
+    creating: &[(&str, i64, f64)],
+    state_rows: Vec<TextRow>,
+    wmill: Arc<FakeWindmill>,
+) -> (SystemtenderService, Arc<FakeDb>, Arc<FakeWindmill>) {
+    let deleting: Vec<(String, bool, i64, f64)> = deleting
+        .iter()
+        .map(|(id, f, a, age)| (id.to_string(), *f, *a, *age))
+        .collect();
+    let creating: Vec<(String, i64, f64)> = creating
+        .iter()
+        .map(|(id, a, age)| (id.to_string(), *a, *age))
+        .collect();
+    let state_rows = state_rows.clone();
+    let db = arc_db(move |_db_name, q| {
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
+        if q.contains("UPDATE reconcile_state") && q.contains("RETURNING id") {
+            return Ok(Some(vec![row(&[Some("1")])]));
+        }
+        if q.contains("UPDATE reconcile_state") || q.contains("INSERT INTO reconcile_state") {
+            return Ok(None);
+        }
+        if q.contains("FROM systemtender_lifecycle WHERE state = 'deleting'") {
+            let rows: Vec<TextRow> = deleting
+                .iter()
+                .map(|(id, f, a, age)| {
+                    let (a, age) = (a.to_string(), age.to_string());
+                    row(&[
+                        Some(id.as_str()),
+                        Some(if *f { "true" } else { "false" }),
+                        Some(a.as_str()),
+                        Some(age.as_str()),
+                    ])
+                })
+                .collect();
+            return Ok(Some(rows));
+        }
+        if q.contains("FROM systemtender_lifecycle WHERE state = 'creating'") {
+            let rows: Vec<TextRow> = creating
+                .iter()
+                .map(|(id, a, age)| {
+                    let (a, age) = (a.to_string(), age.to_string());
+                    row(&[Some(id.as_str()), Some("false"), Some(a.as_str()), Some(age.as_str())])
+                })
+                .collect();
+            return Ok(Some(rows));
+        }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![row(&[
+                Some("row-id"),
+                Some("bench-tender"),
+                Some("2026-09-30 18:00:00+00"),
+                Some(DEFINITION),
+            ])]));
+        }
+        if q.contains("FROM systemtender_state") {
+            return Ok(Some(state_rows.clone()));
+        }
+        if q.contains("SELECT id, name, creation_tsz FROM") {
+            return Ok(Some(vec![]));
+        }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    (svc, db, wmill)
 }
 
 // ── retrieval ──────────────────────────────────────────────────────
@@ -188,20 +315,22 @@ fn delete_missing_id_fails() {
 // ── deletion: the quiesce machine (#399's guard) ───────────────────
 
 #[test]
-fn delete_fails_closed_when_cancel_request_fails() {
-    let wmill = FakeWindmill::default();
-    wmill.cancel_results.lock().unwrap().push_back(Err("HTTP 500".to_string()));
-    let (svc, db) = service_with_jobs(&["job-1"], Arc::new(wmill));
+fn delete_marks_and_delivers_the_stop_flag() {
+    // the death door's verb half (designs/2026-10-18): mark + deliver,
+    // never cancel, never wait. Convergence lives in the reconciler.
+    let wmill = Arc::new(FakeWindmill::default());
+    let (svc, db) = service_with_jobs(&["job-1"], wmill.clone());
     let r = svc.delete_systemtender("bench-tender", true);
-    assert_eq!(r["result"], "FAILURE");
-    assert!(r["error"].as_str().unwrap().contains("cancel refused"));
-    // deletion-failed is flagged with the job named...
-    let flagged = db
+    assert_eq!(r["result"], "SUCCESS");
+    assert_eq!(r["data"]["delete_type"], "marked");
+    assert_eq!(r["data"]["status"], "deleting");
+    // the delivery: the stop flag the worker's existing read answers to
+    assert!(db
         .queries()
         .iter()
-        .any(|q| q.contains("'deletion-failed'") && q.contains("job-1"));
-    assert!(flagged, "the lifecycle row carries the reason");
-    // ...and nothing was dropped: the relcache race stays shut (#399)
+        .any(|q| q.contains("UPDATE systemtender_state SET shutdown_requested = TRUE")));
+    // the verb never reaches the platform's kill verb and never drops
+    assert!(wmill.cancelled.lock().unwrap().is_empty());
     assert!(!db.queries().iter().any(|q| q.contains("DROP DATABASE")));
     assert!(!db.queries().iter().any(|q| q.contains("DELETE FROM systemtender_meta_data")));
 }
@@ -260,21 +389,98 @@ fn delete_rides_along_when_an_executor_holds_the_claim() {
 }
 
 #[test]
-fn delete_waits_for_terminal_jobs_before_drop() {
-    let wmill = FakeWindmill::default();
-    // rounds 1 and 2: both jobs still running; round 3: both gone
-    wmill.queue_job(Some(json!({"status": "Running"})));
-    wmill.queue_job(Some(json!({"status": "Running"})));
-    wmill.queue_job(Some(json!({"status": "Running"})));
-    wmill.queue_job(Some(json!({"status": "Running"})));
-    let (svc, db) = service_with_jobs(&["job-1", "job-2"], Arc::new(wmill));
-    let started = Instant::now();
-    let r = svc.delete_systemtender("bench-tender", true);
-    let elapsed = started.elapsed().as_secs_f64();
+fn reconcile_waits_while_the_witness_reads_live() {
+    // stamps fresh: the worker lives, the door waits - and the cancel
+    // hint still went out (untrusted, sent every tick)
+    let (svc, db, wmill) = reconcile_service(
+        &[("bench-tender", false, 0, 1000.0)],
+        &[],
+        vec![row(&[Some("f"), Some("5.0"), Some("10.0")])],
+    );
+    let r = svc.reconcile_tick();
     assert_eq!(r["result"], "SUCCESS");
+    assert_eq!(r["data"]["deletions"]["waiting"], 1);
+    assert_eq!(r["data"]["deletions"]["converged"], 0);
+    assert!(!db.queries().iter().any(|q| q.contains("DROP DATABASE")));
+    let cancelled = wmill.cancelled.lock().unwrap().clone();
+    assert_eq!(cancelled.len(), 1, "the hint is sent even while waiting");
+    assert_eq!(cancelled[0].0, "job-1");
+    // the tick stamped itself
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("UPDATE reconcile_state SET tick_at")));
+}
+
+#[test]
+fn reconcile_drops_when_stamps_fall_silent_past_the_threshold() {
+    // age 4000s vs threshold max(90, 6*60): presumed dead - the drop runs
+    let (svc, db, _wmill) = reconcile_service(
+        &[("bench-tender", false, 0, 1000.0)],
+        &[],
+        vec![row(&[Some("f"), Some("4000.0"), Some("60.0")])],
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["deletions"]["converged"], 1);
     assert!(db.queries().iter().any(|q| q.contains("DROP DATABASE")));
-    // two poll rounds elapsed before both jobs read terminal
-    assert!(elapsed >= 3.5, "waited only {:.1}s", elapsed);
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("DELETE FROM systemtender_meta_data")));
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.trim_start().starts_with("DELETE FROM systemtender_lifecycle")));
+}
+
+#[test]
+fn reconcile_drops_when_the_tender_finished() {
+    let (svc, db, _wmill) = reconcile_service(
+        &[("bench-tender", false, 0, 1000.0)],
+        &[],
+        vec![row(&[Some("t"), Some("5.0"), Some("10.0")])],
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["deletions"]["converged"], 1);
+    assert!(db.queries().iter().any(|q| q.contains("DROP DATABASE")));
+}
+
+#[test]
+fn reconcile_force_drops_without_waiting() {
+    // force's gate is the only difference: one drop path, immediate
+    let (svc, db, _wmill) = reconcile_service(
+        &[("bench-tender", true, 0, 0.0)],
+        &[],
+        vec![row(&[Some("f"), Some("5.0"), Some("10.0")])],
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["deletions"]["converged"], 1);
+    assert!(db.queries().iter().any(|q| q.contains("DROP DATABASE")));
+}
+
+#[test]
+fn reconcile_drops_when_the_store_is_gone() {
+    // no state row at all: nothing alive to protect
+    let (svc, db, _wmill) = reconcile_service(&[("bench-tender", false, 0, 1000.0)], &[], vec![]);
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["deletions"]["converged"], 1);
+    assert!(db.queries().iter().any(|q| q.contains("DROP DATABASE")));
+}
+
+#[test]
+fn reconcile_skips_when_another_tick_holds_the_claim() {
+    let (svc, db, _wmill) = reconcile_service_claim_refused(
+        &[("bench-tender", false, 0, 1000.0)],
+        vec![row(&[Some("f"), Some("5.0"), Some("10.0")])],
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(r["result"], "SUCCESS");
+    assert_eq!(r["data"]["skipped"], true);
+    assert!(!db.queries().iter().any(|q| q.contains("DROP DATABASE")));
+    assert!(!db
+        .queries()
+        .iter()
+        .any(|q| q.contains("UPDATE reconcile_state SET tick_at")));
 }
 
 #[test]
@@ -288,12 +494,44 @@ fn wait_fails_closed_when_a_job_never_quiesces() {
 }
 
 #[test]
-fn delete_proceeds_when_job_history_is_gone() {
-    // get_job's default answer is gone (no row) - terminal
-    let (svc, db) = service_with_jobs(&["job-gone"], Arc::new(FakeWindmill::default()));
-    let r = svc.delete_systemtender("bench-tender", true);
-    assert_eq!(r["result"], "SUCCESS");
-    assert!(db.queries().iter().any(|q| q.contains("DROP DATABASE")));
+fn reconcile_redrives_a_stale_creating_row() {
+    // executor crashed mid-create: the row sits creating, claimed long
+    // ago - the reconciler re-dispatches it and counts the attempt
+    let wmill = Arc::new(FakeWindmill::default());
+    wmill.queue_async(Ok("job-redrive-1".to_string()));
+    let (svc, db, _w) = reconcile_service_with_wmill(&[], &[("bench-tender", 0, 1000.0)], vec![], wmill);
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["creations"]["redriven"], 1);
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("UPDATE systemtender_lifecycle SET attempts = attempts + 1")));
+}
+
+#[test]
+fn reconcile_leaves_a_fresh_creating_row_alone() {
+    // claimed 10s ago, patience 300s: nothing to do
+    let (svc, db, _wmill) = reconcile_service(&[], &[("bench-tender", 0, 10.0)], vec![]);
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["creations"]["waiting"], 1);
+    assert!(!db
+        .queries()
+        .iter()
+        .any(|q| q.contains("attempts = attempts + 1")));
+}
+
+#[test]
+fn reconcile_fails_a_poison_creating_row_loud() {
+    // three re-drives burned and the last patience (300<<3 = 2400s)
+    // elapsed too: create-failed, the honest verdict - the backoff
+    // ladder must complete before the poison call
+    let (svc, db, _wmill) = reconcile_service(&[], &[("bench-tender", 3, 3000.0)], vec![]);
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["creations"]["failed"], 1);
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("'create-failed'")));
 }
 
 // ── the terminal-state reader (shape-proof across windmill generations) ──
@@ -738,7 +976,7 @@ fn deletion_claim_takes_over_create_failed_rows() {
         Ok(None)
     });
     let repo = MetadataDatabaseRepository::with_gateway(DbConfig::default(), db.clone());
-    assert!(repo.claim_for_deletion("some-uuid", 300).unwrap());
+    assert!(repo.claim_for_deletion("some-uuid", 300, false).unwrap());
     assert!(db.queries().iter().any(|q| q.contains("state = 'create-failed'")));
 }
 
