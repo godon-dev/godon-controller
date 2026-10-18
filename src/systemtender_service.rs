@@ -935,10 +935,12 @@ impl SystemtenderService {
             let db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
             let mut status = "active".to_string();
             let mut liveness: Value = Value::Null;
-            let state = self
-                .archive_repo
-                .read_state_verdict(&db_name)
-                .map_err(|e| e.0)?;
+            // python's read fell through to None when the tender's
+            // archive DB was not there yet - the creating window - and
+            // the lifecycle row below then speaks the state. A hard
+            // error here made GET fail during creation instead of
+            // answering 'creating'.
+            let state = self.archive_repo.read_state_verdict(&db_name).ok().flatten();
             if let Some(state) = &state {
                 let interval = state
                     .get("interval_secs")
