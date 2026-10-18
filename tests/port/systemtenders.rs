@@ -855,7 +855,8 @@ fn executor_flips_the_row_live() {
     {
         let d = wmill.dispatched.lock().unwrap();
         assert_eq!(d[0].0, "f/systemtender/engine/systemtender_worker");
-        assert_eq!(d[0].2.as_deref(), Some("systemtender"));
+        // the engine's lane: the estate's robot worker group
+        assert_eq!(d[0].2.as_deref(), Some("robot"));
         assert_eq!(d[0].1["config"]["creation_ts"], "2026-10-10T09:00:00+00:00");
     }
     // job ids persisted for the delete path

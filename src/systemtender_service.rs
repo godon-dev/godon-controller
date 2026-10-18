@@ -211,8 +211,11 @@ pub fn start_optimization_flow(
     info!("Starting script {} at path: {}", flow_id, script_path);
 
     // Tag must be passed explicitly - windmill does NOT inherit the
-    // script's stored tag for job routing.
-    let job_id = w.run_script_by_path_async(script_path, &script_inputs, Some("systemtender"))?;
+    // script's stored tag for job routing. The engine's lane is robot
+    // (the estate's worker group and the script row's own tag); the
+    // python original said "systemtender", a lane this estate no
+    // longer names - the platform answered 400 on every worker launch.
+    let job_id = w.run_script_by_path_async(script_path, &script_inputs, Some("robot"))?;
     info!("Flow {} started with job ID: {}", flow_id, job_id);
     Ok((flow_id.to_string(), job_id))
 }
