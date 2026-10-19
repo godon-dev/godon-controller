@@ -1218,6 +1218,46 @@ impl MetadataDatabaseRepository {
         Ok(claimed)
     }
 
+    /// Stale wish-deletion markers the reconciler re-drives: deleting
+    /// or deletion-failed, claimed long enough ago that no live
+    /// executor holds the slot. The claim staleness is the retry pace.
+    pub fn scan_stale_wish_deletions(&self, stale_after_seconds: i64) -> DbResult<Vec<String>> {
+        let db_config = self._get_db_config();
+        let query = format!(
+            "SELECT wish_id FROM steerwish_lifecycle \
+             WHERE state IN ('deleting', 'deletion-failed') \
+             AND claimed_at < NOW() - INTERVAL '{} seconds';",
+            stale_after_seconds
+        );
+        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        Ok(rows.iter().filter_map(|r| cell_str(&r[0])).collect())
+    }
+
+    /// Wishes whose ask never landed: the latest event on the wish is
+    /// its declaration, older than the patience, and the wish still
+    /// stands in the registry. The plan ask re-dispatched for these is
+    /// re-ask-safe by design.
+    pub fn scan_unasked_wishes(&self, patience_seconds: i64) -> DbResult<Vec<String>> {
+        let db_config = self._get_db_config();
+        let query = format!(
+            r#"
+        SELECT wish_id FROM (
+            SELECT DISTINCT ON (wish_id) wish_id, event_type, at
+            FROM {events}
+            ORDER BY wish_id, at DESC, id DESC
+        ) latest
+        WHERE latest.event_type = 'declared'
+          AND latest.at < NOW() - INTERVAL '{patience} seconds'
+          AND latest.wish_id IN (SELECT id FROM {wishes});
+        "#,
+            events = self.steerwish_events_table_name,
+            patience = patience_seconds,
+            wishes = self.steerwishes_table_name
+        );
+        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        Ok(rows.iter().filter_map(|r| cell_str(&r[0])).collect())
+    }
+
     /// Deletion state for one wish, or None when no marker stands.
     pub fn get_wish_lifecycle(&self, wish_id: &str) -> DbResult<Option<Value>> {
         let db_config = self._get_db_config();

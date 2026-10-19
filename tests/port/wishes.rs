@@ -1653,3 +1653,99 @@ fn list_columns_in_summary_order() {
     assert!(q[head_end..].contains("w.created_at"));
 }
 
+
+// ── the reconcile family (designs/2026-10-18-worker-death-door, round 2) ──
+
+fn reconcile_db(
+    stale_deletions: Vec<String>,
+    unasked: Vec<String>,
+    claim_answers: bool,
+) -> Arc<FakeDb> {
+    arc_db(move |_db, q| {
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
+        if q.contains("FROM steerwish_lifecycle") && q.contains("state IN") {
+            return Ok(Some(
+                stale_deletions.iter().map(|id| row(&[Some(id.as_str())])).collect(),
+            ));
+        }
+        if q.contains("DISTINCT ON (wish_id)") {
+            return Ok(Some(
+                unasked.iter().map(|id| row(&[Some(id.as_str())])).collect(),
+            ));
+        }
+        if q.contains("RETURNING wish_id") {
+            return Ok(Some(if claim_answers {
+                vec![row(&[Some("claimed")])]
+            } else {
+                vec![]
+            }));
+        }
+        // trap order (registry_db's rule): the wish-fetch answers before
+        // the events check - its COALESCE subquery reads the events table.
+        // Both match single-line SELECT heads: the real queries break
+        // lines between FROM and WHERE, so FROM-clause spans never match.
+        if q.contains("SELECT w.id, w.outcome, w.band") {
+            return Ok(Some(vec![wish_row("standing")]));
+        }
+        if q.contains("SELECT event_type, at, detail") {
+            return Ok(Some(vec![]));
+        }
+        Ok(None)
+    })
+}
+
+#[test]
+fn reconcile_converges_a_stale_wish_deletion() {
+    // the close-and-drop the failure envelope prescribes, automated:
+    // closed event stamped, row dropped, marker swept
+    let wmill = Arc::new(FakeWindmill::default());
+    let db = reconcile_db(vec![WISH_ID.to_string()], vec![], true);
+    let svc = WishService::with_parts(db.clone(), wmill, Arc::new(FakeCausal::default()), false);
+    let r = svc.reconcile_wishes();
+    assert_eq!(r["converged"], 1, "one deletion converged: {r}");
+    assert!(db.queries().iter().any(|q| q.contains("'closed'")));
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("DELETE FROM steerwishes")));
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("DELETE FROM steerwish_lifecycle")));
+}
+
+#[test]
+fn reconcile_leaves_a_fresh_claim_alone() {
+    // a live executor holds the slot: not ours to take
+    let db = reconcile_db(vec![WISH_ID.to_string()], vec![], false);
+    let svc = WishService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()), false);
+    let r = svc.reconcile_wishes();
+    assert_eq!(r["converged"], 0);
+    assert!(!db
+        .queries()
+        .iter()
+        .any(|q| q.contains("DELETE FROM steerwishes")));
+}
+
+#[test]
+fn reconcile_redrives_an_unasked_wish() {
+    let wmill = Arc::new(FakeWindmill::default());
+    wmill.queue_async(Ok("job-plan-1".to_string()));
+    let db = reconcile_db(vec![], vec![WISH_ID.to_string()], false);
+    let svc = WishService::with_parts(db, wmill, Arc::new(FakeCausal::default()), false);
+    let r = svc.reconcile_wishes();
+    assert_eq!(r["redriven"], 1, "the ask re-dispatched: {r}");
+}
+
+#[test]
+fn reconcile_is_quiet_when_every_ask_landed() {
+    let wmill = Arc::new(FakeWindmill::default());
+    let db = reconcile_db(vec![], vec![], false);
+    let svc = WishService::with_parts(db, wmill, Arc::new(FakeCausal::default()), false);
+    let r = svc.reconcile_wishes();
+    assert_eq!(r["redriven"], 0);
+    assert_eq!(r["converged"], 0);
+    assert_eq!(r["failed"], 0);
+}
