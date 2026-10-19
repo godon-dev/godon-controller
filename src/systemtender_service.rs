@@ -1324,6 +1324,7 @@ impl SystemtenderService {
         let mut creations_waiting = 0;
         let mut creations_failed = 0;
         let mut skipped = false;
+        let mut wishes_out = json!({});
 
         let outcome = (|| -> Result<(), String> {
             self.metadata_repo.ensure_reconcile_state_table().map_err(|e| e.0)?;
@@ -1397,6 +1398,12 @@ impl SystemtenderService {
                 }
             }
 
+            // family: wishes - deletion convergence and unasked asks
+            // (designs/2026-10-18-worker-death-door, round 2). Its own
+            // scan-and-converge body lives with the wish machinery; the
+            // carrier only drives it and carries its counts.
+            wishes_out = crate::wish_service::WishService::new(true).reconcile_wishes();
+
             self.metadata_repo.stamp_reconcile_tick().map_err(|e| e.0)?;
             Ok(())
         })();
@@ -1415,6 +1422,11 @@ impl SystemtenderService {
                         "redriven": creations_redriven,
                         "waiting": creations_waiting,
                         "failed": creations_failed,
+                    },
+                    "wishes": {
+                        "converged": wishes_out.get("converged").cloned().unwrap_or(json!(0)),
+                        "redriven": wishes_out.get("redriven").cloned().unwrap_or(json!(0)),
+                        "failed": wishes_out.get("failed").cloned().unwrap_or(json!(0)),
                     },
                 }
             }),

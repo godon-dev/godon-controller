@@ -23,6 +23,14 @@ pub fn heartbeat_fallback_ttl_secs() -> f64 {
 }
 
 
+/// The reconciler's retry pace for wish deletions - a marker newer
+/// than this belongs to a live executor, not to us.
+pub const WISH_RECONCILE_STALE_SECONDS: i64 = 300;
+/// How long a declared wish may stand unasked before the reconciler
+/// re-dispatches its plan ask. Plan jobs answer in seconds-to-minutes;
+/// fifteen minutes is patience, not eagerness.
+pub const WISH_ASK_PATIENCE_SECONDS: i64 = 900;
+
 pub struct WishService {
     pub repo: MetadataDatabaseRepository,
     pub archive_repo: Option<ArchiveDatabaseRepository>,
@@ -621,6 +629,102 @@ impl WishService {
             }
         }
         Ok(summaries)
+    }
+
+    /// The wishes' reconcile family (designs/2026-10-18-worker-death-door,
+    /// round 2), driven by the repeating controller job's tick. Two
+    /// convergence rules, both idempotent:
+    /// - stale deletion markers: the close-and-drop the failure
+    ///   envelope prescribes, retried automatically instead of by hand
+    /// - unasked declared wishes: the plan ask re-dispatched once its
+    ///   patience lapses (the ask is re-ask-safe by design - identical
+    ///   answers and event stamps, one ask discipline, two timings)
+    pub fn reconcile_wishes(&self) -> Value {
+        let mut converged = 0;
+        let mut redriven = 0;
+        let mut failed = 0;
+
+        let stale = match self.repo.scan_stale_wish_deletions(WISH_RECONCILE_STALE_SECONDS) {
+            Ok(ids) => ids,
+            Err(e) => {
+                log::warn!("Wish deletion scan failed (next tick retries): {}", e.0);
+                Vec::new()
+            }
+        };
+        for wish_id in stale {
+            // single-flight through the existing slot: a fresh claim
+            // (a live executor, manual or otherwise) is not ours to take
+            if !self
+                .repo
+                .claim_wish_deletion(&wish_id, WISH_RECONCILE_STALE_SECONDS)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            match self.close_wish(&wish_id) {
+                Ok(None) => {
+                    // the wish vanished mid-deletion: sweep the marker
+                    let _ = self.repo.remove_wish_lifecycle(&wish_id);
+                    converged += 1;
+                }
+                Ok(Some(_)) => match self.repo.delete_wish(&wish_id) {
+                    Ok(()) => {
+                        let _ = self.repo.remove_wish_lifecycle(&wish_id);
+                        log::info!("Reconcile converged wish deletion: {}", wish_id);
+                        converged += 1;
+                    }
+                    Err(e) => {
+                        let _ = self.repo.set_wish_lifecycle(
+                            &wish_id,
+                            "deletion-failed",
+                            Some(&format!("row drop failed: {}", e.0)),
+                        );
+                        failed += 1;
+                    }
+                },
+                Err(e) => {
+                    let _ = self.repo.set_wish_lifecycle(
+                        &wish_id,
+                        "deletion-failed",
+                        Some(&format!("causal close failed: {}", e)),
+                    );
+                    failed += 1;
+                }
+            }
+        }
+
+        let unasked = match self.repo.scan_unasked_wishes(WISH_ASK_PATIENCE_SECONDS) {
+            Ok(ids) => ids,
+            Err(e) => {
+                log::warn!("Unasked-wish scan failed (next tick retries): {}", e.0);
+                Vec::new()
+            }
+        };
+        for wish_id in unasked {
+            let args = json!({"wish_id": wish_id});
+            match self
+                .wmill
+                .run_script_by_path_async("f/controller/steerwish_plan", &args, None)
+            {
+                Ok(_) => {
+                    log::info!("Reconcile re-drove the plan ask for wish: {}", wish_id);
+                    redriven += 1;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Reconcile plan re-dispatch failed for {} (next tick retries): {}",
+                        wish_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        json!({
+            "converged": converged,
+            "redriven": redriven,
+            "failed": failed,
+        })
     }
 
     pub fn close_wish(&self, wish_id: &str) -> Result<Option<Value>, String> {
