@@ -157,18 +157,34 @@ scripts:
       description: "Lifecycle verbs and the data layer - the fast lane's door and reads"
       tag: "controller-fast"
       timeout: 60
-
-  # Slow lane: the heavy halves - the create executor's archive-DB table
-  # builds and the deletes' quiesce guard. 600s.
-  - script: "systemtender_create_executor"
+  # The delete is a fast verb now (designs/2026-10-18-worker-death-door):
+  # validate, claim, deliver the stop flag, mark deleting. Convergence
+  # waits in the reconciler, never in a lane.
+  - script: "systemtender_delete"
     sandbox: "ghcr.io/godon-dev/godon-controller"
     tag_env: "CONTROLLER_VERSION"
     settings:
-      summary: "Godon Controller Executors"
-      description: "Slow halves of lifecycle operations - archive-DB table builds, quiesce-guarded deletes"
-      tag: "controller-slow"
-      timeout: 600
-  - script: "systemtender_delete"
+      summary: "Godon Controller"
+      description: "Lifecycle verbs and the data layer - the fast lane's door and reads"
+      tag: "controller-fast"
+      timeout: 60
+  # The eternal reconciler - one light tick per minute: converge
+  # deletions, re-drive crashed executors, stamp the reconciler. Its own
+  # single-worker lane: never queued behind executors, never holding
+  # the door behind its sweeps.
+  - script: "controller_reconcile"
+    sandbox: "ghcr.io/godon-dev/godon-controller"
+    tag_env: "CONTROLLER_VERSION"
+    settings:
+      summary: "Godon Controller Reconcile"
+      description: "The repeating reconciler - converges deletions, re-drives crashed executors, stamps the reconciler"
+      tag: "controller-reconcile"
+      timeout: 120
+
+  # Slow lane: bounded heavy work - the create executor's archive-DB
+  # table builds and the plan job. 600s. All death-waiting lives in the
+  # reconciler (designs/2026-10-18-worker-death-door).
+  - script: "systemtender_create_executor"
     sandbox: "ghcr.io/godon-dev/godon-controller"
     tag_env: "CONTROLLER_VERSION"
     settings:
@@ -194,3 +210,9 @@ scripts:
       timeout: 600
 
 flows: []
+
+# Declared schedules - the seeder plants each as a windmill schedule on
+# the given script path. The reconciler is the estate's only repeating job.
+schedules:
+  - script: "controller_reconcile"
+    every_seconds: 60

@@ -21,6 +21,7 @@ fn request_data(args: &Value) -> &Value {
 pub fn dispatch(verb: &str, args: &Value) -> Value {
     let rd = request_data(args);
     match verb {
+        "controller_reconcile" => crate::reconcile::run(rd),
         "systemtender_create" => crate::systemtender_create::run(rd),
         "systemtender_create_executor" => crate::executors::systemtender_create_executor::run(rd),
         "systemtender_get" => crate::systemtender_get::run(rd),

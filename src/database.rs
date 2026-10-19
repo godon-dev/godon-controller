@@ -215,6 +215,20 @@ pub struct ArchiveDatabaseRepository {
     db: Arc<dyn DbGateway>,
 }
 
+/// What the tender's own store says about its worker, for the reconciler's
+/// deletion gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeletionWitness {
+    /// finished, or stamps silent past the presumed-dead threshold
+    Terminal,
+    /// stamps fresh - the worker lives, the door waits
+    Live,
+    /// no store and no state row - nothing alive to protect
+    Gone,
+    /// transient read failure - no verdict, never a gate
+    Unreadable,
+}
+
 impl ArchiveDatabaseRepository {
     pub fn new(base_config: DbConfig) -> Self {
         Self {
@@ -401,6 +415,32 @@ impl ArchiveDatabaseRepository {
             }
         }
         Ok(None)
+    }
+
+    /// The estate's own deletion witness - never the platform's word
+    /// (designs/2026-10-18-worker-death-door.md). Terminal: the tender
+    /// finished, or its stamps fell silent past the presumed-dead
+    /// threshold. Gone: no readable store and no state row - nothing
+    /// alive to protect. Unreadable: transient - no verdict, no gate.
+    pub fn deletion_witness(&self, systemtender_db_name: &str) -> DeletionWitness {
+        match self.read_state_verdict(systemtender_db_name) {
+            Ok(Some(v)) => {
+                let finished = v.get("finished").and_then(|f| f.as_bool()).unwrap_or(false);
+                let age = v.get("age_secs").and_then(|a| a.as_f64());
+                let interval = v
+                    .get("interval_secs")
+                    .and_then(|i| i.as_f64())
+                    .unwrap_or(30.0);
+                let threshold = 90.0f64.max(6.0 * interval);
+                match (finished, age) {
+                    (true, _) => DeletionWitness::Terminal,
+                    (_, Some(age)) if age > threshold => DeletionWitness::Terminal,
+                    _ => DeletionWitness::Live,
+                }
+            }
+            Ok(None) => DeletionWitness::Gone,
+            Err(_) => DeletionWitness::Unreadable,
+        }
     }
 
     /// Plant the wish assignment row in the tender's own archive DB.
@@ -651,32 +691,54 @@ impl MetadataDatabaseRepository {
         systemtender_id uuid PRIMARY KEY,
         state VARCHAR(32) NOT NULL,
         reason TEXT,
-        claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        forced BOOLEAN NOT NULL DEFAULT false,
+        attempts INT NOT NULL DEFAULT 0
         );
         "#;
 
         self.db.execute_query(&db_config, query, false)?;
+
+        // upgrade belt: an estate that predates the two columns comes
+        // forward in place (clean-slate reinstalls carry them from birth)
+        self.db.execute_query(
+            &db_config,
+            "ALTER TABLE systemtender_lifecycle ADD COLUMN IF NOT EXISTS forced BOOLEAN NOT NULL DEFAULT false;",
+            false,
+        )?;
+        self.db.execute_query(
+            &db_config,
+            "ALTER TABLE systemtender_lifecycle ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;",
+            false,
+        )?;
         info!("Ensured lifecycle table exists: systemtender_lifecycle");
         Ok(())
     }
 
-    /// Atomically claim the deletion executor slot. Single-flight:
-    /// exactly one executor per tender.
-    pub fn claim_for_deletion(&self, systemtender_id: &str, stale_after_seconds: i64) -> DbResult<bool> {
+    /// Atomically claim the deletion slot. Single-flight: exactly one
+    /// deletion in flight per tender. A force demand upgrades a deletion
+    /// still waiting (the gate changes from patient to immediate).
+    pub fn claim_for_deletion(
+        &self,
+        systemtender_id: &str,
+        stale_after_seconds: i64,
+        forced: bool,
+    ) -> DbResult<bool> {
         let db_config = self._get_db_config();
 
         let query = format!(
             r#"
-        INSERT INTO systemtender_lifecycle (systemtender_id, state, reason, claimed_at)
-        VALUES ('{}', 'deleting', NULL, NOW())
+        INSERT INTO systemtender_lifecycle (systemtender_id, state, reason, claimed_at, forced)
+        VALUES ('{}', 'deleting', NULL, NOW(), {})
         ON CONFLICT (systemtender_id) DO UPDATE
-        SET state = 'deleting', reason = NULL, claimed_at = NOW()
+        SET state = 'deleting', reason = NULL, claimed_at = NOW(), forced = {}
         WHERE systemtender_lifecycle.state = 'deletion-failed'
            OR systemtender_lifecycle.state = 'create-failed'
            OR systemtender_lifecycle.claimed_at < NOW() - INTERVAL '{} seconds'
+           OR ({} AND systemtender_lifecycle.state = 'deleting')
         RETURNING systemtender_id;
         "#,
-            systemtender_id, stale_after_seconds
+            systemtender_id, forced, forced, stale_after_seconds, forced
         );
 
         let rows = self.db.execute_query(&db_config, &query, true)?;
@@ -738,6 +800,83 @@ impl MetadataDatabaseRepository {
 
         self.db.execute_query(&db_config, &query, false)?;
         info!("Lifecycle '{}' for systemtender: {}", state, systemtender_id);
+        Ok(())
+    }
+
+    /// All lifecycle rows in one state: (id, forced, attempts, claimed_age_secs).
+    /// The reconciler's family scan.
+    pub fn scan_lifecycle_state(&self, state: &str) -> DbResult<Vec<(String, bool, i64, f64)>> {
+        let db_config = self._get_db_config();
+        let query = format!(
+            "SELECT systemtender_id, forced, attempts,              EXTRACT(EPOCH FROM (NOW() - claimed_at))              FROM systemtender_lifecycle WHERE state = '{}';",
+            state
+        );
+        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let id = cell_str(&r[0])?;
+                let forced = matches!(cell_str(&r[1]).as_deref(), Some("true") | Some("t"));
+                let attempts = cell_str(&r[2]).and_then(|a| a.parse::<i64>().ok()).unwrap_or(0);
+                let age = cell_str(&r[3]).and_then(|a| a.parse::<f64>().ok()).unwrap_or(0.0);
+                Some((id, forced, attempts, age))
+            })
+            .collect())
+    }
+
+    /// Count one more convergence attempt on a lifecycle row.
+    pub fn bump_lifecycle_attempts(&self, systemtender_id: &str) -> DbResult<()> {
+        let db_config = self._get_db_config();
+        let query = format!(
+            "UPDATE systemtender_lifecycle SET attempts = attempts + 1 WHERE systemtender_id = '{}';",
+            systemtender_id
+        );
+        self.db.execute_query(&db_config, &query, false)?;
+        Ok(())
+    }
+
+    /// The reconciler's own state: one row - the tick stamp others read, the
+    /// claim that keeps ticks single-flight.
+    pub fn ensure_reconcile_state_table(&self) -> DbResult<()> {
+        let db_config = self._get_db_config();
+        let query = r#"
+        CREATE TABLE IF NOT EXISTS reconcile_state
+        (
+        id INT PRIMARY KEY DEFAULT 1,
+        tick_at TIMESTAMPTZ,
+        claimed_at TIMESTAMPTZ
+        );
+        INSERT INTO reconcile_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+        "#;
+        self.db.execute_query(&db_config, query, false)?;
+        Ok(())
+    }
+
+    /// Claim one tick. Single-flight: a tick that died mid-flight loses
+    /// the claim after `stale_after_seconds` and the next tick reclaims.
+    pub fn claim_reconcile_tick(&self, stale_after_seconds: i64) -> DbResult<bool> {
+        let db_config = self._get_db_config();
+        let query = format!(
+            r#"
+        UPDATE reconcile_state SET claimed_at = NOW()
+        WHERE id = 1
+          AND (claimed_at IS NULL OR claimed_at < NOW() - INTERVAL '{} seconds')
+        RETURNING id;
+        "#,
+            stale_after_seconds
+        );
+        let rows = self.db.execute_query(&db_config, &query, true)?;
+        Ok(rows.map(|r| !r.is_empty()).unwrap_or(false))
+    }
+
+    /// Stamp the tick and release the claim - the reconciler's heartbeat fact.
+    pub fn stamp_reconcile_tick(&self) -> DbResult<()> {
+        let db_config = self._get_db_config();
+        self.db.execute_query(
+            &db_config,
+            "UPDATE reconcile_state SET tick_at = NOW(), claimed_at = NULL WHERE id = 1;",
+            false,
+        )?;
         Ok(())
     }
 

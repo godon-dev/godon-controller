@@ -4,6 +4,7 @@
 //! schemas are the cross-lane contract - they port byte-identical.
 //! Module layout mirrors python's controller/ file for file.
 
+pub mod reconcile;
 pub mod config;
 pub mod database;
 pub mod otel_logging;
