@@ -36,6 +36,13 @@ pub const RECONCILE_CLAIM_STALE_SECONDS: i64 = 240;
 /// The creating family's re-drive patience, before and per attempt.
 pub const RECONCILE_REDRIVE_BASE_STALE_SECONDS: i64 = 300;
 pub const RECONCILE_REDRIVE_MAX_ATTEMPTS: i64 = 3;
+/// The resurrection family's rate guard: a fresh resurrection gets its
+/// spacing (the relaunched worker has not stamped yet - without this,
+/// the very next tick would see the same stale row and relaunch again),
+/// and a worker that keeps dying goes loud instead of looped.
+pub const RESURRECT_MIN_SPACING_SECS: i64 = 600;
+pub const RESURRECT_WINDOW_SECS: i64 = 3600;
+pub const RESURRECT_MAX_PER_WINDOW: usize = 3;
 const TERMINAL_JOB_STATES: [&str; 3] = ["completed", "canceled", "failed"];
 
 /// One family step's outcome inside a reconcile tick.
@@ -1325,6 +1332,7 @@ impl SystemtenderService {
         let mut creations_failed = 0;
         let mut skipped = false;
         let mut wishes_out = json!({});
+        let mut resurrections_out = json!({});
 
         let outcome = (|| -> Result<(), String> {
             self.metadata_repo.ensure_reconcile_state_table().map_err(|e| e.0)?;
@@ -1404,6 +1412,12 @@ impl SystemtenderService {
             // carrier only drives it and carries its counts.
             wishes_out = crate::wish_service::WishService::new(true).reconcile_wishes();
 
+            // family: resurrections - a living tender whose worker died
+            // gets its worker back through the same start door a hand
+            // uses, rate-guarded on the tender's own relaunch history
+            // (designs/2026-10-18-worker-death-door, round 3).
+            resurrections_out = self.reconcile_resurrections();
+
             self.metadata_repo.stamp_reconcile_tick().map_err(|e| e.0)?;
             Ok(())
         })();
@@ -1428,10 +1442,162 @@ impl SystemtenderService {
                         "redriven": wishes_out.get("redriven").cloned().unwrap_or(json!(0)),
                         "failed": wishes_out.get("failed").cloned().unwrap_or(json!(0)),
                     },
+                    "resurrections": {
+                        "relaunched": resurrections_out.get("relaunched").cloned().unwrap_or(json!(0)),
+                        "waiting": resurrections_out.get("waiting").cloned().unwrap_or(json!(0)),
+                        "capped": resurrections_out.get("capped").cloned().unwrap_or(json!(0)),
+                        "failed": resurrections_out.get("failed").cloned().unwrap_or(json!(0)),
+                    },
                 }
             }),
             Err(e) => json!({ "result": "FAILURE", "error": e }),
         }
+    }
+
+    /// Family: resurrections. A living tender whose worker died gets
+    /// its worker back - through the same start door a hand uses, never
+    /// a parallel relaunch path. The scan reads the same witnesses the
+    /// start door reads: a set stop flag is a deliberate park (never
+    /// revived), heartbeat silence past the verdict's own threshold is
+    /// a death, a finished worker ended on purpose, and no verdict
+    /// answers nothing (the two-wordings rule). Rate guard on the
+    /// tender's own relaunch_history: a fresh resurrection gets its
+    /// spacing (the relaunched worker has not stamped yet), and a
+    /// worker that keeps dying goes loud, not looped.
+    pub fn reconcile_resurrections(&self) -> Value {
+        let mut relaunched = 0;
+        let mut waiting = 0;
+        let mut capped = 0;
+        let mut failed = 0;
+
+        let rows = match self.metadata_repo.fetch_systemtenders_list() {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Resurrection registry scan failed (next tick retries): {}", e.0);
+                return json!({"relaunched": 0, "waiting": 0, "capped": 0, "failed": 0});
+            }
+        };
+        if rows.is_empty() {
+            return json!({"relaunched": 0, "waiting": 0, "capped": 0, "failed": 0});
+        }
+
+        // the other families own these states: a tender under creation
+        // has no worker to lose, one under deletion is leaving
+        let lifecycle = self.metadata_repo.get_all_lifecycle().unwrap_or(json!({}));
+
+        let now_epoch = chrono::Utc::now().timestamp() as f64;
+
+        for row in &rows {
+            let id = row[0].clone().unwrap_or_default();
+            if id.is_empty() {
+                continue;
+            }
+            if let Some(state) = lifecycle.get(&id).and_then(|s| s.as_str()) {
+                if ["creating", "create-failed", "deleting", "deletion-failed"].contains(&state) {
+                    continue;
+                }
+            }
+
+            let db_name = format!("systemtender_{}", id.replace('-', "_"));
+
+            // a deliberate park is never revived
+            if self.archive_repo.read_shutdown_requested(&db_name) == Some(true) {
+                continue;
+            }
+
+            // the witness: silence past the verdict's own threshold
+            let verdict = match self.archive_repo.read_state_verdict(&db_name) {
+                Ok(v) => v,
+                Err(_) => None,
+            };
+            let Some(verdict) = verdict else {
+                continue; // no verdict answers nothing
+            };
+            if verdict.get("finished") == Some(&Value::Bool(true)) {
+                continue; // finished is an end, not a death
+            }
+            let interval = verdict
+                .get("interval_secs")
+                .and_then(|v| v.as_f64())
+                .filter(|v| *v != 0.0)
+                .unwrap_or(60.0);
+            let threshold = (90.0f64).max(6.0 * interval);
+            let Some(age) = verdict.get("age_secs").and_then(|v| v.as_f64()) else {
+                continue;
+            };
+            if age <= threshold {
+                continue; // alive
+            }
+
+            // dead - rate guard on the tender's own relaunch history
+            let config = self
+                .metadata_repo
+                .fetch_meta_data(&id)
+                .ok()
+                .and_then(|r| r.first().cloned())
+                .and_then(|r| r.get(3).and_then(|c| c.as_ref().cloned()))
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                .unwrap_or(json!({}));
+            let recent: Vec<f64> = config
+                .get("relaunch_history")
+                .and_then(|h| h.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|h| {
+                            h.get("ts")
+                                .and_then(|t| t.as_str())
+                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                                .map(|dt| dt.timestamp() as f64)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if let Some(newest) = recent.iter().cloned().fold(None::<f64>, |acc, t| {
+                Some(acc.map_or(t, |a: f64| a.max(t)))
+            }) {
+                if now_epoch - newest < RESURRECT_MIN_SPACING_SECS as f64 {
+                    waiting += 1;
+                    continue; // the relaunched worker has not stamped yet
+                }
+            }
+            let in_window = recent
+                .iter()
+                .filter(|t| now_epoch - **t < RESURRECT_WINDOW_SECS as f64)
+                .count();
+            if in_window >= RESURRECT_MAX_PER_WINDOW {
+                capped += 1;
+                error!(
+                    "Worker for {} keeps dying - {} resurrections in the last hour, standing down",
+                    id, in_window
+                );
+                continue;
+            }
+
+            // the same door a hand uses; it re-reads the witnesses,
+            // stamps the history the guard reads, and launches
+            let started = self.start_systemtender(&id);
+            match started.get("result").and_then(|r| r.as_str()) {
+                Some("SUCCESS") | Some("PARTIAL_SUCCESS") => {
+                    relaunched += 1;
+                    info!("Reconcile resurrected worker for systemtender: {}", id);
+                }
+                other => {
+                    failed += 1;
+                    warn!(
+                        "Resurrection for {} did not land (next tick retries): {:?}",
+                        id, other
+                    );
+                }
+            }
+        }
+
+        json!({
+            "relaunched": relaunched,
+            "waiting": waiting,
+            "capped": capped,
+            "failed": failed,
+        })
     }
 
     /// One deleting row: send the untrusted hint, read the estate's

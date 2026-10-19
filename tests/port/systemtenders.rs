@@ -1372,3 +1372,207 @@ fn the_verdict_stays_loud_while_the_tender_stays_dead() {
     assert_eq!(got["data"]["relaunches"], json!(1), "the resume count rides every read");
     assert_eq!(got["data"]["last_relaunch"]["resumed_from"], "presumed_dead");
 }
+
+// ── the resurrection family (designs/2026-10-18-worker-death-door, round 3) ──
+
+/// The resurrection fake: the registry, the lifecycle map, the tender's
+/// own stop flag + state verdict (the witnesses), and its config.
+/// Single-line SELECT heads only - the real queries never span lines
+/// between FROM and WHERE where it could bite (the wishes-suite lesson).
+fn resurrection_service(
+    registry: &[&str],
+    lifecycle: &[(&str, &str)],
+    stop_flag: Option<bool>,
+    verdict: Option<(&str, &str, &str)>, // (finished, age_secs, interval_secs)
+    config: &str,
+) -> (SystemtenderService, Arc<FakeDb>, Arc<FakeWindmill>) {
+    let registry: Vec<TextRow> = registry
+        .iter()
+        .map(|id| row(&[Some(*id), Some("bench-tender"), Some("2026-09-30 18:00:00+00")]))
+        .collect();
+    let lifecycle: Vec<TextRow> = lifecycle
+        .iter()
+        .map(|(id, state)| row(&[Some(*id), Some(*state)]))
+        .collect();
+    let wmill = Arc::new(FakeWindmill::default());
+    wmill.queue_async(Ok("job-relaunch-1".to_string()));
+    let config = config.to_string();
+    let verdict = verdict.map(|(f, a, i)| (f.to_string(), a.to_string(), i.to_string()));
+    let db = arc_db(move |_db, q| {
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
+        if q.contains("UPDATE reconcile_state") && q.contains("RETURNING id") {
+            return Ok(Some(vec![row(&[Some("1")])]));
+        }
+        if q.contains("UPDATE reconcile_state") || q.contains("INSERT INTO reconcile_state") {
+            return Ok(None);
+        }
+        if q.contains("FROM systemtender_lifecycle WHERE state = 'deleting'")
+            || q.contains("FROM systemtender_lifecycle WHERE state = 'creating'")
+        {
+            return Ok(Some(vec![]));
+        }
+        if q.contains("SELECT systemtender_id, state FROM") {
+            return Ok(Some(lifecycle.clone()));
+        }
+        if q.contains("SELECT id, name, creation_tsz FROM") {
+            return Ok(Some(registry.clone()));
+        }
+        if q.contains("SELECT shutdown_requested") {
+            return Ok(Some(match stop_flag {
+                Some(b) => vec![row(&[Some(if b { "t" } else { "f" })])],
+                None => vec![],
+            }));
+        }
+        if q.contains("SELECT finished_at IS NOT NULL") {
+            return Ok(Some(match &verdict {
+                Some((fin, age, interval)) => vec![row(&[
+                    Some(fin.as_str()),
+                    Some(age.as_str()),
+                    Some(interval.as_str()),
+                    None,
+                ])],
+                None => vec![],
+            }));
+        }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![row(&[
+                Some("row-id"),
+                Some("bench-tender"),
+                Some("2026-09-30 18:00:00+00"),
+                Some(config.as_str()),
+            ])]));
+        }
+        Ok(None)
+    });
+    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    (svc, db, wmill)
+}
+
+fn ts_secs_ago(secs: i64) -> String {
+    (chrono::Utc::now() - chrono::Duration::seconds(secs))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+fn history_config(ages: &[i64]) -> String {
+    let entries: Vec<Value> = ages
+        .iter()
+        .map(|s| json!({"ts": ts_secs_ago(*s), "resumed_from": "presumed_dead"}))
+        .collect();
+    serde_json::to_string(&json!({"relaunch_history": entries})).unwrap()
+}
+
+#[test]
+fn resurrects_a_worker_dead_past_the_verdict_threshold() {
+    // heartbeat silent 2h against a 6-minute threshold: the tick
+    // relaunches through the start door
+    let (svc, _db, _wmill) = resurrection_service(
+        &["row-id"],
+        &[],
+        Some(false),
+        Some(("f", "7200", "60")),
+        "{}",
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["resurrections"]["relaunched"], 1, "relaunched: {r}");
+    assert_eq!(r["data"]["resurrections"]["failed"], 0);
+}
+
+#[test]
+fn leaves_a_live_worker_alone() {
+    let (svc, _db, _wmill) =
+        resurrection_service(&["row-id"], &[], Some(false), Some(("f", "10", "60")), "{}");
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "alive: {r}");
+    assert_eq!(r["data"]["resurrections"]["failed"], 0);
+}
+
+#[test]
+fn a_deliberate_park_is_never_revived() {
+    // the stop flag is the holder's own hand - silence means parked
+    let (svc, _db, _wmill) = resurrection_service(
+        &["row-id"],
+        &[],
+        Some(true),
+        Some(("f", "7200", "60")),
+        "{}",
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "parked: {r}");
+}
+
+#[test]
+fn a_finished_worker_is_not_a_death() {
+    let (svc, _db, _wmill) =
+        resurrection_service(&["row-id"], &[], Some(false), Some(("t", "7200", "60")), "{}");
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "finished: {r}");
+}
+
+#[test]
+fn no_verdict_answers_nothing() {
+    let (svc, _db, _wmill) = resurrection_service(&["row-id"], &[], Some(false), None, "{}");
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "no verdict: {r}");
+}
+
+#[test]
+fn other_families_own_their_states() {
+    for state in ["creating", "create-failed", "deleting", "deletion-failed"] {
+        let (svc, _db, _wmill) = resurrection_service(
+            &["row-id"],
+            &[("row-id", state)],
+            Some(false),
+            Some(("f", "7200", "60")),
+            "{}",
+        );
+        let r = svc.reconcile_tick();
+        assert_eq!(
+            r["data"]["resurrections"]["relaunched"],
+            0,
+            "state {state}: {r}"
+        );
+    }
+}
+
+#[test]
+fn a_fresh_resurrection_gets_its_spacing() {
+    // relaunched 2 minutes ago: the new worker has not stamped yet -
+    // relaunching again would stack workers
+    let (svc, _db, _wmill) = resurrection_service(
+        &["row-id"],
+        &[],
+        Some(false),
+        Some(("f", "7200", "60")),
+        &history_config(&[120]),
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "spacing: {r}");
+    assert_eq!(r["data"]["resurrections"]["waiting"], 1);
+}
+
+#[test]
+fn a_worker_that_keeps_dying_goes_loud_not_looped() {
+    // three resurrections in the last hour, none fresh: stand down
+    let (svc, _db, _wmill) = resurrection_service(
+        &["row-id"],
+        &[],
+        Some(false),
+        Some(("f", "7200", "60")),
+        &history_config(&[1200, 2400, 3000]),
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "capped: {r}");
+    assert_eq!(r["data"]["resurrections"]["capped"], 1);
+}
+
+#[test]
+fn an_empty_registry_is_quiet() {
+    let (svc, _db, _wmill) = resurrection_service(&[], &[], None, None, "{}");
+    let r = svc.reconcile_tick();
+    assert_eq!(r["data"]["resurrections"]["relaunched"], 0);
+    assert_eq!(r["data"]["resurrections"]["waiting"], 0);
+    assert_eq!(r["data"]["resurrections"]["capped"], 0);
+    assert_eq!(r["data"]["resurrections"]["failed"], 0);
+}
