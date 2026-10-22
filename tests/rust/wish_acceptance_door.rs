@@ -126,7 +126,7 @@ fn zero_move_plan_plants_the_receiver_row() {
     // accepted, the receiver's row planted, no refusal.
     let (svc, db, _) = service_with_causal(
         &[SENDER, RECEIVER, OTHER],
-        json!({"status": "planned", "moves": [], "hold": true, "path": [RECEIVER]}),
+        json!({"status": "planned", "moves": [], "hold": true, "receivers": [RECEIVER]}),
     );
     svc.create_wish(&hold_payload()).expect("declared");
 
@@ -157,7 +157,7 @@ fn zero_move_plan_with_dead_receiver_refuses_naming_the_assignable() {
     // the live tenders named as assignable, the book card purged.
     let (svc, db, causal) = service_with_causal(
         &[SENDER, OTHER],
-        json!({"status": "planned", "moves": [], "hold": true, "path": [RECEIVER]}),
+        json!({"status": "planned", "moves": [], "hold": true, "receivers": [RECEIVER]}),
     );
     svc.create_wish(&hold_payload()).expect("declared");
 
@@ -187,7 +187,7 @@ fn plan_naming_no_tender_at_all_refuses() {
     // moves [], path []: the plan hands work to nobody
     let (svc, db, causal) = service_with_causal(
         &[SENDER],
-        json!({"status": "planned", "moves": [], "hold": true, "path": []}),
+        json!({"status": "planned", "moves": [], "hold": true}),
     );
     svc.create_wish(&hold_payload()).expect("declared");
 

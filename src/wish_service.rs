@@ -391,7 +391,7 @@ impl WishService {
             // The acceptance door, the same rule as holds: a serving
             // tender that is not alive means the wish is rejected, not
             // parked as planned with a silent plan_error.
-            if !self.tending_is_assignable(wish_id, std::slice::from_ref(&sender), &None) {
+            if !self.tending_is_assignable(wish_id, std::slice::from_ref(&sender), &[]) {
                 return;
             }
             let Some(archive) = &self.archive_repo else {
@@ -976,10 +976,10 @@ impl WishService {
         &self,
         wish_id: &str,
         senders: &[String],
-        receiver: &Option<String>,
+        receivers: &[String],
     ) -> bool {
         let mut tenders: Vec<&str> = senders.iter().map(|s| s.as_str()).collect();
-        if let Some(r) = receiver {
+        for r in receivers {
             tenders.push(r.as_str());
         }
         if tenders.is_empty() {
@@ -1153,7 +1153,7 @@ impl WishService {
                 "planned",
                 Some(&serde_json::to_string(&plan_response).unwrap_or_default()),
             );
-            let (senders, receiver) = plan_tenders(&plan_response);
+            let (senders, receivers) = plan_tenders(&plan_response);
 
             // ── The acceptance door (the holder's spec, 2026-10-21): a
             // wish is only accepted if it has living tenders that tend
@@ -1166,7 +1166,7 @@ impl WishService {
             // no wish-serving line in any tender log - and the judge
             // stamped "landed" on the walk's ambient stream. A
             // spectator got a trophy.)
-            if !self.tending_is_assignable(wish_id, &senders, &receiver) {
+            if !self.tending_is_assignable(wish_id, &senders, &receivers) {
                 return;
             }
             let Some(archive) = &self.archive_repo else {
@@ -1202,7 +1202,7 @@ impl WishService {
                     }
                 }
             }
-            if let Some(receiver) = &receiver {
+            for receiver in &receivers {
                 let receiver_db = format!("systemtender_{}", receiver.replace('-', "_"));
                 match archive.write_wish_assignment(&receiver_db, wish_id, "receiver") {
                     Ok(()) => {
@@ -1356,11 +1356,16 @@ impl WishService {
 
 /// The tending set a steer plan hands its work to: every distinct
 /// sender named by the moves (joint serving - one assignment row
-/// each), plus the path's receiver (the reading's own tender) when it
-/// is not already one of them. A zero-move hold names no sender - the
-/// receiver alone tends: its stillness and its published readings are
-/// the whole service.
-pub fn plan_tenders(plan_response: &Value) -> (Vec<String>, Option<String>) {
+/// each), plus the receivers the plan names - the "receivers" field
+/// (zero-move holds carry it: a hold names no sender and no path, so
+/// the resolved receiver of every claim rides the answer - found
+/// live 2026-10-22: the door refused a planned zero-move wish as
+/// "names no tender" while its receiver stood alive in the assignable
+/// list) and the path's last hop (chains), deduped, minus the
+/// senders. A zero-move hold names no sender - the receiver alone
+/// tends: its stillness and its published readings are the whole
+/// service.
+pub fn plan_tenders(plan_response: &Value) -> (Vec<String>, Vec<String>) {
     let mut senders: Vec<String> = Vec::new();
     for m in plan_response
         .get("moves")
@@ -1374,14 +1379,28 @@ pub fn plan_tenders(plan_response: &Value) -> (Vec<String>, Option<String>) {
             }
         }
     }
-    let receiver = plan_response
+    let mut receivers: Vec<String> = Vec::new();
+    let mut offer = |r: &str| {
+        if !senders.iter().any(|x| x == r) && !receivers.iter().any(|x| x == r) {
+            receivers.push(r.to_string());
+        }
+    };
+    if let Some(list) = plan_response.get("receivers").and_then(|r| r.as_array()) {
+        for r in list {
+            if let Some(r) = r.as_str() {
+                offer(r);
+            }
+        }
+    }
+    if let Some(r) = plan_response
         .get("path")
         .and_then(|p| p.as_array())
         .and_then(|p| p.last())
         .and_then(|r| r.as_str())
-        .filter(|r| !senders.iter().any(|x| x == r))
-        .map(|r| r.to_string());
-    (senders, receiver)
+    {
+        offer(r);
+    }
+    (senders, receivers)
 }
 
 #[cfg(test)]
@@ -1400,9 +1419,9 @@ mod tests {
             ],
             "path": ["t1", "rx"],
         });
-        let (senders, receiver) = plan_tenders(&plan);
+        let (senders, receivers) = plan_tenders(&plan);
         assert_eq!(senders, vec!["t1".to_string(), "t2".to_string()]);
-        assert_eq!(receiver.as_deref(), Some("rx"));
+        assert_eq!(receivers, vec!["rx".to_string()]);
     }
 
     #[test]
@@ -1413,9 +1432,9 @@ mod tests {
             "moves": [{"param": "a", "sender": "t1"}],
             "path": ["t1"],
         });
-        let (senders, receiver) = plan_tenders(&plan);
+        let (senders, receivers) = plan_tenders(&plan);
         assert_eq!(senders, vec!["t1".to_string()]);
-        assert_eq!(receiver, None);
+        assert!(receivers.is_empty());
     }
 
     #[test]
@@ -1423,9 +1442,9 @@ mod tests {
         // the zero-move hold: no sender, the receiver alone tends
         // (found live 2026-10-21: this shape planted nothing and the
         // judge read the ambient stream)
-        let plan = json!({"moves": [], "hold": true, "path": ["rx"]});
-        let (senders, receiver) = plan_tenders(&plan);
+        let plan = json!({"moves": [], "hold": true, "receivers": ["rx"]});
+        let (senders, receivers) = plan_tenders(&plan);
         assert!(senders.is_empty());
-        assert_eq!(receiver.as_deref(), Some("rx"));
+        assert_eq!(receivers, vec!["rx".to_string()]);
     }
 }
