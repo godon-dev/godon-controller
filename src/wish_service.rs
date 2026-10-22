@@ -1094,35 +1094,19 @@ impl WishService {
         let claims = claims.cloned().unwrap_or_default();
         let terms_list = terms.cloned().unwrap_or_default();
 
-        let mut plan_request = if claims.len() == 1 && terms_list.is_empty() {
-            let first = &claims[0];
-            let first_band = first.get("band").cloned().unwrap_or(Value::Null);
-            let mut band = Map::new();
-            band.insert(
-                "lo".to_string(),
-                json!(first_band.get("lo").and_then(|v| v.as_f64()).unwrap_or(0.0)),
-            );
-            band.insert(
-                "hi".to_string(),
-                json!(first_band.get("hi").and_then(|v| v.as_f64()).unwrap_or(0.0)),
-            );
-            if let Some(t) = first_band.get("target") {
-                if !t.is_null() {
-                    band.insert("target".to_string(), json!(t.as_f64().unwrap_or(0.0)));
-                }
-            }
-            json!({
-                "wish_id": wish_id,
-                "outcome": first.get("outcome").cloned().unwrap_or(Value::Null),
-                "band": Value::Object(band),
-            })
-        } else {
-            json!({
-                "wish_id": wish_id,
-                "claims": claims,
-                "terms": terms_list,
-            })
-        };
+        // Claims verbatim, always. The sugar fold (single claim, no
+        // terms -> {outcome, band}) starved the book's claims-grammar
+        // machinery for exactly the commonest wish shape: the stored
+        // terms carried claims=[] and every claims-path gate (the
+        // re-walk's remeasure hint, the re-serve) guard-failed silently
+        // (found live 2026-10-22: three flights, probe:null walk:null
+        // on every read). The declare door retired the sugar shape;
+        // the ask side now matches it.
+        let mut plan_request = json!({
+            "wish_id": wish_id,
+            "claims": claims,
+            "terms": terms_list,
+        });
         if let Some(b) = budget {
             plan_request["budget"] = json!(b);
         }
