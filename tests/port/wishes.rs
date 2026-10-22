@@ -1390,6 +1390,16 @@ fn plan_errors(db: &FakeDb) -> Vec<String> {
         .collect()
 }
 
+/// The door's refusals (reason no_tender), as captured inserts.
+fn refused_events(db: &FakeDb) -> Vec<String> {
+    db.queries()
+        .into_iter()
+        .filter(|q| {
+            q.trim_start().starts_with("INSERT INTO steerwish_events") && q.contains("'refused'")
+        })
+        .collect()
+}
+
 #[test]
 fn fresh_heartbeat_plants() {
     let (db, _hb, _ao) = liveness_db("plain", 1.0, Some(10.0), false);
@@ -1413,15 +1423,23 @@ fn window_derives_from_measured_cadence() {
 
 #[test]
 fn stale_heartbeat_refused_loudly() {
+    // The acceptance door (2026-10-21): a stale heartbeat means no
+    // living tender will take the tending - refused (no_tender), the
+    // stale heartbeat named inside the refusal's dead list, nothing
+    // planted.
     let (db, _hb, _ao) = liveness_db("plain", 99999.0, Some(10.0), false);
     liveness_declare(db.clone());
     assert!(assignment_calls(&db).is_empty());
-    let errors = plan_errors(&db);
+    let refusals = refused_events(&db);
     assert!(
-        errors
+        refusals.iter().any(|q| q.contains("no_tender") && q.contains("heartbeat stale")),
+        "the refusal must name the stale heartbeat: {refusals:?}"
+    );
+    assert!(
+        !plan_errors(&db)
             .iter()
-            .any(|q| q.contains("not alive") && q.contains("heartbeat stale")),
-        "the refusal must name the stale heartbeat: {errors:?}"
+            .any(|q| q.contains("not alive")),
+        "a dead tender is a refusal, not an error"
     );
 }
 
@@ -1455,26 +1473,29 @@ fn age_only_fallback_when_column_missing() {
 
 #[test]
 fn unknown_tender_refused() {
-    // registry returned no row: refused before any heartbeat read
+    // registry returned no row: refused before any heartbeat read -
+    // the refusal names the unknown tender
     let (db, _hb, _ao) = liveness_db("plain", 1.0, Some(10.0), true);
     liveness_declare(db.clone());
     assert!(assignment_calls(&db).is_empty());
-    let errors = plan_errors(&db);
+    let refusals = refused_events(&db);
     assert!(
-        errors.iter().any(|q| q.contains("unknown tender")),
-        "{errors:?}"
+        refusals.iter().any(|q| q.contains("no_tender") && q.contains("unknown tender")),
+        "{refusals:?}"
     );
 }
 
 #[test]
 fn unreachable_archive_refused() {
+    // the heartbeat read itself failed: the tender cannot answer, so
+    // it cannot tend - the refusal names the unreachable archive
     let (db, _hb, _ao) = liveness_db("unreachable", 0.0, None, false);
     liveness_declare(db.clone());
     assert!(assignment_calls(&db).is_empty());
-    let errors = plan_errors(&db);
+    let refusals = refused_events(&db);
     assert!(
-        errors.iter().any(|q| q.contains("unreachable")),
-        "{errors:?}"
+        refusals.iter().any(|q| q.contains("no_tender") && q.contains("unreachable")),
+        "{refusals:?}"
     );
 }
 

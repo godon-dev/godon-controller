@@ -223,6 +223,8 @@ pub struct FakeCausal {
     plan_q: Mutex<VecDeque<Result<Value, String>>>,
     pub purges: Mutex<Vec<String>>,
     purge_q: Mutex<VecDeque<Result<u16, String>>>,
+    /// Book-card purges (the door's refusals), by wish id.
+    pub book_purges: Mutex<Vec<String>>,
 }
 
 impl FakeCausal {
@@ -268,5 +270,10 @@ impl CausalClient for FakeCausal {
     fn purge_curves(&self, systemtender_id: &str) -> Result<u16, String> {
         self.purges.lock().unwrap().push(systemtender_id.to_string());
         self.purge_q.lock().unwrap().pop_front().unwrap_or(Ok(200))
+    }
+
+    fn purge_book_page(&self, wish_id: &str) -> Result<(), String> {
+        self.book_purges.lock().unwrap().push(wish_id.to_string());
+        Ok(())
     }
 }

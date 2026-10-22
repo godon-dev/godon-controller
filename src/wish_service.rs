@@ -385,34 +385,20 @@ impl WishService {
                 .map(|s| s.to_string());
             let Some(sender) = sender else {
                 warn!("Wish {}: planned but no serving tender named", wish_id);
+                self.refuse_untendable(wish_id, &[], "the plan names no tender to tend it");
                 return;
             };
-            let Some(archive) = &self.archive_repo else {
-                warn!(
-                    "Wish {}: planned on {} but no archive config - assignment not written",
-                    wish_id, sender
-                );
-                return;
-            };
-            let (alive, reason) = self.sender_alive(&sender);
-            if !alive {
-                let detail = json!({
-                    "error": format!(
-                        "sender {} not alive: {} - assignment not planted",
-                        sender, reason
-                    )
-                });
-                let _ = self.repo.insert_wish_event(
-                    wish_id,
-                    "plan_error",
-                    Some(&serde_json::to_string(&detail).unwrap_or_default()),
-                );
-                warn!(
-                    "Wish {}: sender {} not alive ({}) - no note planted",
-                    wish_id, sender, reason
-                );
+            // The acceptance door, the same rule as holds: a serving
+            // tender that is not alive means the wish is rejected, not
+            // parked as planned with a silent plan_error.
+            if !self.tending_is_assignable(wish_id, std::slice::from_ref(&sender), &None) {
                 return;
             }
+            let Some(archive) = &self.archive_repo else {
+                // unreachable: the door already refused on the
+                // missing archive config
+                return;
+            };
             let db_name = format!("systemtender_{}", sender.replace('-', "_"));
             match archive.write_wish_assignment(&db_name, wish_id, "sender") {
                 Ok(()) => {
@@ -945,9 +931,12 @@ impl WishService {
         }
     }
 
-    fn sender_alive(&self, sender_uuid: &str) -> (bool, String) {
-        let db_name = format!("systemtender_{}", sender_uuid.replace('-', "_"));
-        match self.repo.fetch_meta_data(sender_uuid) {
+    /// Liveness of any tender (the name says what it always checked:
+    /// the registry row, then the heartbeat's age against its window).
+    /// The door uses it for senders and receivers alike.
+    fn tender_alive(&self, tender_uuid: &str) -> (bool, String) {
+        let db_name = format!("systemtender_{}", tender_uuid.replace('-', "_"));
+        match self.repo.fetch_meta_data(tender_uuid) {
             Ok(rows) if rows.is_empty() => {
                 return (false, "unknown tender: not in registry".to_string())
             }
@@ -975,6 +964,87 @@ impl WishService {
                 format!("heartbeat stale: last beat {:.0}s ago (window {:.0}s)", age, window),
             )
         }
+    }
+
+    /// The acceptance door: every tender the plan hands work to must
+    /// be alive, and at least one must exist. A wish nothing live
+    /// will tend is refused with reason no_tender - the refusal names
+    /// the dead tenders with their reasons and what IS assignable
+    /// now, and purges causal's book card so the judge never reads a
+    /// wish no one took.
+    fn tending_is_assignable(
+        &self,
+        wish_id: &str,
+        senders: &[String],
+        receiver: &Option<String>,
+    ) -> bool {
+        let mut tenders: Vec<&str> = senders.iter().map(|s| s.as_str()).collect();
+        if let Some(r) = receiver {
+            tenders.push(r.as_str());
+        }
+        if tenders.is_empty() {
+            self.refuse_untendable(wish_id, &[], "the plan names no tender to tend it");
+            return false;
+        }
+        if self.archive_repo.is_none() {
+            self.refuse_untendable(
+                wish_id,
+                &[],
+                "no archive config - assignments cannot be planted",
+            );
+            return false;
+        }
+        let mut dead: Vec<Value> = Vec::new();
+        for t in &tenders {
+            let (alive, reason) = self.tender_alive(t);
+            if !alive {
+                dead.push(json!({"tender": t, "why": reason}));
+            }
+        }
+        if !dead.is_empty() {
+            self.refuse_untendable(wish_id, &dead, "no living tender will take the tending");
+            return false;
+        }
+        true
+    }
+
+    /// Stamp the door's refusal and purge the book card. The event
+    /// envelope matches causal's own refusals (reason + detail), so
+    /// the declarer reads one shape.
+    fn refuse_untendable(&self, wish_id: &str, dead: &[Value], why: &str) {
+        let assignable = self.live_tenders();
+        let detail = json!({
+            "reason": "no_tender",
+            "detail": {
+                "why": why,
+                "dead": dead,
+                "assignable": assignable,
+            },
+        });
+        let _ = self.repo.insert_wish_event(
+            wish_id,
+            "refused",
+            Some(&serde_json::to_string(&detail).unwrap_or_default()),
+        );
+        if let Err(e) = self.causal.purge_book_page(wish_id) {
+            warn!("Wish {}: book card purge failed: {}", wish_id, e);
+        }
+        info!("Wish {} refused at the door: no_tender ({})", wish_id, why);
+    }
+
+    /// The group's live tenders - what the refusal names as
+    /// assignable: registry rows whose heartbeat answers inside its
+    /// window.
+    fn live_tenders(&self) -> Vec<String> {
+        let rows = match self.repo.fetch_systemtenders_list() {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        rows.iter()
+            .map(|r| r[0].clone().unwrap_or_default())
+            .filter(|id| !id.is_empty())
+            .filter(|id| self.tender_alive(id).0)
+            .collect()
     }
 
     fn fold_in_book(&self, wish_id: &str) -> usize {
@@ -1083,104 +1153,81 @@ impl WishService {
                 "planned",
                 Some(&serde_json::to_string(&plan_response).unwrap_or_default()),
             );
-            let moves = plan_response
-                .get("moves")
-                .and_then(|m| m.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let sender = moves
-                .first()
-                .and_then(|m| m.get("sender"))
-                .and_then(|s| s.as_str())
-                .map(|s| s.to_string());
-            let path = plan_response
-                .get("path")
-                .and_then(|p| p.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let receiver = path
-                .last()
-                .and_then(|r| r.as_str())
-                .map(|r| r.to_string());
+            let (senders, receiver) = plan_tenders(&plan_response);
 
-            if let Some(sender) = &sender {
-                let Some(archive) = &self.archive_repo else {
-                    warn!(
-                        "Wish {}: planned on {} but no archive config - assignment not written",
-                        wish_id, sender
-                    );
-                    return;
-                };
-                let (alive, reason) = self.sender_alive(sender);
-                if !alive {
-                    let detail = json!({
-                        "error": format!(
-                            "sender {} not alive: {} - assignment not planted",
-                            sender, reason
-                        )
-                    });
-                    let _ = self.repo.insert_wish_event(
-                        wish_id,
-                        "plan_error",
-                        Some(&serde_json::to_string(&detail).unwrap_or_default()),
-                    );
-                    warn!("Wish {}: sender {} not alive ({}) - no note planted", wish_id, sender, reason);
-                } else {
-                    let db_name = format!("systemtender_{}", sender.replace('-', "_"));
-                    match archive.write_wish_assignment(&db_name, wish_id, "sender") {
-                        Ok(()) => {
-                            let detail = json!({"sender": sender, "db": db_name});
-                            let _ = self.repo.insert_wish_event(
-                                wish_id,
-                                "assigned",
-                                Some(&serde_json::to_string(&detail).unwrap_or_default()),
-                            );
-                            info!("Wish {} assigned to {}", wish_id, db_name);
-                        }
-                        Err(e) => {
-                            warn!("Wish {}: assignment write failed: {}", wish_id, e.0);
-                            let detail = json!({"error": format!("assignment write failed: {}", e.0)});
-                            let _ = self.repo.insert_wish_event(
-                                wish_id,
-                                "plan_error",
-                                Some(&serde_json::to_string(&detail).unwrap_or_default()),
-                            );
-                        }
+            // ── The acceptance door (the holder's spec, 2026-10-21): a
+            // wish is only accepted if it has living tenders that tend
+            // the band - otherwise rejected. The door checks every
+            // tender the plan hands work to BEFORE anything is
+            // planted; a refusal names what IS assignable (the live
+            // tenders) and purges the book card, so the judge never
+            // reads a wish no one took. (Found live 2026-10-21: wish
+            // a6638bee planned with moves [], no assignment planted,
+            // no wish-serving line in any tender log - and the judge
+            // stamped "landed" on the walk's ambient stream. A
+            // spectator got a trophy.)
+            if !self.tending_is_assignable(wish_id, &senders, &receiver) {
+                return;
+            }
+            let Some(archive) = &self.archive_repo else {
+                // unreachable: the door already refused on the
+                // missing archive config
+                return;
+            };
+            // Joint serving: every distinct sender named by the moves
+            // gets its own row (each tender's pulse adopts exactly its
+            // own moves). A zero-move hold names no sender - the
+            // receiver alone tends (its stillness and its published
+            // readings are the whole service).
+            for sender in &senders {
+                let db_name = format!("systemtender_{}", sender.replace('-', "_"));
+                match archive.write_wish_assignment(&db_name, wish_id, "sender") {
+                    Ok(()) => {
+                        let detail = json!({"sender": sender, "db": db_name});
+                        let _ = self.repo.insert_wish_event(
+                            wish_id,
+                            "assigned",
+                            Some(&serde_json::to_string(&detail).unwrap_or_default()),
+                        );
+                        info!("Wish {} assigned to {}", wish_id, db_name);
                     }
-                    if let Some(receiver) = receiver {
-                        if receiver != *sender {
-                            let receiver_db =
-                                format!("systemtender_{}", receiver.replace('-', "_"));
-                            match archive.write_wish_assignment(&receiver_db, wish_id, "receiver") {
-                                Ok(()) => {
-                                    let detail = json!({
-                                        "receiver": receiver,
-                                        "db": receiver_db,
-                                        "role": "receiver",
-                                    });
-                                    let _ = self.repo.insert_wish_event(
-                                        wish_id,
-                                        "assigned",
-                                        Some(&serde_json::to_string(&detail).unwrap_or_default()),
-                                    );
-                                    info!("Wish {} receiver note in {}", wish_id, receiver_db);
-                                }
-                                Err(e) => {
-                                    warn!("Wish {}: receiver note failed: {}", wish_id, e.0);
-                                    let detail =
-                                        json!({"error": format!("receiver note failed: {}", e.0)});
-                                    let _ = self.repo.insert_wish_event(
-                                        wish_id,
-                                        "plan_error",
-                                        Some(&serde_json::to_string(&detail).unwrap_or_default()),
-                                    );
-                                }
-                            }
-                        }
+                    Err(e) => {
+                        warn!("Wish {}: assignment write failed: {}", wish_id, e.0);
+                        let detail = json!({"error": format!("assignment write failed: {}", e.0)});
+                        let _ = self.repo.insert_wish_event(
+                            wish_id,
+                            "plan_error",
+                            Some(&serde_json::to_string(&detail).unwrap_or_default()),
+                        );
                     }
                 }
-            } else {
-                warn!("Wish {}: planned but no move named", wish_id);
+            }
+            if let Some(receiver) = &receiver {
+                let receiver_db = format!("systemtender_{}", receiver.replace('-', "_"));
+                match archive.write_wish_assignment(&receiver_db, wish_id, "receiver") {
+                    Ok(()) => {
+                        let detail = json!({
+                            "receiver": receiver,
+                            "db": receiver_db,
+                            "role": "receiver",
+                        });
+                        let _ = self.repo.insert_wish_event(
+                            wish_id,
+                            "assigned",
+                            Some(&serde_json::to_string(&detail).unwrap_or_default()),
+                        );
+                        info!("Wish {} receiver note in {}", wish_id, receiver_db);
+                    }
+                    Err(e) => {
+                        warn!("Wish {}: receiver note failed: {}", wish_id, e.0);
+                        let detail = json!({"error": format!("receiver note failed: {}", e.0)});
+                        let _ = self.repo.insert_wish_event(
+                            wish_id,
+                            "plan_error",
+                            Some(&serde_json::to_string(&detail).unwrap_or_default()),
+                        );
+                    }
+                }
             }
         } else {
             let detail = json!({
@@ -1304,5 +1351,81 @@ impl WishService {
                 .unwrap_or(Value::Null),
             "events": events_val,
         })
+    }
+}
+
+/// The tending set a steer plan hands its work to: every distinct
+/// sender named by the moves (joint serving - one assignment row
+/// each), plus the path's receiver (the reading's own tender) when it
+/// is not already one of them. A zero-move hold names no sender - the
+/// receiver alone tends: its stillness and its published readings are
+/// the whole service.
+pub fn plan_tenders(plan_response: &Value) -> (Vec<String>, Option<String>) {
+    let mut senders: Vec<String> = Vec::new();
+    for m in plan_response
+        .get("moves")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default()
+    {
+        if let Some(s) = m.get("sender").and_then(|s| s.as_str()) {
+            if !senders.iter().any(|x| x == s) {
+                senders.push(s.to_string());
+            }
+        }
+    }
+    let receiver = plan_response
+        .get("path")
+        .and_then(|p| p.as_array())
+        .and_then(|p| p.last())
+        .and_then(|r| r.as_str())
+        .filter(|r| !senders.iter().any(|x| x == r))
+        .map(|r| r.to_string());
+    (senders, receiver)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plan_tenders_reads_every_distinct_sender() {
+        // joint serving: two moves by two senders - both rows, no
+        // duplicates, receiver alongside
+        let plan = json!({
+            "moves": [
+                {"param": "a", "sender": "t1"},
+                {"param": "b", "sender": "t2"},
+                {"param": "c", "sender": "t1"},
+            ],
+            "path": ["t1", "rx"],
+        });
+        let (senders, receiver) = plan_tenders(&plan);
+        assert_eq!(senders, vec!["t1".to_string(), "t2".to_string()]);
+        assert_eq!(receiver.as_deref(), Some("rx"));
+    }
+
+    #[test]
+    fn plan_tenders_receiver_in_senders_not_duplicated() {
+        // a self-referential chain end: the sender IS the outcome's
+        // own tender - one row, role sender
+        let plan = json!({
+            "moves": [{"param": "a", "sender": "t1"}],
+            "path": ["t1"],
+        });
+        let (senders, receiver) = plan_tenders(&plan);
+        assert_eq!(senders, vec!["t1".to_string()]);
+        assert_eq!(receiver, None);
+    }
+
+    #[test]
+    fn plan_tenders_zero_move_names_the_receiver_alone() {
+        // the zero-move hold: no sender, the receiver alone tends
+        // (found live 2026-10-21: this shape planted nothing and the
+        // judge read the ambient stream)
+        let plan = json!({"moves": [], "hold": true, "path": ["rx"]});
+        let (senders, receiver) = plan_tenders(&plan);
+        assert!(senders.is_empty());
+        assert_eq!(receiver.as_deref(), Some("rx"));
     }
 }
