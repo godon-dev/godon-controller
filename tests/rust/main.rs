@@ -12,3 +12,5 @@ mod instruments_read;
 mod seek_return_mirror;
 mod watermark_slots;
 mod wish_assignment_upsert;
+mod seek_wish_door;
+mod wish_acceptance_door;

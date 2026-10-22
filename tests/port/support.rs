@@ -220,6 +220,11 @@ impl CausalClient for FakeCausal {
         self.purged.lock().unwrap().push(systemtender_id.to_string());
         pop(&self.purge_results, Ok(200))
     }
+
+    fn purge_book_page(&self, wish_id: &str) -> Result<(), String> {
+        self.purged.lock().unwrap().push(wish_id.to_string());
+        Ok(())
+    }
 }
 
 /// Shared convenience: a config with a database name pinned, for

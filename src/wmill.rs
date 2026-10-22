@@ -33,10 +33,18 @@ pub trait CausalClient: Send + Sync {
     /// GET {causal}/steer/plan/{wish_id} - the book page; None on any
     /// failure (the registry stays as stale as it was).
     fn fetch_book_page(&self, wish_id: &str) -> Option<Value>;
+
     /// POST {causal}/steer/plan - the plan ask.
     fn ask_to_plan(&self, plan_request: &Value) -> Result<Value, String>;
+
     /// DELETE {causal}/curves/{id} - best-effort curve purge.
     fn purge_curves(&self, systemtender_id: &str) -> Result<u16, String>;
+
+    /// DELETE {causal}/steer/plan/{wish_id} - purge the book card for
+    /// a wish the door refused: the book must not keep a rejected
+    /// wish as planned, waiting for a judge to read the ambient
+    /// stream and stamp a verdict no tender earned.
+    fn purge_book_page(&self, wish_id: &str) -> Result<(), String>;
 }
 
 fn windmill_base() -> String {
@@ -257,5 +265,21 @@ impl CausalClient for HttpCausal {
             .send()
             .map_err(|e| e.to_string())?;
         Ok(resp.status().as_u16())
+    }
+
+    fn purge_book_page(&self, wish_id: &str) -> Result<(), String> {
+        let short = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let resp = short
+            .delete(format!("{}/steer/plan/{}", causal_base(), wish_id))
+            .send()
+            .map_err(|e| e.to_string())?;
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
+            Ok(())
+        } else {
+            Err(format!("HTTP {}", resp.status()))
+        }
     }
 }

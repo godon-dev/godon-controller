@@ -52,7 +52,7 @@ fn service(known_sender: bool) -> (WishService, std::sync::Arc<FakeDb>, std::syn
         if q.contains("INSERT INTO") {
             return Ok(None);
         }
-        if q.contains("EXTRACT(EPOCH")) {
+        if q.contains("EXTRACT(EPOCH") {
             return Ok(Some(vec![row(&[Some("5.0"), Some("10.0")])]));
         }
         if let Some(pos) = q.find("WHERE id = '") {
@@ -215,7 +215,7 @@ fn declared_row_carries_the_body_in_its_own_column() {
     let insert = db
         .queries()
         .into_iter()
-        .find(|q| q.starts_with("INSERT INTO steerwishes"))
+        .find(|q| q.trim_start().starts_with("INSERT INTO steerwishes"))
         .expect("registry insert");
     assert!(insert.contains("'seek'"), "regime: {}", insert);
     assert!(insert.contains("'room/objective_1'"), "{}", insert);
@@ -232,8 +232,7 @@ fn declared_row_carries_the_body_in_its_own_column() {
 
 #[test]
 fn planned_answer_plants_the_senders_assignment() {
-    let (svc, db, _) = service(true);
-    svc.causal_ask_override_for_test();
+    let (_, db, _) = service(true);
     let causal = FakeCausal::new();
     causal.push_plan(Ok(json!({"status": "planned", "sender": SENDER})));
     let svc = WishService::with_parts(db.clone(), FakeWindmill::new(), causal.clone(), true);
@@ -261,13 +260,16 @@ fn planned_answer_plants_the_senders_assignment() {
 }
 
 #[test]
-fn dead_sender_refuses_loudly_no_note_planted() {
-    // the sender is not in the registry: unknown tender, no note.
-    let db_only = service(false);
-    let (svc, db, _) = (db_only.0, db_only.1, db_only.2);
+fn dead_sender_refuses_at_the_door_no_note_planted() {
+    // The acceptance door (the holder's spec, 2026-10-21): the sender
+    // is not in the registry, so no living tender will take the
+    // tending - the wish is REFUSED (reason no_tender), not parked as
+    // planned with a plan_error, and the book card is purged so the
+    // judge never reads it.
+    let (_, db, _) = service(false);
     let causal = FakeCausal::new();
     causal.push_plan(Ok(json!({"status": "planned", "sender": "dead-one"})));
-    let svc = WishService::with_parts(db.clone(), FakeWindmill::new(), causal, true);
+    let svc = WishService::with_parts(db.clone(), FakeWindmill::new(), causal.clone(), true);
     svc.create_wish(&seek_payload(json!({"answer": "now"})))
         .expect("declared");
 
@@ -277,19 +279,39 @@ fn dead_sender_refuses_loudly_no_note_planted() {
         .filter(|q| q.starts_with("INSERT INTO wish_assignments"))
         .count();
     assert_eq!(assignments, 0);
+
+    let refused: Vec<String> = events_inserted(&db)
+        .into_iter()
+        .filter(|q| q.contains("'refused'"))
+        .collect();
+    assert_eq!(refused.len(), 1, "the door refuses: {:?}", refused);
     assert!(
-        events_inserted(&db)
+        refused[0].contains("no_tender"),
+        "reason no_tender: {}",
+        refused[0]
+    );
+    assert!(
+        refused[0].contains("dead-one"),
+        "the dead tender named: {}",
+        refused[0]
+    );
+    assert_eq!(
+        causal.book_purges.lock().unwrap().len(),
+        1,
+        "the book card is purged on refusal"
+    );
+    // plan_error is gone: the refusal IS the door's answer
+    assert!(
+        !events_inserted(&db)
             .iter()
             .any(|q| q.contains("'plan_error'")),
-        "the refusal is loud"
+        "a dead sender is a refusal, not an error"
     );
 }
 
 #[test]
 fn map_reads_it_refusal_carries_the_reading() {
-    let (svc, db, _) = service(false);
-    svc.create_wish(&seek_payload(json!({"answer": "now"})))
-        .expect("declared");
+    let (_, db, _) = service(false);
     let causal = FakeCausal::new();
     causal.push_plan(Ok(json!({
         "status": "refused",
