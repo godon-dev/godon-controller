@@ -334,8 +334,9 @@ fn claims_one_accepted_and_stored() {
         minted,
         "the minted wish id rides the ask"
     );
-    // N=1 with zero terms rides the engine wire: outcome, not claims
-    assert_eq!(ask["outcome"], "chainend.shift");
+    // Claims verbatim, always (2026-10-22): N=1 rides claims like
+    // every other shape — the sugar fold starved the book's re-walk.
+    assert_eq!(ask["claims"][0]["outcome"], "chainend.shift");
     assert_eq!(wish["claims"][0]["outcome"], "chainend.shift");
 }
 
@@ -448,11 +449,17 @@ fn single_claim_rides_the_engine_shape() {
     }));
     r.unwrap_or_else(|e| panic!("create failed: {e}"));
     let ask = the_ask(&causal);
+    // Claims verbatim, always (2026-10-22): the sugar fold starved the
+    // book's claims-grammar machinery for single-claim wishes — the
+    // stored terms carried claims=[] and the re-walk gates failed
+    // silently. N=1 now rides claims like every other shape.
     assert_eq!(
-        ask["outcome"], "chainend.shift",
-        "N=1 with zero terms rides the engine wire unchanged"
+        ask["claims"][0]["outcome"], "chainend.shift",
+        "N=1 rides the claims wire like every other shape"
     );
-    assert!(ask.get("claims").is_none());
+    assert_eq!(ask["claims"][0]["band"]["lo"], -0.14);
+    assert_eq!(ask["claims"][0]["band"]["hi"], -0.06);
+    assert!(ask.get("outcome").is_none(), "the sugar shape is gone from the ask");
 }
 
 #[test]
@@ -810,7 +817,8 @@ fn create_inserts_and_stamps_declared() {
         minted_id(&db),
         "the minted wish id rides the ask"
     );
-    assert_eq!(ask["outcome"], "chainend.shift");
+    // Claims verbatim, always (2026-10-22) — no sugar fold at the ask.
+    assert_eq!(ask["claims"][0]["outcome"], "chainend.shift");
     assert_eq!(wish["state"], "declared");
     assert_eq!(wish["budget"], 2);
 }
