@@ -327,8 +327,9 @@ impl WishService {
             .insert_wish_event(&wish_id, "declared", None)
             .map_err(|e| e.0)?;
         info!(
-            "Seek wish declared: {} (form: {}, outcome: {})",
+            "Seek wish declared: {} (tender: {}, form: {}, outcome: {})",
             wish_id,
+            walk.get("tender").and_then(|t| t.as_str()).unwrap_or(""),
             walk.get("form").and_then(|f| f.as_str()).unwrap_or(""),
             outcome
         );
