@@ -42,6 +42,25 @@ pub fn checked_seek_body(body: &Value) -> Result<Value, String> {
         );
     };
 
+    let tender = match obj.get("tender") {
+        Some(t) if truthy(t) => {
+            let s = shown(t);
+            if s.trim().is_empty() {
+                return Err(
+                    "the walk names its tender: the uuid of the walking tender (no omission)"
+                        .to_string(),
+                );
+            }
+            s
+        }
+        _ => {
+            return Err(
+                "the walk names its tender: the uuid of the walking tender (no omission)"
+                    .to_string(),
+            )
+        }
+    };
+
     let form = match obj.get("form") {
         Some(f) if truthy(f) => {
             let s = shown(f);
@@ -173,6 +192,7 @@ pub fn checked_seek_body(body: &Value) -> Result<Value, String> {
     }
 
     Ok(json!({
+        "tender": tender,
         "form": form,
         "region": Value::Object(checked_region),
         "criterion": criterion,
@@ -182,17 +202,14 @@ pub fn checked_seek_body(body: &Value) -> Result<Value, String> {
 }
 
 /// The walk wish's body at the public door (design §XVII): the wish
-/// carries type 'seek' and its walk fields flat - form (find_best or
-/// cover_now, both stated, no omission), region, criterion, budget,
-/// candidates. One dialect end to end.
+/// carries type 'seek' and its walk fields flat - the walking tender
+/// (its uuid — dial names are only unambiguous inside one dial-set),
+/// form (find_best or cover_now, both stated, no omission), region,
+/// criterion, budget, candidates. One dialect end to end.
 pub fn checked_wish_body(payload: &Value) -> Result<Value, String> {
-    let pick = |k: &str| {
-        payload
-            .get(k)
-            .cloned()
-            .unwrap_or(Value::Null)
-    };
+    let pick = |k: &str| payload.get(k).cloned().unwrap_or(Value::Null);
     checked_seek_body(&json!({
+        "tender": pick("tender"),
         "form": pick("form"),
         "region": pick("region"),
         "criterion": pick("criterion"),

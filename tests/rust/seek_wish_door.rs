@@ -26,6 +26,7 @@ const CREATED: &str = "2026-10-12 19:00:00+00";
 fn seek_payload(over: Value) -> Value {
     let mut body = json!({
         "type": "seek",
+        "tender": "11111111-2222-3333-4444-555555555555",
         "form": "find_best",
         "region": {"param_0": [0.0, 100.0, false]},
         "criterion": {"outcome": "room/objective_1", "direction": "maximize"},
@@ -170,6 +171,7 @@ fn cover_now_refuses_a_budget() {
 #[test]
 fn cover_now_admits_without_search_fields() {
     let body = checked_seek_body(&json!({
+        "tender": "11111111-2222-3333-4444-555555555555",
         "form": "cover_now",
         "region": {"param_0": [0.0, 100.0, false]},
     }))
@@ -181,6 +183,7 @@ fn cover_now_admits_without_search_fields() {
 #[test]
 fn region_normalizes_shapes() {
     let body = checked_seek_body(&json!({
+        "tender": "11111111-2222-3333-4444-555555555555",
         "form": "find_best",
         "region": {"n": [1, 8, true], "f": [0.0, 10.0, false]},
         "criterion": {"outcome": "o", "direction": "min"},
@@ -195,6 +198,7 @@ fn region_normalizes_shapes() {
 fn estate_direction_words_admit() {
     for word in ["maximize", "max", "minimize", "min"] {
         let body = checked_seek_body(&json!({
+            "tender": "11111111-2222-3333-4444-555555555555",
             "form": "find_best",
             "region": {"param_0": [0.0, 1.0, false]},
             "criterion": {"outcome": "o", "direction": word},
@@ -388,4 +392,15 @@ fn form_on_a_hold_refuses_loudly() {
         }))
         .unwrap_err();
     assert!(err.contains("form belongs to seek wishes"), "{}", err);
+}
+
+#[test]
+fn missing_tender_refuses_at_the_door() {
+    let mut body = seek_payload(json!({}));
+    body.as_object_mut().unwrap().remove("tender");
+    let err = checked_seek_body(&body).unwrap_err();
+    assert!(err.contains("tender"), "{}", err);
+    // whitespace-only is omission too
+    let blank = seek_payload(json!({"tender": "   "}));
+    assert!(checked_seek_body(&blank).is_err());
 }
