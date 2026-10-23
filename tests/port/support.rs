@@ -193,6 +193,8 @@ pub struct FakeCausal {
     pub purge_results: Mutex<VecDeque<Result<u16, String>>>,
     pub asked: Mutex<Vec<Value>>,
     pub purged: Mutex<Vec<String>>,
+    pub book_purged: Mutex<Vec<String>>,
+    pub book_purge_results: Mutex<VecDeque<Result<(), String>>>,
 }
 
 impl FakeCausal {
@@ -202,6 +204,10 @@ impl FakeCausal {
     }
     pub fn queue_ask(&self, r: Result<Value, String>) -> &Self {
         self.asks.lock().unwrap().push_back(r);
+        self
+    }
+    pub fn queue_book_purge(&self, r: Result<(), String>) -> &Self {
+        self.book_purge_results.lock().unwrap().push_back(r);
         self
     }
 }
@@ -222,8 +228,8 @@ impl CausalClient for FakeCausal {
     }
 
     fn purge_book_page(&self, wish_id: &str) -> Result<(), String> {
-        self.purged.lock().unwrap().push(wish_id.to_string());
-        Ok(())
+        self.book_purged.lock().unwrap().push(wish_id.to_string());
+        pop(&self.book_purge_results, Ok(()))
     }
 }
 
