@@ -777,6 +777,48 @@ fn close_returns_closed_wish() {
     assert_eq!(wish["state"], "closed");
 }
 
+// ── the book page dies with the wish (found live 2026-10-23) ────────
+
+#[test]
+fn close_purges_causal_book_page() {
+    // A closed wish whose causal card survives rides every future
+    // plan compile as a ghost term - the room refuses new declares
+    // with position_conflict naming a dead tender's hold. The close
+    // must purge the card.
+    let causal = Arc::new(FakeCausal::default());
+    let svc = WishService::with_parts(
+        registry_db(wish_row("assigned"), events(&["declared", "assigned"])),
+        Arc::new(FakeWindmill::default()),
+        causal.clone(),
+        false,
+    );
+    svc.close_wish(WISH_ID).unwrap().expect("the wish");
+    let purged = causal.book_purged.lock().unwrap().clone();
+    assert!(
+        purged.iter().any(|w| w == WISH_ID),
+        "close must purge the causal book page, saw {purged:?}"
+    );
+}
+
+#[test]
+fn close_fails_clean_when_book_purge_fails() {
+    // Purge first, stamp second: on a failed purge nothing is
+    // forgotten and the door retries - the wish keeps its state.
+    let causal = Arc::new(FakeCausal::default());
+    causal.queue_book_purge(Err("causal unreachable".to_string()));
+    let svc = WishService::with_parts(
+        registry_db(wish_row("assigned"), events(&["declared", "assigned"])),
+        Arc::new(FakeWindmill::default()),
+        causal.clone(),
+        false,
+    );
+    let err = svc.close_wish(WISH_ID).unwrap_err();
+    assert!(
+        err.contains("causal close failed"),
+        "the refusal names the causal leg: {err}"
+    );
+}
+
 // ── service logic against the stubbed registry ─────────────────────
 
 #[test]

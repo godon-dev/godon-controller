@@ -721,6 +721,17 @@ impl WishService {
         if wish.get("state") == Some(&Value::String("closed".to_string())) {
             return Ok(Some(wish));
         }
+        // The book page dies with the wish. Causal's card is where the
+        // room compile reads standing claims: a closed or deleted wish
+        // whose card survives rides every future plan compile as a
+        // ghost term (found live 2026-10-23: a deleted room-aim wish
+        // held a dead tender's position and refused every new steer
+        // declare estate-wide with position_conflict). Purge FIRST -
+        // on failure nothing has changed and the door retries; the
+        // delete path already speaks this error shape.
+        self.causal.purge_book_page(wish_id).map_err(|e| {
+            format!("causal close failed: {e} - nothing forgotten; retry")
+        })?;
         self.repo
             .insert_wish_event(wish_id, "closed", None)
             .map_err(|e| e.0)?;

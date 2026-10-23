@@ -508,11 +508,23 @@ impl ArchiveDatabaseRepository {
             "SELECT value_json FROM ledger_state WHERE key = 'seek_return::{}';",
             wish_id_sql
         );
-        let rows = self
-            .db
-            .execute_query(&db_config, &query, true)
-            .ok()
-            .flatten()?;
+        // The read speaks when it breaks. A dead tender's archive reads
+        // as no return by doctrine - but a LIVE tender whose return was
+        // banked (the worker's RETURNED line is in the logs) must never
+        // vanish silently: found live 2026-10-23, the mirror swallowed
+        // the fault and the wish stuck at assigned with no trace.
+        let rows = match self.db.execute_query(&db_config, &query, true) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!(
+                    "seek_return read failed for {} ({}): {} - reads as no return",
+                    systemtender_db_name,
+                    wish_id,
+                    e.0
+                );
+                return None;
+            }
+        }?;
         let row = rows.first()?;
         row[0].clone()
     }
