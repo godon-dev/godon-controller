@@ -11,7 +11,12 @@ pub fn run(rd: &Value) -> Value {
     let Some(wish_id) = wish_id.filter(|s| !s.is_empty()) else {
         return json!({"result": "FAILURE", "error": "Missing wish_id"});
     };
-    let service = WishService::new(false);
+    // with_archive: the read door mirrors the seek's return from the
+    // serving tender's ledger (seek_return::<id>) into the event trail
+    // on first read — without the archive repo the mirror silently
+    // skips and every served seek sticks at "assigned" forever (found
+    // live 2026-10-23/24: two served-to-RETURNED seeks, both stuck).
+    let service = WishService::new(true);
     match service.get_wish(wish_id) {
         Ok(Some(wish)) => wish,
         Ok(None) => json!({"result": "FAILURE", "error": format!("steerwish not found: {}", wish_id)}),

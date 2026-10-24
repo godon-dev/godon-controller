@@ -7,6 +7,9 @@ use serde_json::Value;
 use crate::wish_service::WishService;
 
 pub fn run(_rd: &Value) -> Value {
+    // The list door does not mirror (fold-in only): once the get door
+    // lands the returned event, the list derives "returned" from the
+    // event trail like every other state.
     let service = WishService::new(false);
     match service.list_wishes() {
         Ok(summaries) => Value::Array(summaries),
