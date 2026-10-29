@@ -7,7 +7,7 @@
 use crate::database::{
     ArchiveDatabaseRepository, DbConfig, DbGateway, MetadataDatabaseRepository, TextRow,
 };
-use crate::steer_grammar::{checked_declaration_options, checked_steer_band, checked_steer_claim};
+use crate::steer_grammar::{checked_declaration_options, checked_steer_claim};
 use crate::timefmt::pg_ts_to_iso;
 use crate::wmill::CausalClient;
 use log::{debug, info, warn};
@@ -284,15 +284,15 @@ impl WishService {
     }
 
     fn create_seek_wish(&self, payload: &Value) -> Result<Value, String> {
-        /// Declare a seek wish: validate its body at the door, insert
-        /// with regime 'seek' (the body rides its own column - claims
-        /// keep their pinned meaning), stamp 'declared', ask causal to
-        /// plan.
-        ///
-        /// The ask's refusal is a valid answer: causal's map_reads_it
-        /// carries the reading INSIDE the refusal detail, and the
-        /// wish's events carry it to the declarer - the refusal is the
-        /// answer.
+        // Declare a seek wish: validate its body at the door, insert
+        // with regime 'seek' (the body rides its own column - claims
+        // keep their pinned meaning), stamp 'declared', ask causal to
+        // plan.
+        //
+        // The ask's refusal is a valid answer: causal's map_reads_it
+        // carries the reading INSIDE the refusal detail, and the
+        // wish's events carry it to the declarer - the refusal is the
+        // answer.
         let walk = crate::seek_grammar::checked_wish_body(payload)?;
         let outcome = walk
             .get("criterion")
@@ -344,13 +344,13 @@ impl WishService {
     }
 
     fn ask_causal_to_plan_seek(&self, wish_id: &str, walk: &Value, standard: Option<&str>) {
-        /// One HTTP ask seeds causal's book with the seek. The wire is
-        /// re-pinned (§XVII): the ask carries type 'seek' and the
-        /// admitted walk body under 'seek' - one dialect end to end,
-        /// form-keyed; a planned answer names the serving tender (its
-        /// dials are the region's); any other answer is a refusal -
-        /// map_reads_it arrives with the reading in its detail, and
-        /// the event carries it to the declarer verbatim.
+        // One HTTP ask seeds causal's book with the seek. The wire is
+        // re-pinned (§XVII): the ask carries type 'seek' and the
+        // admitted walk body under 'seek' - one dialect end to end,
+        // form-keyed; a planned answer names the serving tender (its
+        // dials are the region's); any other answer is a refusal -
+        // map_reads_it arrives with the reading in its detail, and
+        // the event carries it to the declarer verbatim.
         let mut plan_request = json!({
             "wish_id": wish_id,
             "type": "seek",
@@ -442,12 +442,12 @@ impl WishService {
     }
 
     fn dispatch_plan_ask(&self, wish_id: &str) {
-        /// Answer 'later' (§XIX): the consult rides its own job and
-        /// the door returns at 'declared'. Every answer - planned,
-        /// refused with numbers, plan_error - lands on the wish's
-        /// event record when the job runs; status and serving time
-        /// surface it. A dispatch that cannot fly asks inline instead:
-        /// the wish is never left unasked.
+        // Answer 'later' (§XIX): the consult rides its own job and
+        // the door returns at 'declared'. Every answer - planned,
+        // refused with numbers, plan_error - lands on the wish's
+        // event record when the job runs; status and serving time
+        // surface it. A dispatch that cannot fly asks inline instead:
+        // the wish is never left unasked.
         let args = json!({"wish_id": wish_id});
         match self
             .wmill

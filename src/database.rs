@@ -165,10 +165,9 @@ impl DbGateway for PgGateway {
         query: &str,
         with_result: bool,
     ) -> DbResult<Option<Vec<TextRow>>> {
-        let mut client = connect(db_config).map_err(|e| {
+        let mut client = connect(db_config).inspect_err(|e| {
             error!("Database connection error: {}", e.0);
             error!("Database config: {}", redacted(db_config));
-            e
         })?;
         let rows = client.simple_query(query).map_err(|e| {
             error!("Query execution failed: {}", e);
@@ -182,10 +181,9 @@ impl DbGateway for PgGateway {
     }
 
     fn execute_ddl_query(&self, db_config: &DbConfig, query: &str) -> DbResult<()> {
-        let mut client = connect(db_config).map_err(|e| {
+        let mut client = connect(db_config).inspect_err(|e| {
             error!("Database connection error: {}", e.0);
             error!("Database config: {}", redacted(db_config));
-            e
         })?;
         client.simple_query(query).map_err(|e| {
             error!("DDL execution failed: {}", e);
@@ -514,10 +512,11 @@ impl ArchiveDatabaseRepository {
     ///
     /// The worker writes seek_return::<wish_id> into its ledger_state
     /// when the seek completes (robots #241); this read surfaces it to
-    /// the wish's event trail. Returns the stored JSON string or None
+    /// the wish's event trail. Returns the stored JSON string or None:
+    ///
     /// - an absent db or table (the tender gone, the ledger never
-    /// created) reads as no return, never an error: the mirror must
-    /// not break a wish read because its tender died.
+    ///   created) reads as no return, never an error: the mirror must
+    ///   not break a wish read because its tender died.
     pub fn read_seek_return(&self, systemtender_db_name: &str, wish_id: &str) -> Option<String> {
         let db_config = self.base_config.with_database(systemtender_db_name);
         let wish_id_sql = wish_id.replace('\'', "''");
@@ -1088,6 +1087,7 @@ impl MetadataDatabaseRepository {
     }
 
     /// Insert credential catalog entry.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_credential(
         &self,
         credential_id: &str,
@@ -1374,7 +1374,7 @@ impl MetadataDatabaseRepository {
             .iter()
             // r.get(1): rows without a sender column (narrow readers,
             // mocked gateways) yield no pair, never a panic
-            .filter_map(|r| Some((cell_str(&r[0])?, r.get(1).and_then(|c| cell_str(c))?)))
+            .filter_map(|r| Some((cell_str(&r[0])?, r.get(1).and_then(cell_str)?)))
             .collect())
     }
 

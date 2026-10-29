@@ -15,7 +15,6 @@
 
 use std::sync::OnceLock;
 
-use opentelemetry::logs::LoggerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_appender_log::OpenTelemetryLogBridge;
 use opentelemetry_otlp::LogExporter;

@@ -257,6 +257,12 @@ pub struct SystemtenderService {
     pub causal: Arc<dyn CausalClient>,
 }
 
+impl Default for SystemtenderService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemtenderService {
     pub fn new() -> Self {
         Self {
@@ -508,7 +514,7 @@ impl SystemtenderService {
 
         let outcome = (|| -> Result<Value, String> {
             self.resolve_target_refs(&mut systemtender_config)?;
-            validate_minimal(&systemtender_config, true).map_err(|e| e)?;
+            validate_minimal(&systemtender_config, true)?;
 
             self.metadata_repo.create_table().map_err(|e| e.0)?;
 
@@ -519,7 +525,7 @@ impl SystemtenderService {
                 .map_err(|e| e.0)?;
             for eb in &existing {
                 let eb_name = eb.get(1).cloned().flatten();
-                let eb_id = eb.get(0).cloned().flatten();
+                let eb_id = eb.first().cloned().flatten();
                 if eb_name.as_deref() == Some(name) {
                     if let Some(id) = &eb_id {
                         let lifecycle = self.metadata_repo.get_lifecycle(id).ok().flatten();
@@ -582,13 +588,11 @@ impl SystemtenderService {
                 .set_lifecycle(&uuid, "creating", None)
                 .map_err(|e| e.0)?;
 
-            self.wmill
-                .run_script_by_path_async(
-                    "f/controller/systemtender_create_executor",
-                    &json!({"request_data": {"systemtender_id": uuid}}),
-                    None,
-                )
-                .map_err(|e| e)?;
+            self.wmill.run_script_by_path_async(
+                "f/controller/systemtender_create_executor",
+                &json!({"request_data": {"systemtender_id": uuid}}),
+                None,
+            )?;
 
             info!(
                 "Create accepted for systemtender '{}' ({}); executor dispatched, row in creating",
@@ -1124,11 +1128,11 @@ impl SystemtenderService {
             // case read answers nothing - the case stays fresh.
             let mut resume_case = "fresh";
             let mut death_age: Option<f64> = None;
-            let mut stopped: Option<bool> = None;
-            let state_read = (|| -> Result<Option<Value>, crate::database::DbError> {
+            let mut stopped: Option<bool>;
+            let state_read = {
                 stopped = self.archive_repo.read_shutdown_requested(&db_name);
                 self.archive_repo.read_state_verdict(&db_name)
-            })();
+            };
             let state = match state_read {
                 Ok(s) => s,
                 Err(e) => {
@@ -1566,10 +1570,10 @@ impl SystemtenderService {
             }
 
             // the witness: silence past the verdict's own threshold
-            let verdict = match self.archive_repo.read_state_verdict(&db_name) {
-                Ok(v) => v,
-                Err(_) => None,
-            };
+            let verdict = self
+                .archive_repo
+                .read_state_verdict(&db_name)
+                .unwrap_or_default();
             let Some(verdict) = verdict else {
                 continue; // no verdict answers nothing
             };
@@ -2062,7 +2066,7 @@ impl SystemtenderService {
             }
 
             self.resolve_target_refs(&mut new_config)?;
-            validate_minimal(&new_config, true).map_err(|e| e)?;
+            validate_minimal(&new_config, true)?;
 
             let (compatible, compat_detail) =
                 self.check_trial_compatibility(systemtender_id, &new_config, force);

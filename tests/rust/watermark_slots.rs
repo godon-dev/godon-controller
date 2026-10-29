@@ -3,7 +3,6 @@
 use crate::harness::{row, FakeCausal, FakeDb, FakeWindmill};
 use godon_controller::systemtender_service::SystemtenderService;
 use serde_json::{json, Map, Value};
-use std::sync::Arc;
 
 /// The service whose metadata repo answers from a map of
 /// {systemtender_id: config} — the python test's mocked repositories.

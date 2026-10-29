@@ -1393,12 +1393,10 @@ fn liveness_db(
                 interval_s.as_deref(),
             ])]));
         }
-        if q.contains("EXTRACT(EPOCH") {
-            if mode == "retry" {
-                let mut n = ao.lock().unwrap();
-                *n += 1;
-                return Ok(Some(vec![row(&[Some("55.0"), None])]));
-            }
+        if q.contains("EXTRACT(EPOCH") && mode == "retry" {
+            let mut n = ao.lock().unwrap();
+            *n += 1;
+            return Ok(Some(vec![row(&[Some("55.0"), None])]));
         }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             if meta_empty {

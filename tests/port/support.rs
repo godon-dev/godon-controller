@@ -1,3 +1,7 @@
+// scaffolding helpers kept for the suites — not every helper is wired
+// by every test file; dead_code allowed so unused helpers don't gate CI.
+#![allow(dead_code)]
+
 //! The shared fakes: what python's suite got from
 //! `patch('controller.database.execute_query', ...)` and friends,
 //! as gateways injected at construction.
@@ -11,7 +15,7 @@ use godon_controller::database::{DbConfig, DbError, DbGateway, DbResult, TextRow
 use godon_controller::wmill::{CausalClient, WindmillGateway};
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 /// All-Some row of text cells.
 pub fn srow(cells: &[&str]) -> TextRow {
