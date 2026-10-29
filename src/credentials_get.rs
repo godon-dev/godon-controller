@@ -1,11 +1,11 @@
 //! The f/controller/credentials_get windmill script - python's controller/credentials_get.py,
 //! ported verbatim (validate at the door, call the service, envelope the result).
 
-use serde_json::json;
-use serde_json::Value;
-use crate::timefmt::pg_ts_to_iso;
 use crate::database::DbConfig;
 use crate::database::MetadataDatabaseRepository;
+use crate::timefmt::pg_ts_to_iso;
+use serde_json::json;
+use serde_json::Value;
 
 pub fn run(_rd: &Value) -> Value {
     let outcome = (|| -> Result<Value, String> {

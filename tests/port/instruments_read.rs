@@ -60,7 +60,12 @@ fn missing_table_still_no_verdict() {
 
 #[test]
 fn torn_payload_reads_absent() {
-    let db = Arc::new(FakeDb::rows(vec![srow(&["f", "12.0", "10.0", "{torn json"])]));
+    let db = Arc::new(FakeDb::rows(vec![srow(&[
+        "f",
+        "12.0",
+        "10.0",
+        "{torn json",
+    ])]));
     let repo = repo_with(db);
     let verdict = repo.read_state_verdict("db").unwrap().unwrap();
     assert_eq!(verdict["instruments"], json!(null));

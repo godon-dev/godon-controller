@@ -1,3 +1,7 @@
+// scaffolding helpers kept for the suites — not every helper is wired
+// by every test file; dead_code allowed so unused helpers don't gate CI.
+#![allow(dead_code)]
+
 //! The shared fakes: what python's suite got from
 //! `patch('controller.database.execute_query', ...)` and friends,
 //! as gateways injected at construction.
@@ -11,7 +15,7 @@ use godon_controller::database::{DbConfig, DbError, DbGateway, DbResult, TextRow
 use godon_controller::wmill::{CausalClient, WindmillGateway};
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 /// All-Some row of text cells.
 pub fn srow(cells: &[&str]) -> TextRow {
@@ -129,10 +133,7 @@ impl FakeWindmill {
         self
     }
     pub fn queue_completed(&self, v: Option<Value>) -> &Self {
-        self.completed_results
-            .lock()
-            .unwrap()
-            .push_back(Ok(v));
+        self.completed_results.lock().unwrap().push_back(Ok(v));
         self
     }
     pub fn queue_sync(&self, v: Value) -> &Self {
@@ -218,12 +219,18 @@ impl CausalClient for FakeCausal {
     }
 
     fn ask_to_plan(&self, plan_request: &Value) -> Result<Value, String> {
-        self.asks.lock().unwrap().push_back(Ok(plan_request.clone()));
+        self.asks
+            .lock()
+            .unwrap()
+            .push_back(Ok(plan_request.clone()));
         pop(&self.asks, Ok(Value::Null))
     }
 
     fn purge_curves(&self, systemtender_id: &str) -> Result<u16, String> {
-        self.purged.lock().unwrap().push(systemtender_id.to_string());
+        self.purged
+            .lock()
+            .unwrap()
+            .push(systemtender_id.to_string());
         pop(&self.purge_results, Ok(200))
     }
 

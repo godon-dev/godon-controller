@@ -91,7 +91,9 @@ fn service(
 fn returned_inserts(db: &FakeDb) -> Vec<String> {
     db.queries()
         .into_iter()
-        .filter(|q| q.trim_start().starts_with("INSERT INTO steerwish_events") && q.contains("'returned'"))
+        .filter(|q| {
+            q.trim_start().starts_with("INSERT INTO steerwish_events") && q.contains("'returned'")
+        })
         .collect()
 }
 
@@ -104,7 +106,11 @@ fn ledger_reads(db: &FakeDb) -> Vec<(String, String)> {
 
 #[test]
 fn return_mirror_pulls_the_return_once() {
-    let (svc, db) = service(vec![assigned_event()], Some(return_payload()), Some(serde_json::to_string(&seek_body()).unwrap()));
+    let (svc, db) = service(
+        vec![assigned_event()],
+        Some(return_payload()),
+        Some(serde_json::to_string(&seek_body()).unwrap()),
+    );
     let wish = svc.get_wish("w1").unwrap().expect("wish");
 
     let inserts = returned_inserts(&db);
@@ -122,7 +128,10 @@ fn return_mirror_pulls_the_return_once() {
     // Idempotent: a later read carries the returned event already —
     // no second mirror write.
     let (svc2, db2) = service(
-        vec![assigned_event(), row(&[Some("returned"), Some(CREATED), Some(&return_payload())])],
+        vec![
+            assigned_event(),
+            row(&[Some("returned"), Some(CREATED), Some(&return_payload())]),
+        ],
         Some(return_payload()),
         Some(serde_json::to_string(&seek_body()).unwrap()),
     );
@@ -133,7 +142,11 @@ fn return_mirror_pulls_the_return_once() {
 
 #[test]
 fn dead_tender_reads_as_no_return() {
-    let (svc, db) = service(vec![assigned_event()], None, Some(serde_json::to_string(&seek_body()).unwrap()));
+    let (svc, db) = service(
+        vec![assigned_event()],
+        None,
+        Some(serde_json::to_string(&seek_body()).unwrap()),
+    );
     let wish = svc.get_wish("w1").unwrap();
     assert!(wish.is_some(), "the read survives its tender's death");
     assert!(returned_inserts(&db).is_empty());

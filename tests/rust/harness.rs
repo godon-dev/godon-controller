@@ -1,3 +1,7 @@
+// scaffolding helpers kept for the suites — not every helper is wired
+// by every test file; dead_code allowed so unused helpers don't gate CI.
+#![allow(dead_code)]
+
 //! Test seams: the fakes python's tests built by patching
 //! execute_query and the wmill module functions at import time.
 //! The gateway traits (DbGateway, WindmillGateway, CausalClient) are
@@ -27,11 +31,14 @@ pub fn dberr(msg: &str) -> DbError {
 // FakeDb
 // ---------------------------------------------------------------------------
 
+/// answers one query with its rows — the fake's canned responder
+pub type QueryResponder = Box<dyn Fn(&str) -> DbResult<Option<Vec<TextRow>>> + Send + Sync>;
+
 /// Records every (database, query) call; answers from the handler.
 /// The default handler answers Ok(None) - python's capture pattern.
 pub struct FakeDb {
     calls: Mutex<Vec<(String, String)>>,
-    handler: Box<dyn Fn(&str) -> DbResult<Option<Vec<TextRow>>> + Send + Sync>,
+    handler: QueryResponder,
 }
 
 impl FakeDb {
@@ -152,11 +159,7 @@ impl WindmillGateway for FakeWindmill {
             .lock()
             .unwrap()
             .push((job_id.to_string(), reason.map(|r| r.to_string())));
-        self.cancel_q
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or(Ok(()))
+        self.cancel_q.lock().unwrap().pop_front().unwrap_or(Ok(()))
     }
 
     fn get_job(&self, job_id: &str) -> Result<Option<Value>, String> {
@@ -268,7 +271,10 @@ impl CausalClient for FakeCausal {
     }
 
     fn purge_curves(&self, systemtender_id: &str) -> Result<u16, String> {
-        self.purges.lock().unwrap().push(systemtender_id.to_string());
+        self.purges
+            .lock()
+            .unwrap()
+            .push(systemtender_id.to_string());
         self.purge_q.lock().unwrap().pop_front().unwrap_or(Ok(200))
     }
 

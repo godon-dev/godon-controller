@@ -10,14 +10,13 @@ use godon_controller::systemtender_service::{
     job_reached_terminal_state, wait_for_jobs_to_quiesce, SystemtenderService,
 };
 use godon_controller::verbs::dispatch;
-use godon_controller::wmill::WindmillGateway;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::support::{arc_db, row, FakeCausal, FakeDb, FakeWindmill};
 
-const DEFINITION: &str = r#"{"worker_job_ids": ["job-1"], "interference_detection": {"group": "bench"}}"#;
+const DEFINITION: &str =
+    r#"{"worker_job_ids": ["job-1"], "interference_detection": {"group": "bench"}}"#;
 
 fn service_with_jobs(
     job_ids: &[&str],
@@ -94,7 +93,7 @@ fn reconcile_service_claim_refused(
         .iter()
         .map(|(id, f, a, age)| (id.to_string(), *f, *a, *age))
         .collect();
-    let creating: Vec<(String, i64, f64)> = Vec::new();
+    let _creating: Vec<(String, i64, f64)> = Vec::new();
     let db = arc_db(move |_db_name, q| {
         if q.contains("CREATE TABLE") {
             return Ok(None);
@@ -126,7 +125,8 @@ fn reconcile_service_claim_refused(
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    let svc =
+        SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
     (svc, db, wmill)
 }
 
@@ -175,7 +175,12 @@ fn reconcile_service_with_wmill(
                 .iter()
                 .map(|(id, a, age)| {
                     let (a, age) = (a.to_string(), age.to_string());
-                    row(&[Some(id.as_str()), Some("false"), Some(a.as_str()), Some(age.as_str())])
+                    row(&[
+                        Some(id.as_str()),
+                        Some("false"),
+                        Some(a.as_str()),
+                        Some(age.as_str()),
+                    ])
                 })
                 .collect();
             return Ok(Some(rows));
@@ -196,7 +201,8 @@ fn reconcile_service_with_wmill(
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    let svc =
+        SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
     (svc, db, wmill)
 }
 
@@ -206,7 +212,10 @@ fn reconcile_service_with_wmill(
 fn get_missing_id_fails() {
     let r = dispatch("systemtender_get", &json!({}));
     assert_eq!(r["result"], "FAILURE");
-    assert!(r["error"].as_str().unwrap().contains("Missing systemtender_id"));
+    assert!(r["error"]
+        .as_str()
+        .unwrap()
+        .contains("Missing systemtender_id"));
 }
 
 #[test]
@@ -220,7 +229,11 @@ fn get_unknown_tender_answers_not_found() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.get_systemtender("no-such-tender");
     assert_eq!(r["result"], "FAILURE");
     assert_eq!(r["error"], "Systemtender not found");
@@ -248,7 +261,11 @@ fn get_returns_the_row_with_its_liveness() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.get_systemtender("t-1");
     assert_eq!(r["result"], "SUCCESS");
     assert_eq!(r["data"]["id"], "t-1");
@@ -270,7 +287,11 @@ fn list_empty_answers_success_with_empty_data() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.list_systemtenders();
     assert_eq!(r["result"], "SUCCESS");
     assert_eq!(r["data"], json!([]));
@@ -284,8 +305,16 @@ fn list_answers_every_row() {
         }
         if q.contains("SELECT id, name, creation_tsz FROM") {
             return Ok(Some(vec![
-                row(&[Some("id-1"), Some("systemtender1"), Some("2026-01-01 00:00:00+00")]),
-                row(&[Some("id-2"), Some("systemtender2"), Some("2026-01-02 00:00:00+00")]),
+                row(&[
+                    Some("id-1"),
+                    Some("systemtender1"),
+                    Some("2026-01-01 00:00:00+00"),
+                ]),
+                row(&[
+                    Some("id-2"),
+                    Some("systemtender2"),
+                    Some("2026-01-02 00:00:00+00"),
+                ]),
             ]));
         }
         if q.contains("SELECT systemtender_id, state FROM systemtender_lifecycle") {
@@ -293,7 +322,11 @@ fn list_answers_every_row() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.list_systemtenders();
     assert_eq!(r["result"], "SUCCESS");
     let data = r["data"].as_array().unwrap();
@@ -309,7 +342,10 @@ fn list_answers_every_row() {
 fn delete_missing_id_fails() {
     let r = dispatch("systemtender_delete", &json!({}));
     assert_eq!(r["result"], "FAILURE");
-    assert!(r["error"].as_str().unwrap().contains("Missing systemtender_id"));
+    assert!(r["error"]
+        .as_str()
+        .unwrap()
+        .contains("Missing systemtender_id"));
 }
 
 // ── deletion: the quiesce machine (#399's guard) ───────────────────
@@ -332,7 +368,10 @@ fn delete_marks_and_delivers_the_stop_flag() {
     // the verb never reaches the platform's kill verb and never drops
     assert!(wmill.cancelled.lock().unwrap().is_empty());
     assert!(!db.queries().iter().any(|q| q.contains("DROP DATABASE")));
-    assert!(!db.queries().iter().any(|q| q.contains("DELETE FROM systemtender_meta_data")));
+    assert!(!db
+        .queries()
+        .iter()
+        .any(|q| q.contains("DELETE FROM systemtender_meta_data")));
 }
 
 #[test]
@@ -344,20 +383,25 @@ fn delete_is_idempotent_when_tender_already_gone() {
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![]));
         }
-        if q.trim_start().starts_with("DELETE FROM systemtender_lifecycle") {
+        if q.trim_start()
+            .starts_with("DELETE FROM systemtender_lifecycle")
+        {
             return Ok(None);
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db.clone(),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.delete_systemtender("bench-tender", true);
     assert_eq!(r["result"], "SUCCESS");
     assert_eq!(r["data"]["delete_type"], "already-gone");
     // the stale lifecycle row is swept with it
-    assert!(db
-        .queries()
-        .iter()
-        .any(|q| q.trim_start().starts_with("DELETE FROM systemtender_lifecycle")));
+    assert!(db.queries().iter().any(|q| q
+        .trim_start()
+        .starts_with("DELETE FROM systemtender_lifecycle")));
 }
 
 #[test]
@@ -372,7 +416,10 @@ fn delete_rides_along_when_an_executor_holds_the_claim() {
         }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[
-                Some("row-id"), Some("bench-tender"), Some("2026-09-30 18:00:00+00"), Some(DEFINITION),
+                Some("row-id"),
+                Some("bench-tender"),
+                Some("2026-09-30 18:00:00+00"),
+                Some(DEFINITION),
             ])]));
         }
         if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") {
@@ -380,7 +427,11 @@ fn delete_rides_along_when_an_executor_holds_the_claim() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db.clone(),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.delete_systemtender("bench-tender", true);
     assert_eq!(r["result"], "SUCCESS");
     assert_eq!(r["data"]["status"], "deleting");
@@ -427,10 +478,9 @@ fn reconcile_drops_when_stamps_fall_silent_past_the_threshold() {
         .queries()
         .iter()
         .any(|q| q.contains("DELETE FROM systemtender_meta_data")));
-    assert!(db
-        .queries()
-        .iter()
-        .any(|q| q.trim_start().starts_with("DELETE FROM systemtender_lifecycle")));
+    assert!(db.queries().iter().any(|q| q
+        .trim_start()
+        .starts_with("DELETE FROM systemtender_lifecycle")));
 }
 
 #[test]
@@ -499,7 +549,8 @@ fn reconcile_redrives_a_stale_creating_row() {
     // ago - the reconciler re-dispatches it and counts the attempt
     let wmill = Arc::new(FakeWindmill::default());
     wmill.queue_async(Ok("job-redrive-1".to_string()));
-    let (svc, db, _w) = reconcile_service_with_wmill(&[], &[("bench-tender", 0, 1000.0)], vec![], wmill);
+    let (svc, db, _w) =
+        reconcile_service_with_wmill(&[], &[("bench-tender", 0, 1000.0)], vec![], wmill);
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["creations"]["redriven"], 1);
     assert!(db
@@ -528,10 +579,7 @@ fn reconcile_fails_a_poison_creating_row_loud() {
     let (svc, db, _wmill) = reconcile_service(&[], &[("bench-tender", 3, 3000.0)], vec![]);
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["creations"]["failed"], 1);
-    assert!(db
-        .queries()
-        .iter()
-        .any(|q| q.contains("'create-failed'")));
+    assert!(db.queries().iter().any(|q| q.contains("'create-failed'")));
 }
 
 // ── the terminal-state reader (shape-proof across windmill generations) ──
@@ -566,7 +614,10 @@ fn terminal_state_reads_v2_type_shape() {
 #[test]
 fn terminal_state_counts_404_as_gone() {
     let w = Arc::new(FakeWindmill::default());
-    w.job_results.lock().unwrap().push_back(Err("HTTP 404 Not Found".to_string()));
+    w.job_results
+        .lock()
+        .unwrap()
+        .push_back(Err("HTTP 404 Not Found".to_string()));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
 }
 
@@ -587,19 +638,30 @@ fn plain_service_never_panics_on_empty_ground() {
 #[test]
 fn terminal_state_falls_back_to_completed_on_endpoint_error() {
     let w = Arc::new(FakeWindmill::default());
-    w.job_results.lock().unwrap().push_back(Err("HTTP 400: Bad Request".to_string()));
-    w.queue_completed(Some(json!({"completed": true, "success": false, "started": true})));
+    w.job_results
+        .lock()
+        .unwrap()
+        .push_back(Err("HTTP 400: Bad Request".to_string()));
+    w.queue_completed(Some(
+        json!({"completed": true, "success": false, "started": true}),
+    ));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
 }
 
 #[test]
 fn terminal_state_counts_cancelled_never_started_as_gone() {
     let w = Arc::new(FakeWindmill::default());
-    w.job_results.lock().unwrap().push_back(Err("HTTP 404: Not Found".to_string()));
+    w.job_results
+        .lock()
+        .unwrap()
+        .push_back(Err("HTTP 404: Not Found".to_string()));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
 
     let w = Arc::new(FakeWindmill::default());
-    w.job_results.lock().unwrap().push_back(Err("HTTP 400: Bad Request".to_string()));
+    w.job_results
+        .lock()
+        .unwrap()
+        .push_back(Err("HTTP 400: Bad Request".to_string()));
     w.queue_completed(Some(json!({"completed": false, "started": false})));
     assert!(job_reached_terminal_state(w.as_ref(), "job-x"));
 }
@@ -615,12 +677,21 @@ fn terminal_state_raw_surface_running_stays_non_terminal() {
 #[test]
 fn terminal_state_fails_closed_when_running_or_probe_errors() {
     let w = Arc::new(FakeWindmill::default());
-    w.job_results.lock().unwrap().push_back(Err("HTTP 400: Bad Request".to_string()));
+    w.job_results
+        .lock()
+        .unwrap()
+        .push_back(Err("HTTP 400: Bad Request".to_string()));
     w.queue_completed(Some(json!({"completed": false, "started": true})));
     assert!(!job_reached_terminal_state(w.as_ref(), "job-x"));
     let w = Arc::new(FakeWindmill::default());
-    w.job_results.lock().unwrap().push_back(Err("HTTP 400: Bad Request".to_string()));
-    w.completed_results.lock().unwrap().push_back(Err("HTTP 500".to_string()));
+    w.job_results
+        .lock()
+        .unwrap()
+        .push_back(Err("HTTP 400: Bad Request".to_string()));
+    w.completed_results
+        .lock()
+        .unwrap()
+        .push_back(Err("HTTP 500".to_string()));
     assert!(!job_reached_terminal_state(w.as_ref(), "job-x"));
 }
 
@@ -630,20 +701,31 @@ fn terminal_state_fails_closed_when_running_or_probe_errors() {
 fn stop_missing_id_fails() {
     let r = dispatch("systemtender_stop", &json!({}));
     assert_eq!(r["result"], "FAILURE");
-    assert!(r["error"].as_str().unwrap().contains("Missing systemtender_id"));
+    assert!(r["error"]
+        .as_str()
+        .unwrap()
+        .contains("Missing systemtender_id"));
 }
 
 fn missing_tender_db() -> Arc<FakeDb> {
     arc_db(|_db, q| {
-        if q.contains("CREATE TABLE") { return Ok(None); }
-        if q.contains("FROM systemtender_meta_data WHERE id") { return Ok(Some(vec![])); }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![]));
+        }
         Ok(None)
     })
 }
 
 #[test]
 fn stop_unknown_tender_answers_not_found() {
-    let svc = SystemtenderService::with_parts(missing_tender_db(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        missing_tender_db(),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.stop_systemtender("no-such");
     assert_eq!(r["result"], "FAILURE");
     assert!(r["error"].as_str().unwrap().contains("not found"));
@@ -652,29 +734,50 @@ fn stop_unknown_tender_answers_not_found() {
 #[test]
 fn stop_sets_the_graceful_flag() {
     let db = arc_db(|_db, q| {
-        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
         if q.contains("FROM systemtender_meta_data WHERE id") {
-            return Ok(Some(vec![row(&[Some("t-1"), Some("bench-tender"), Some("2026-10-10 09:00:00+00"), Some("{}")])]));
+            return Ok(Some(vec![row(&[
+                Some("t-1"),
+                Some("bench-tender"),
+                Some("2026-10-10 09:00:00+00"),
+                Some("{}"),
+            ])]));
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db.clone(),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.stop_systemtender("t-1");
     assert_eq!(r["result"], "SUCCESS");
     assert_eq!(r["data"]["shutdown_type"], "graceful");
-    assert!(db.queries().iter().any(|q| q.contains("shutdown_requested = TRUE")));
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("shutdown_requested = TRUE")));
 }
 
 #[test]
 fn start_missing_id_fails() {
     let r = dispatch("systemtender_start", &json!({}));
     assert_eq!(r["result"], "FAILURE");
-    assert!(r["error"].as_str().unwrap().contains("Missing systemtender_id"));
+    assert!(r["error"]
+        .as_str()
+        .unwrap()
+        .contains("Missing systemtender_id"));
 }
 
 #[test]
 fn start_unknown_tender_answers_not_found() {
-    let svc = SystemtenderService::with_parts(missing_tender_db(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        missing_tender_db(),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.start_systemtender("no-such");
     assert_eq!(r["result"], "FAILURE");
     assert!(r["error"].as_str().unwrap().contains("not found"));
@@ -692,7 +795,10 @@ fn cancel_job_success_and_failure() {
     let w = Arc::new(FakeWindmill::default());
     assert!(cancel_job_by_id(w.as_ref(), "test-job-id", None));
     let w = Arc::new(FakeWindmill::default());
-    w.cancel_results.lock().unwrap().push_back(Err("refused".to_string()));
+    w.cancel_results
+        .lock()
+        .unwrap()
+        .push_back(Err("refused".to_string()));
     assert!(!cancel_job_by_id(w.as_ref(), "test-job-id", None));
 }
 
@@ -700,7 +806,11 @@ fn cancel_job_success_and_failure() {
 fn cancel_carries_the_reason_to_the_api() {
     use godon_controller::systemtender_service::cancel_job_by_id;
     let w = Arc::new(FakeWindmill::default());
-    assert!(cancel_job_by_id(w.as_ref(), "test-job-id", Some("Test cancellation")));
+    assert!(cancel_job_by_id(
+        w.as_ref(),
+        "test-job-id",
+        Some("Test cancellation")
+    ));
     let calls = w.cancelled.lock().unwrap();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "test-job-id");
@@ -712,17 +822,30 @@ fn cancel_carries_the_reason_to_the_api() {
 #[test]
 fn get_response_carries_the_contract_keys() {
     let db = arc_db(|_db, q| {
-        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
         if q.contains("FROM systemtender_meta_data WHERE id") {
-            return Ok(Some(vec![row(&[Some("t-1"), Some("n"), Some("2026-01-01 00:00:00+00"), Some(r#"{"type": "x"}"#)])]));
+            return Ok(Some(vec![row(&[
+                Some("t-1"),
+                Some("n"),
+                Some("2026-01-01 00:00:00+00"),
+                Some(r#"{"type": "x"}"#),
+            ])]));
         }
         if q.contains("FROM systemtender_state") {
             return Ok(Some(vec![row(&[Some("f"), Some("5.0"), Some("10.0")])]));
         }
-        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") { return Ok(Some(vec![])); }
+        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") {
+            return Ok(Some(vec![]));
+        }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.get_systemtender("t-1");
     for key in ["id", "name", "status", "createdAt", "config"] {
         assert!(r["data"].get(key).is_some(), "missing {key}");
@@ -734,21 +857,38 @@ fn liveness_db(finished: &str, age: &str, interval: &str) -> Arc<FakeDb> {
     let age = age.to_string();
     let interval = interval.to_string();
     arc_db(move |_db, q| {
-        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
         if q.contains("FROM systemtender_meta_data WHERE id") {
-            return Ok(Some(vec![row(&[Some("row-id"), Some("test-tender"), Some("2026-09-26 18:00:00+00"), Some("{}")])]));
+            return Ok(Some(vec![row(&[
+                Some("row-id"),
+                Some("test-tender"),
+                Some("2026-09-26 18:00:00+00"),
+                Some("{}"),
+            ])]));
         }
         if q.contains("FROM systemtender_state") {
-            return Ok(Some(vec![row(&[Some(finished.as_str()), Some(age.as_str()), Some(interval.as_str())])]));
+            return Ok(Some(vec![row(&[
+                Some(finished.as_str()),
+                Some(age.as_str()),
+                Some(interval.as_str()),
+            ])]));
         }
-        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") { return Ok(Some(vec![])); }
+        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") {
+            return Ok(Some(vec![]));
+        }
         Ok(None)
     })
 }
 
 #[test]
 fn abort_burst_within_floor_reads_running() {
-    let svc = SystemtenderService::with_parts(liveness_db("f", "45", "10"), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        liveness_db("f", "45", "10"),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let out = svc.get_systemtender("some-uuid");
     assert_eq!(out["result"], "SUCCESS");
     assert_eq!(out["data"]["status"], "running");
@@ -757,14 +897,28 @@ fn abort_burst_within_floor_reads_running() {
 
 #[test]
 fn true_death_past_floor_reads_presumed_dead() {
-    let svc = SystemtenderService::with_parts(liveness_db("f", "300", "10"), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
-    assert_eq!(svc.get_systemtender("some-uuid")["data"]["status"], "presumed_dead");
+    let svc = SystemtenderService::with_parts(
+        liveness_db("f", "300", "10"),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
+    assert_eq!(
+        svc.get_systemtender("some-uuid")["data"]["status"],
+        "presumed_dead"
+    );
 }
 
 #[test]
 fn finished_stamp_wins_over_liveness() {
-    let svc = SystemtenderService::with_parts(liveness_db("t", "999", "10"), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
-    assert_eq!(svc.get_systemtender("some-uuid")["data"]["status"], "finished");
+    let svc = SystemtenderService::with_parts(
+        liveness_db("t", "999", "10"),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
+    assert_eq!(
+        svc.get_systemtender("some-uuid")["data"]["status"],
+        "finished"
+    );
 }
 
 // ── the receiver note (run 36307488912) ────────────────────────────
@@ -782,22 +936,45 @@ fn planned_response() -> Value {
 
 fn wish_door_db(heartbeat: &'static str) -> Arc<FakeDb> {
     arc_db(move |_db, q| {
-        if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
+        if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") {
+            return Ok(None);
+        }
         if q.contains("EXTRACT(EPOCH") {
             return Ok(Some(vec![row(&[Some(heartbeat), Some("10.0")])]));
         }
         if q.contains("WHERE id = 'f0e0fb34") || q.contains("WHERE id = '92a33fa9") {
-            let id = if q.contains("f0e0fb34") { "f0e0fb34-aaaa-bbbb-cccc-ddddeeeeffff" } else { "92a33fa9-1111-2222-3333-444455556666" };
-            return Ok(Some(vec![row(&[Some(id), Some("tender"), None, Some("{}")])]));
+            let id = if q.contains("f0e0fb34") {
+                "f0e0fb34-aaaa-bbbb-cccc-ddddeeeeffff"
+            } else {
+                "92a33fa9-1111-2222-3333-444455556666"
+            };
+            return Ok(Some(vec![row(&[
+                Some(id),
+                Some("tender"),
+                None,
+                Some("{}"),
+            ])]));
         }
         if q.contains("FROM steerwishes") {
             return Ok(Some(vec![row(&[
-                Some("wish-1"), Some("rcv/objective_0"), None, None, None,
-                Some("standing"), Some("2026-10-12 19:00:00+00"), Some("declared"),
-                None, None, None, Some("later"), Some("best"),
+                Some("wish-1"),
+                Some("rcv/objective_0"),
+                None,
+                None,
+                None,
+                Some("standing"),
+                Some("2026-10-12 19:00:00+00"),
+                Some("declared"),
+                None,
+                None,
+                None,
+                Some("later"),
+                Some("best"),
             ])]));
         }
-        if q.contains("FROM steerwish") { return Ok(Some(vec![])); }
+        if q.contains("FROM steerwish") {
+            return Ok(Some(vec![]));
+        }
         Ok(None)
     })
 }
@@ -806,7 +983,12 @@ fn sender_and_receiver_notes(planned: Value) -> (WishService, Arc<FakeDb>, Arc<F
     let causal = Arc::new(FakeCausal::default());
     causal.queue_ask(Ok(planned));
     let db = wish_door_db("5.0");
-    let svc = WishService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), causal.clone(), true);
+    let svc = WishService::with_parts(
+        db.clone(),
+        Arc::new(FakeWindmill::default()),
+        causal.clone(),
+        true,
+    );
     (svc, db, causal)
 }
 
@@ -831,8 +1013,16 @@ fn sender_and_receiver_notes_planted() {
             d.contains(db_frag) && q.contains("INSERT INTO wish_assignments") && q.contains(role)
         })
     };
-    assert!(note("systemtender_f0e0fb34", "'sender'"), "calls: {:#?}", calls);
-    assert!(note("systemtender_92a33fa9", "'receiver'"), "calls: {:#?}", calls);
+    assert!(
+        note("systemtender_f0e0fb34", "'sender'"),
+        "calls: {:#?}",
+        calls
+    );
+    assert!(
+        note("systemtender_92a33fa9", "'receiver'"),
+        "calls: {:#?}",
+        calls
+    );
 }
 
 #[test]
@@ -840,7 +1030,11 @@ fn write_wish_assignment_defaults_to_sender_role() {
     let (svc, db, _c) = sender_and_receiver_notes(planned_response());
     let declared = svc.create_wish(&declare_wish_payload());
     let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
-    let first = db.queries().into_iter().find(|q| q.contains("INSERT INTO wish_assignments")).expect("planted");
+    let first = db
+        .queries()
+        .into_iter()
+        .find(|q| q.contains("INSERT INTO wish_assignments"))
+        .expect("planted");
     assert!(first.contains("'sender'"));
 }
 
@@ -852,7 +1046,11 @@ fn no_receiver_note_when_self_wish() {
     let (svc, db, _c) = sender_and_receiver_notes(plan);
     let declared = svc.create_wish(&declare_wish_payload());
     let _ = declared.unwrap_or_else(|e| panic!("create_wish errored: {e}"));
-    let count = db.queries().iter().filter(|q| q.contains("INSERT INTO wish_assignments")).count();
+    let count = db
+        .queries()
+        .iter()
+        .filter(|q| q.contains("INSERT INTO wish_assignments"))
+        .count();
     assert_eq!(count, 1);
 }
 
@@ -873,13 +1071,31 @@ fn create_config() -> Value {
 fn fast_create_db() -> Arc<FakeDb> {
     arc_db(|_db, q| {
         if q.contains("FROM targets") {
-            return Ok(Some(vec![row(&[Some("t1"), Some("t1"), Some("ssh"), Some(r#"{"address": "host-a"}"#), None, Some("2026-10-10 09:00:00+00"), None])])); 
+            return Ok(Some(vec![row(&[
+                Some("t1"),
+                Some("t1"),
+                Some("ssh"),
+                Some(r#"{"address": "host-a"}"#),
+                None,
+                Some("2026-10-10 09:00:00+00"),
+                None,
+            ])]));
         }
-        if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
-        if q.contains("SELECT id, name, creation_tsz FROM") { return Ok(Some(vec![])); }
-        if q.contains("FROM systemtender_meta_data WHERE id") { return Ok(Some(vec![])); }
-        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") { return Ok(Some(vec![])); }
-        if q.contains("FROM steerwishes") || q.contains("FROM steerwish") { return Ok(Some(vec![])); }
+        if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") {
+            return Ok(None);
+        }
+        if q.contains("SELECT id, name, creation_tsz FROM") {
+            return Ok(Some(vec![]));
+        }
+        if q.contains("FROM systemtender_meta_data WHERE id") {
+            return Ok(Some(vec![]));
+        }
+        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") {
+            return Ok(Some(vec![]));
+        }
+        if q.contains("FROM steerwishes") || q.contains("FROM steerwish") {
+            return Ok(Some(vec![]));
+        }
         Ok(None)
     })
 }
@@ -889,19 +1105,26 @@ fn create_plants_row_creating_and_dispatches_executor() {
     let wmill = Arc::new(FakeWindmill::default());
     wmill.queue_async(Ok("executor-job".to_string()));
     let db = fast_create_db();
-    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    let svc =
+        SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
     let result = svc.create_systemtender(create_config(), "bench-tender");
     assert_eq!(result["result"], "SUCCESS");
     assert_eq!(result["data"]["status"], "creating");
     assert_eq!(result["data"]["name"], "bench-tender");
     let id = result["data"]["id"].as_str().unwrap().to_string();
     assert!(uuid::Uuid::parse_str(&id).is_ok());
-    assert!(db.queries().iter().any(|q| q.contains("INSERT INTO systemtender_meta_data")));
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("INSERT INTO systemtender_meta_data")));
     assert!(db.queries().iter().any(|q| q.contains("'creating'")));
     let dispatched = wmill.dispatched.lock().unwrap();
     assert_eq!(dispatched.len(), 1);
     assert_eq!(dispatched[0].0, "f/controller/systemtender_create_executor");
-    assert_eq!(dispatched[0].1["request_data"]["systemtender_id"], json!(id));
+    assert_eq!(
+        dispatched[0].1["request_data"]["systemtender_id"],
+        json!(id)
+    );
     assert!(!db.queries().iter().any(|q| q.contains("CREATE DATABASE")));
 }
 
@@ -910,56 +1133,111 @@ fn create_dispatch_failure_rolls_the_row_back() {
     let wmill = FakeWindmill::default();
     wmill.queue_async(Err("windmill unreachable".to_string()));
     let db = fast_create_db();
-    let svc = SystemtenderService::with_parts(db.clone(), Arc::new(wmill), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db.clone(),
+        Arc::new(wmill),
+        Arc::new(FakeCausal::default()),
+    );
     let result = svc.create_systemtender(create_config(), "bench-tender");
     assert_eq!(result["result"], "FAILURE");
-    assert!(db.queries().iter().any(|q| q.contains("DELETE FROM systemtender_meta_data")));
-    assert!(db.queries().iter().any(|q| q.trim_start().starts_with("DELETE FROM systemtender_lifecycle")));
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("DELETE FROM systemtender_meta_data")));
+    assert!(db.queries().iter().any(|q| q
+        .trim_start()
+        .starts_with("DELETE FROM systemtender_lifecycle")));
 }
 
 #[test]
 fn duplicate_name_answers_the_visible_state() {
-    for state in ["creating", "create-failed", "deleting", "deletion-failed", "active"] {
+    for state in [
+        "creating",
+        "create-failed",
+        "deleting",
+        "deletion-failed",
+        "active",
+    ] {
         let existing_id = "550e8400-e29b-41d4-a716-446655440000";
         let db = arc_db(move |_db, q| {
-            if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") { return Ok(None); }
+            if q.contains("CREATE TABLE") || q.trim_start().starts_with("INSERT INTO") {
+                return Ok(None);
+            }
             if q.contains("FROM targets") {
-                return Ok(Some(vec![row(&[Some("t1"), Some("t1"), Some("ssh"), Some(r#"{"address": "host-a"}"#), None, Some("2026-10-10 09:00:00+00"), None])]));
+                return Ok(Some(vec![row(&[
+                    Some("t1"),
+                    Some("t1"),
+                    Some("ssh"),
+                    Some(r#"{"address": "host-a"}"#),
+                    None,
+                    Some("2026-10-10 09:00:00+00"),
+                    None,
+                ])]));
             }
             if q.contains("SELECT id, name, creation_tsz FROM") {
-                return Ok(Some(vec![row(&[Some(existing_id), Some("bench-tender"), Some("2026-10-10 09:00:00+00")])]));
+                return Ok(Some(vec![row(&[
+                    Some(existing_id),
+                    Some("bench-tender"),
+                    Some("2026-10-10 09:00:00+00"),
+                ])]));
             }
             if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") {
                 return Ok(Some(vec![row(&[Some(state), None])]));
             }
             if q.contains("FROM systemtender_meta_data WHERE id") {
-                return Ok(Some(vec![row(&[Some(existing_id), Some("bench-tender"), Some("2026-10-10 09:00:00+00"), Some("{}")])]));
+                return Ok(Some(vec![row(&[
+                    Some(existing_id),
+                    Some("bench-tender"),
+                    Some("2026-10-10 09:00:00+00"),
+                    Some("{}"),
+                ])]));
             }
             Ok(None)
         });
-        let svc = SystemtenderService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+        let svc = SystemtenderService::with_parts(
+            db.clone(),
+            Arc::new(FakeWindmill::default()),
+            Arc::new(FakeCausal::default()),
+        );
         let result = svc.create_systemtender(create_config(), "bench-tender");
         assert_eq!(result["result"], "SUCCESS", "state {state}");
         assert_eq!(result["duplicate"], json!(true), "state {state}");
         assert_eq!(result["data"]["id"], existing_id, "state {state}");
         assert_eq!(result["data"]["status"], state, "state {state}");
-        assert!(!db.queries().iter().any(|q| q.contains("INSERT INTO systemtender_meta_data")));
+        assert!(!db
+            .queries()
+            .iter()
+            .any(|q| q.contains("INSERT INTO systemtender_meta_data")));
     }
 }
 
 #[test]
 fn get_answers_creating_with_creation_reason() {
     let db = arc_db(|_db, q| {
-        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
         if q.contains("FROM systemtender_meta_data WHERE id") {
-            return Ok(Some(vec![row(&[Some("row-id"), Some("bench-tender"), Some("2026-10-10 09:00:00+00"), Some("{}")])]));
+            return Ok(Some(vec![row(&[
+                Some("row-id"),
+                Some("bench-tender"),
+                Some("2026-10-10 09:00:00+00"),
+                Some("{}"),
+            ])]));
         }
         if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") {
-            return Ok(Some(vec![row(&[Some("create-failed"), Some("Optuna init failed")])]));
+            return Ok(Some(vec![row(&[
+                Some("create-failed"),
+                Some("Optuna init failed"),
+            ])]));
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let data = &svc.get_systemtender("row-id")["data"];
     assert_eq!(data["status"], "create-failed");
     assert_eq!(data["creation_reason"], "Optuna init failed");
@@ -977,7 +1255,10 @@ fn deletion_claim_takes_over_create_failed_rows() {
     });
     let repo = MetadataDatabaseRepository::with_gateway(DbConfig::default(), db.clone());
     assert!(repo.claim_for_deletion("some-uuid", 300, false).unwrap());
-    assert!(db.queries().iter().any(|q| q.contains("state = 'create-failed'")));
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("state = 'create-failed'")));
 }
 
 #[test]
@@ -1002,7 +1283,10 @@ fn get_survives_the_table_build_window() {
     for text in unreadable {
         let db = arc_db(move |_db, _q| Err(DbError(text.to_string())));
         let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db);
-        assert!(repo.read_state_verdict("systemtender_x").unwrap().is_none(), "{text}");
+        assert!(
+            repo.read_state_verdict("systemtender_x").unwrap().is_none(),
+            "{text}"
+        );
     }
     let db = arc_db(|_db, _q| Err(DbError("connection refused".to_string())));
     let repo = ArchiveDatabaseRepository::with_gateway(DbConfig::default(), db);
@@ -1065,7 +1349,8 @@ fn executor_flips_the_row_live() {
     wmill.queue_sync(json!({"result": "SUCCESS"})); // the preflight
     wmill.queue_async(Ok("job-1".to_string())); // the worker launch
     let db = executor_db();
-    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    let svc =
+        SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
 
     let r = svc.create_systemtender_executor(EXECUTOR_ROW_ID);
 
@@ -1076,7 +1361,13 @@ fn executor_flips_the_row_live() {
     // the worker's creation_ts arg are the same string)
     assert_eq!(r["data"]["createdAt"], "2026-10-10T09:00:00+00:00");
     // heavy half ran: db + state table + the preflight + one worker
-    assert_eq!(db.queries().iter().filter(|q| q.contains("CREATE DATABASE")).count(), 1);
+    assert_eq!(
+        db.queries()
+            .iter()
+            .filter(|q| q.contains("CREATE DATABASE"))
+            .count(),
+        1
+    );
     assert_eq!(
         db.queries()
             .iter()
@@ -1103,7 +1394,7 @@ fn executor_flips_the_row_live() {
         .into_iter()
         .find(|q| q.trim_start().starts_with("UPDATE systemtender_meta_data"))
         .expect("the booking flew");
-assert!(booked.contains("\"worker_job_ids\":[\"job-1\"]"));
+    assert!(booked.contains("\"worker_job_ids\":[\"job-1\"]"));
     // the stored definition keeps python's shape: creation_ts rode
     // the per-worker configs only, never the stored row
     assert!(!booked.contains("creation_ts"));
@@ -1115,7 +1406,10 @@ assert!(booked.contains("\"worker_job_ids\":[\"job-1\"]"));
             .count(),
         1
     );
-    assert!(!db.queries().iter().any(|q| q.contains("INSERT INTO systemtender_lifecycle")));
+    assert!(!db
+        .queries()
+        .iter()
+        .any(|q| q.contains("INSERT INTO systemtender_lifecycle")));
 }
 
 #[test]
@@ -1124,7 +1418,8 @@ fn executor_failure_flags_create_failed_and_keeps_the_row() {
     wmill.queue_sync(json!({"result": "SUCCESS"}));
     wmill.queue_async(Err("worker refused".to_string()));
     let db = executor_db();
-    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    let svc =
+        SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
 
     let r = svc.create_systemtender_executor(EXECUTOR_ROW_ID);
 
@@ -1141,9 +1436,21 @@ fn executor_failure_flags_create_failed_and_keeps_the_row() {
     assert!(flagged.contains("'create-failed'"));
     assert!(flagged.contains("worker refused"));
     // half-made archive db gone, row stays
-    assert_eq!(db.queries().iter().filter(|q| q.contains("DROP DATABASE IF EXISTS")).count(), 1);
-    assert!(!db.queries().iter().any(|q| q.contains("DELETE FROM systemtender_meta_data")));
-    assert!(!db.queries().iter().any(|q| q.contains("DELETE FROM systemtender_lifecycle")));
+    assert_eq!(
+        db.queries()
+            .iter()
+            .filter(|q| q.contains("DROP DATABASE IF EXISTS"))
+            .count(),
+        1
+    );
+    assert!(!db
+        .queries()
+        .iter()
+        .any(|q| q.contains("DELETE FROM systemtender_meta_data")));
+    assert!(!db
+        .queries()
+        .iter()
+        .any(|q| q.contains("DELETE FROM systemtender_lifecycle")));
     // nothing launched, nothing to cancel
     assert!(wmill.cancelled.lock().unwrap().is_empty());
 }
@@ -1161,11 +1468,18 @@ fn executor_missing_row() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db.clone(),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let r = svc.create_systemtender_executor(EXECUTOR_ROW_ID);
     assert_eq!(r["result"], "FAILURE");
     assert_eq!(r["error"], "Systemtender not found");
-    assert!(!db.queries().iter().any(|q| q.contains("INSERT INTO systemtender_lifecycle")));
+    assert!(!db
+        .queries()
+        .iter()
+        .any(|q| q.contains("INSERT INTO systemtender_lifecycle")));
 }
 
 #[test]
@@ -1177,7 +1491,10 @@ fn executor_script_passthrough() {
     let r = dispatch("systemtender_create_executor", &json!({}));
     assert_eq!(r["result"], "FAILURE");
     assert_eq!(r["error"], "Missing systemtender_id");
-    let r2 = dispatch("systemtender_create_executor", &json!({"systemtender_id": ""}));
+    let r2 = dispatch(
+        "systemtender_create_executor",
+        &json!({"systemtender_id": ""}),
+    );
     assert_eq!(r2["result"], "FAILURE");
     assert_eq!(r2["error"], "Missing systemtender_id");
 }
@@ -1203,7 +1520,11 @@ fn trial_check_reads_the_ledgers_trials_not_optuna() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let (ok, detail) = svc.check_trial_compatibility(EXECUTOR_ROW_ID, &new_config, false);
     assert!(ok);
     assert_eq!(detail, "Compatible: 2 params, 1 objectives");
@@ -1217,8 +1538,13 @@ fn trial_check_reads_the_ledgers_trials_not_optuna() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
-    let (ok, detail) = svc.check_trial_compatibility(EXECUTOR_ROW_ID, &json!({"objectives": []}), false);
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
+    let (ok, detail) =
+        svc.check_trial_compatibility(EXECUTOR_ROW_ID, &json!({"objectives": []}), false);
     assert!(!ok);
     assert_eq!(
         detail,
@@ -1231,18 +1557,29 @@ fn trial_check_reads_the_ledgers_trials_not_optuna() {
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let (ok, detail) = svc.check_trial_compatibility(EXECUTOR_ROW_ID, &new_config, false);
     assert!(ok);
     assert_eq!(detail, "No existing trial data found");
     // the read itself fails (no DB): skipped, never a refusal
-    let db = arc_db(|_db, _q| Err(godon_controller::database::DbError("db does not exist".to_string())));
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let db = arc_db(|_db, _q| {
+        Err(godon_controller::database::DbError(
+            "db does not exist".to_string(),
+        ))
+    });
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
     let (ok, detail) = svc.check_trial_compatibility(EXECUTOR_ROW_ID, &new_config, false);
     assert!(ok);
     assert_eq!(detail, "Compatibility check skipped: db does not exist");
 }
-
 
 // ── death relaunch (TestDeathRelaunch) ─────────────────────────────
 // The three formerly-BLOCKED tests: the service now carries the
@@ -1252,7 +1589,9 @@ fn trial_check_reads_the_ledgers_trials_not_optuna() {
 
 fn relaunch_meta_row(config: &'static str) -> Arc<FakeDb> {
     arc_db(move |_db, q| {
-        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[
                 Some("550e8400-e29b-41d4-a716-446655440000"),
@@ -1268,7 +1607,12 @@ fn relaunch_meta_row(config: &'static str) -> Arc<FakeDb> {
         }
         // the verdict: finished, age, interval (+ instruments cell)
         if q.contains("FROM systemtender_state") {
-            return Ok(Some(vec![row(&[Some("f"), Some("4000"), Some("60"), None])]));
+            return Ok(Some(vec![row(&[
+                Some("f"),
+                Some("4000"),
+                Some("60"),
+                None,
+            ])]));
         }
         Ok(None)
     })
@@ -1281,14 +1625,24 @@ fn start_relaunches_a_presumed_dead_tender() {
     let db = relaunch_meta_row(
         r#"{"systemtender": {"name": "t", "type": "ssh"}, "effectuation": {"targets": [{"target_id": "t1"}]}}"#,
     );
-    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    let svc =
+        SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
 
     let r = svc.start_systemtender("550e8400-e29b-41d4-a716-446655440000");
 
-    assert_eq!(r["result"], "SUCCESS", "the dead are startable — no status guard refuses");
-    assert_eq!(r["data"]["resumed_from"], "presumed_dead", "the door names the death, never covers it");
+    assert_eq!(
+        r["result"], "SUCCESS",
+        "the dead are startable — no status guard refuses"
+    );
+    assert_eq!(
+        r["data"]["resumed_from"], "presumed_dead",
+        "the door names the death, never covers it"
+    );
     // the stop flag cleared regardless of the death
-    assert!(db.queries().iter().any(|q| q.contains("shutdown_requested = FALSE")));
+    assert!(db
+        .queries()
+        .iter()
+        .any(|q| q.contains("shutdown_requested = FALSE")));
     // workers relaunched create-identical, fresh job ids booked
     assert_eq!(wmill.dispatched.lock().unwrap().len(), 1);
     let booked = db
@@ -1311,20 +1665,29 @@ fn a_stopped_tender_resumes_as_stopped_not_dead() {
     // the stop flag set: a deliberate exit, not a death (the verdict
     // numbers are death-shaped — the flag decides)
     let db = arc_db(move |_db, q| {
-        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[
                 Some("550e8400-e29b-41d4-a716-446655440000"),
                 Some("t"),
                 Some("2026-10-15 09:00:00+00"),
-                Some(r#"{"systemtender": {"name": "t", "type": "ssh"}, "effectuation": {"targets": [{"target_id": "t1"}]}}"#),
+                Some(
+                    r#"{"systemtender": {"name": "t", "type": "ssh"}, "effectuation": {"targets": [{"target_id": "t1"}]}}"#,
+                ),
             ])]));
         }
         if q.contains("SELECT shutdown_requested FROM systemtender_state") {
             return Ok(Some(vec![row(&[Some("t")])]));
         }
         if q.contains("FROM systemtender_state") {
-            return Ok(Some(vec![row(&[Some("f"), Some("4000"), Some("60"), None])]));
+            return Ok(Some(vec![row(&[
+                Some("f"),
+                Some("4000"),
+                Some("60"),
+                None,
+            ])]));
         }
         Ok(None)
     });
@@ -1333,13 +1696,19 @@ fn a_stopped_tender_resumes_as_stopped_not_dead() {
     let r = svc.start_systemtender("550e8400-e29b-41d4-a716-446655440000");
 
     assert_eq!(r["result"], "SUCCESS");
-    assert_eq!(r["data"]["resumed_from"], "stopped", "a deliberate exit is never covered as death");
+    assert_eq!(
+        r["data"]["resumed_from"], "stopped",
+        "a deliberate exit is never covered as death"
+    );
     let booked = db
         .queries()
         .into_iter()
         .find(|q| q.trim_start().starts_with("UPDATE systemtender_meta_data"))
         .expect("the booking flew");
-    assert!(!booked.contains("relaunch_history"), "only deaths make history");
+    assert!(
+        !booked.contains("relaunch_history"),
+        "only deaths make history"
+    );
 }
 
 #[test]
@@ -1348,29 +1717,55 @@ fn the_verdict_stays_loud_while_the_tender_stays_dead() {
     // that died again still reads dead, with its numbers and its
     // resume count
     let db = arc_db(|_db, q| {
-        if q.contains("CREATE TABLE") { return Ok(None); }
+        if q.contains("CREATE TABLE") {
+            return Ok(None);
+        }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[
                 Some("550e8400-e29b-41d4-a716-446655440000"),
                 Some("t"),
                 Some("2026-10-15 09:00:00+00"),
-                Some(r#"{"systemtender": {"name": "t", "type": "ssh"}, "effectuation": {"targets": [{"target_id": "t1"}]}, "relaunch_history": [{"ts": "2026-10-15T12:00:00+00:00", "resumed_from": "presumed_dead", "liveness_age_secs": 4000}]}"#),
+                Some(
+                    r#"{"systemtender": {"name": "t", "type": "ssh"}, "effectuation": {"targets": [{"target_id": "t1"}]}, "relaunch_history": [{"ts": "2026-10-15T12:00:00+00:00", "resumed_from": "presumed_dead", "liveness_age_secs": 4000}]}"#,
+                ),
             ])]));
         }
         if q.contains("FROM systemtender_state") {
-            return Ok(Some(vec![row(&[Some("f"), Some("4000"), Some("60"), None])]));
+            return Ok(Some(vec![row(&[
+                Some("f"),
+                Some("4000"),
+                Some("60"),
+                None,
+            ])]));
         }
-        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") { return Ok(Some(vec![])); }
+        if q.contains("FROM systemtender_lifecycle WHERE systemtender_id") {
+            return Ok(Some(vec![]));
+        }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db, Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()));
+    let svc = SystemtenderService::with_parts(
+        db,
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+    );
 
     let got = svc.get_systemtender("550e8400-e29b-41d4-a716-446655440000");
 
     assert_eq!(got["data"]["status"], "presumed_dead");
-    assert_eq!(got["data"]["liveness"]["age_secs"], json!(4000.0), "the verdict carries its numbers");
-    assert_eq!(got["data"]["relaunches"], json!(1), "the resume count rides every read");
-    assert_eq!(got["data"]["last_relaunch"]["resumed_from"], "presumed_dead");
+    assert_eq!(
+        got["data"]["liveness"]["age_secs"],
+        json!(4000.0),
+        "the verdict carries its numbers"
+    );
+    assert_eq!(
+        got["data"]["relaunches"],
+        json!(1),
+        "the resume count rides every read"
+    );
+    assert_eq!(
+        got["data"]["last_relaunch"]["resumed_from"],
+        "presumed_dead"
+    );
 }
 
 // ── the resurrection family (designs/2026-10-18-worker-death-door, round 3) ──
@@ -1388,7 +1783,13 @@ fn resurrection_service(
 ) -> (SystemtenderService, Arc<FakeDb>, Arc<FakeWindmill>) {
     let registry: Vec<TextRow> = registry
         .iter()
-        .map(|id| row(&[Some(*id), Some("bench-tender"), Some("2026-09-30 18:00:00+00")]))
+        .map(|id| {
+            row(&[
+                Some(*id),
+                Some("bench-tender"),
+                Some("2026-09-30 18:00:00+00"),
+            ])
+        })
         .collect();
     let lifecycle: Vec<TextRow> = lifecycle
         .iter()
@@ -1446,7 +1847,8 @@ fn resurrection_service(
         }
         Ok(None)
     });
-    let svc = SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
+    let svc =
+        SystemtenderService::with_parts(db.clone(), wmill.clone(), Arc::new(FakeCausal::default()));
     (svc, db, wmill)
 }
 
@@ -1475,7 +1877,10 @@ fn resurrects_a_worker_dead_past_the_verdict_threshold() {
         "{}",
     );
     let r = svc.reconcile_tick();
-    assert_eq!(r["data"]["resurrections"]["relaunched"], 1, "relaunched: {r}");
+    assert_eq!(
+        r["data"]["resurrections"]["relaunched"], 1,
+        "relaunched: {r}"
+    );
     assert_eq!(r["data"]["resurrections"]["failed"], 0);
 }
 
@@ -1504,8 +1909,13 @@ fn a_deliberate_park_is_never_revived() {
 
 #[test]
 fn a_finished_worker_is_not_a_death() {
-    let (svc, _db, _wmill) =
-        resurrection_service(&["row-id"], &[], Some(false), Some(("t", "7200", "60")), "{}");
+    let (svc, _db, _wmill) = resurrection_service(
+        &["row-id"],
+        &[],
+        Some(false),
+        Some(("t", "7200", "60")),
+        "{}",
+    );
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "finished: {r}");
 }
@@ -1514,7 +1924,10 @@ fn a_finished_worker_is_not_a_death() {
 fn no_verdict_answers_nothing() {
     let (svc, _db, _wmill) = resurrection_service(&["row-id"], &[], Some(false), None, "{}");
     let r = svc.reconcile_tick();
-    assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "no verdict: {r}");
+    assert_eq!(
+        r["data"]["resurrections"]["relaunched"], 0,
+        "no verdict: {r}"
+    );
 }
 
 #[test]
@@ -1529,8 +1942,7 @@ fn other_families_own_their_states() {
         );
         let r = svc.reconcile_tick();
         assert_eq!(
-            r["data"]["resurrections"]["relaunched"],
-            0,
+            r["data"]["resurrections"]["relaunched"], 0,
             "state {state}: {r}"
         );
     }

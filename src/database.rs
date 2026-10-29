@@ -103,7 +103,11 @@ fn rows_from_simple(messages: &[postgres::SimpleQueryMessage]) -> Vec<TextRow> {
             postgres::SimpleQueryMessage::Row(r) => Some(r),
             _ => None,
         })
-        .map(|r| (0..r.columns().len()).map(|i| text_cell(r.get(i))).collect())
+        .map(|r| {
+            (0..r.columns().len())
+                .map(|i| text_cell(r.get(i)))
+                .collect()
+        })
         .collect()
 }
 
@@ -150,7 +154,8 @@ fn connect(db_config: &DbConfig) -> DbResult<postgres::Client> {
     if let Some(db) = &db_config.database {
         cfg.dbname(db);
     }
-    cfg.connect(postgres::NoTls).map_err(|e| DbError(e.to_string()))
+    cfg.connect(postgres::NoTls)
+        .map_err(|e| DbError(e.to_string()))
 }
 
 impl DbGateway for PgGateway {
@@ -160,10 +165,9 @@ impl DbGateway for PgGateway {
         query: &str,
         with_result: bool,
     ) -> DbResult<Option<Vec<TextRow>>> {
-        let mut client = connect(db_config).map_err(|e| {
+        let mut client = connect(db_config).inspect_err(|e| {
             error!("Database connection error: {}", e.0);
             error!("Database config: {}", redacted(db_config));
-            e
         })?;
         let rows = client.simple_query(query).map_err(|e| {
             error!("Query execution failed: {}", e);
@@ -177,10 +181,9 @@ impl DbGateway for PgGateway {
     }
 
     fn execute_ddl_query(&self, db_config: &DbConfig, query: &str) -> DbResult<()> {
-        let mut client = connect(db_config).map_err(|e| {
+        let mut client = connect(db_config).inspect_err(|e| {
             error!("Database connection error: {}", e.0);
             error!("Database config: {}", redacted(db_config));
-            e
         })?;
         client.simple_query(query).map_err(|e| {
             error!("DDL execution failed: {}", e);
@@ -297,7 +300,10 @@ impl ArchiveDatabaseRepository {
     /// The tender's pulse: (age_secs, beat_interval_secs). Falls back
     /// to an age-only read when the row predates the interval column;
     /// None when the row (or the db) is absent.
-    pub fn read_heartbeat(&self, systemtender_db_name: &str) -> DbResult<Option<(f64, Option<f64>)>> {
+    pub fn read_heartbeat(
+        &self,
+        systemtender_db_name: &str,
+    ) -> DbResult<Option<(f64, Option<f64>)>> {
         let db_config = self.base_config.with_database(systemtender_db_name);
         let rows = match self.db.execute_query(
             &db_config,
@@ -372,7 +378,9 @@ impl ArchiveDatabaseRepository {
         .or_else(|e| {
             let error_text = e.0.clone();
             if error_text.contains("does not exist")
-                || error_text.to_lowercase().contains("not found in raft group")
+                || error_text
+                    .to_lowercase()
+                    .contains("not found in raft group")
             {
                 // Nothing readable, no verdict. The lifecycle row
                 // speaks.
@@ -480,11 +488,18 @@ impl ArchiveDatabaseRepository {
 
     /// Remove the assignment row - the tender's pulse reverts the dial
     /// to neutral on the next boundary.
-    pub fn delete_wish_assignment(&self, systemtender_db_name: &str, wish_id: &str) -> DbResult<()> {
+    pub fn delete_wish_assignment(
+        &self,
+        systemtender_db_name: &str,
+        wish_id: &str,
+    ) -> DbResult<()> {
         let db_config = self.base_config.with_database(systemtender_db_name);
 
         let wish_id_sql = wish_id.replace('\'', "''");
-        let query = format!("DELETE FROM wish_assignments WHERE wish_id = '{}';", wish_id_sql);
+        let query = format!(
+            "DELETE FROM wish_assignments WHERE wish_id = '{}';",
+            wish_id_sql
+        );
         self.db.execute_query(&db_config, &query, false)?;
         info!(
             "Wish assignment removed from archive DB {} (wish: {})",
@@ -497,10 +512,11 @@ impl ArchiveDatabaseRepository {
     ///
     /// The worker writes seek_return::<wish_id> into its ledger_state
     /// when the seek completes (robots #241); this read surfaces it to
-    /// the wish's event trail. Returns the stored JSON string or None
+    /// the wish's event trail. Returns the stored JSON string or None:
+    ///
     /// - an absent db or table (the tender gone, the ledger never
-    /// created) reads as no return, never an error: the mirror must
-    /// not break a wish read because its tender died.
+    ///   created) reads as no return, never an error: the mirror must
+    ///   not break a wish read because its tender died.
     pub fn read_seek_return(&self, systemtender_db_name: &str, wish_id: &str) -> Option<String> {
         let db_config = self.base_config.with_database(systemtender_db_name);
         let wish_id_sql = wish_id.replace('\'', "''");
@@ -580,10 +596,22 @@ impl ArchiveDatabaseRepository {
         let db_config = self.base_config.with_database("archive_db");
 
         let queries = [
-            format!("DELETE FROM interference_active_systemtenders WHERE systemtender_id = '{}';", systemtender_id),
-            format!("DELETE FROM detection_readiness WHERE systemtender_id = '{}';", systemtender_id),
-            format!("DELETE FROM receiver_observations WHERE receiver_id = '{}';", systemtender_id),
-            format!("DELETE FROM curve_points WHERE sender_id = '{}';", systemtender_id),
+            format!(
+                "DELETE FROM interference_active_systemtenders WHERE systemtender_id = '{}';",
+                systemtender_id
+            ),
+            format!(
+                "DELETE FROM detection_readiness WHERE systemtender_id = '{}';",
+                systemtender_id
+            ),
+            format!(
+                "DELETE FROM receiver_observations WHERE receiver_id = '{}';",
+                systemtender_id
+            ),
+            format!(
+                "DELETE FROM curve_points WHERE sender_id = '{}';",
+                systemtender_id
+            ),
         ];
 
         for query in &queries {
@@ -595,7 +623,10 @@ impl ArchiveDatabaseRepository {
             }
         }
 
-        info!("Cleaned coordination state for systemtender: {}", systemtender_id);
+        info!(
+            "Cleaned coordination state for systemtender: {}",
+            systemtender_id
+        );
         Ok(())
     }
 
@@ -606,7 +637,10 @@ impl ArchiveDatabaseRepository {
 
         let query = format!("DELETE FROM sender_lease WHERE group_id = '{}';", group_id);
         if let Err(e) = self.db.execute_query(&db_config, &query, false) {
-            warn!("Group lease cleanup failed (table may not exist yet): {}", e.0);
+            warn!(
+                "Group lease cleanup failed (table may not exist yet): {}",
+                e.0
+            );
         }
         Ok(())
     }
@@ -769,7 +803,10 @@ impl MetadataDatabaseRepository {
             "SELECT state, reason FROM systemtender_lifecycle WHERE systemtender_id = '{}';",
             systemtender_id
         );
-        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        let rows = self
+            .db
+            .execute_query(&db_config, &query, true)?
+            .unwrap_or_default();
         if rows.is_empty() {
             return Ok(None);
         }
@@ -784,19 +821,24 @@ impl MetadataDatabaseRepository {
         let db_config = self._get_db_config();
 
         let query = "SELECT systemtender_id, state FROM systemtender_lifecycle;";
-        let rows = self.db.execute_query(&db_config, query, true)?.unwrap_or_default();
+        let rows = self
+            .db
+            .execute_query(&db_config, query, true)?
+            .unwrap_or_default();
         let mut m = Map::new();
         for r in &rows {
-            m.insert(
-                cell_str(&r[0]).unwrap_or_default(),
-                json!(cell_str(&r[1])),
-            );
+            m.insert(cell_str(&r[0]).unwrap_or_default(), json!(cell_str(&r[1])));
         }
         Ok(Value::Object(m))
     }
 
     /// Record a lifecycle transition (executor-provided state + reason).
-    pub fn set_lifecycle(&self, systemtender_id: &str, state: &str, reason: Option<&str>) -> DbResult<()> {
+    pub fn set_lifecycle(
+        &self,
+        systemtender_id: &str,
+        state: &str,
+        reason: Option<&str>,
+    ) -> DbResult<()> {
         let db_config = self._get_db_config();
         let reason_escaped = reason.unwrap_or("").replace('\'', "''");
 
@@ -811,7 +853,10 @@ impl MetadataDatabaseRepository {
         );
 
         self.db.execute_query(&db_config, &query, false)?;
-        info!("Lifecycle '{}' for systemtender: {}", state, systemtender_id);
+        info!(
+            "Lifecycle '{}' for systemtender: {}",
+            state, systemtender_id
+        );
         Ok(())
     }
 
@@ -823,14 +868,21 @@ impl MetadataDatabaseRepository {
             "SELECT systemtender_id, forced, attempts,              EXTRACT(EPOCH FROM (NOW() - claimed_at))              FROM systemtender_lifecycle WHERE state = '{}';",
             state
         );
-        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        let rows = self
+            .db
+            .execute_query(&db_config, &query, true)?
+            .unwrap_or_default();
         Ok(rows
             .iter()
             .filter_map(|r| {
                 let id = cell_str(&r[0])?;
                 let forced = matches!(cell_str(&r[1]).as_deref(), Some("true") | Some("t"));
-                let attempts = cell_str(&r[2]).and_then(|a| a.parse::<i64>().ok()).unwrap_or(0);
-                let age = cell_str(&r[3]).and_then(|a| a.parse::<f64>().ok()).unwrap_or(0.0);
+                let attempts = cell_str(&r[2])
+                    .and_then(|a| a.parse::<i64>().ok())
+                    .unwrap_or(0);
+                let age = cell_str(&r[3])
+                    .and_then(|a| a.parse::<f64>().ok())
+                    .unwrap_or(0.0);
                 Some((id, forced, attempts, age))
             })
             .collect())
@@ -944,7 +996,9 @@ impl MetadataDatabaseRepository {
         meta_state: &Value,
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
-        let json_string = serde_json::to_string(meta_state).unwrap_or_default().replace('\'', "''");
+        let json_string = serde_json::to_string(meta_state)
+            .unwrap_or_default()
+            .replace('\'', "''");
         let name_escaped = name.replace('\'', "''");
 
         let query = format!(
@@ -961,9 +1015,15 @@ impl MetadataDatabaseRepository {
     }
 
     /// Update systemtender metadata (e.g., to add job IDs).
-    pub fn update_systemtender_meta(&self, systemtender_id: &str, meta_state: &Value) -> DbResult<()> {
+    pub fn update_systemtender_meta(
+        &self,
+        systemtender_id: &str,
+        meta_state: &Value,
+    ) -> DbResult<()> {
         let db_config = self._get_db_config();
-        let json_string = serde_json::to_string(meta_state).unwrap_or_default().replace('\'', "''");
+        let json_string = serde_json::to_string(meta_state)
+            .unwrap_or_default()
+            .replace('\'', "''");
 
         let query = format!(
             r#"
@@ -1027,6 +1087,7 @@ impl MetadataDatabaseRepository {
     }
 
     /// Insert credential catalog entry.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_credential(
         &self,
         credential_id: &str,
@@ -1039,7 +1100,12 @@ impl MetadataDatabaseRepository {
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
         let metadata_json = match metadata {
-            Some(m) if !py_falsy(m) => format!("'{}'", serde_json::to_string(m).unwrap_or_default().replace('\'', "''")),
+            Some(m) if !py_falsy(m) => format!(
+                "'{}'",
+                serde_json::to_string(m)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             _ => "NULL".to_string(),
         };
         let description_escaped = match description {
@@ -1241,7 +1307,10 @@ impl MetadataDatabaseRepository {
              AND claimed_at < NOW() - INTERVAL '{} seconds';",
             stale_after_seconds
         );
-        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        let rows = self
+            .db
+            .execute_query(&db_config, &query, true)?
+            .unwrap_or_default();
         Ok(rows.iter().filter_map(|r| cell_str(&r[0])).collect())
     }
 
@@ -1266,7 +1335,10 @@ impl MetadataDatabaseRepository {
             patience = patience_seconds,
             wishes = self.steerwishes_table_name
         );
-        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        let rows = self
+            .db
+            .execute_query(&db_config, &query, true)?
+            .unwrap_or_default();
         Ok(rows.iter().filter_map(|r| cell_str(&r[0])).collect())
     }
 
@@ -1294,12 +1366,15 @@ impl MetadataDatabaseRepository {
             systemtenders = self.systemtender_table_name,
             wishes = self.steerwishes_table_name
         );
-        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        let rows = self
+            .db
+            .execute_query(&db_config, &query, true)?
+            .unwrap_or_default();
         Ok(rows
             .iter()
             // r.get(1): rows without a sender column (narrow readers,
             // mocked gateways) yield no pair, never a panic
-            .filter_map(|r| Some((cell_str(&r[0])?, r.get(1).and_then(|c| cell_str(c))?)))
+            .filter_map(|r| Some((cell_str(&r[0])?, r.get(1).and_then(cell_str)?)))
             .collect())
     }
 
@@ -1311,7 +1386,10 @@ impl MetadataDatabaseRepository {
             "SELECT state, reason FROM steerwish_lifecycle WHERE wish_id = '{}';",
             wish_id
         );
-        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        let rows = self
+            .db
+            .execute_query(&db_config, &query, true)?
+            .unwrap_or_default();
         if rows.is_empty() {
             return Ok(None);
         }
@@ -1326,19 +1404,24 @@ impl MetadataDatabaseRepository {
         let db_config = self._get_db_config();
 
         let query = "SELECT wish_id, state FROM steerwish_lifecycle;";
-        let rows = self.db.execute_query(&db_config, query, true)?.unwrap_or_default();
+        let rows = self
+            .db
+            .execute_query(&db_config, query, true)?
+            .unwrap_or_default();
         let mut m = Map::new();
         for r in &rows {
-            m.insert(
-                cell_str(&r[0]).unwrap_or_default(),
-                json!(cell_str(&r[1])),
-            );
+            m.insert(cell_str(&r[0]).unwrap_or_default(), json!(cell_str(&r[1])));
         }
         Ok(Value::Object(m))
     }
 
     /// Record a lifecycle transition (executor-provided state + reason).
-    pub fn set_wish_lifecycle(&self, wish_id: &str, state: &str, reason: Option<&str>) -> DbResult<()> {
+    pub fn set_wish_lifecycle(
+        &self,
+        wish_id: &str,
+        state: &str,
+        reason: Option<&str>,
+    ) -> DbResult<()> {
         let db_config = self._get_db_config();
         let reason_escaped = reason.unwrap_or("").replace('\'', "''");
 
@@ -1361,7 +1444,10 @@ impl MetadataDatabaseRepository {
     pub fn remove_wish_lifecycle(&self, wish_id: &str) -> DbResult<()> {
         let db_config = self._get_db_config();
 
-        let query = format!("DELETE FROM steerwish_lifecycle WHERE wish_id = '{}';", wish_id);
+        let query = format!(
+            "DELETE FROM steerwish_lifecycle WHERE wish_id = '{}';",
+            wish_id
+        );
         self.db.execute_query(&db_config, &query, false)?;
         Ok(())
     }
@@ -1378,9 +1464,19 @@ impl MetadataDatabaseRepository {
         terms: Option<&Value>,
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
-        let band_json = format!("'{}'::jsonb", serde_json::to_string(band).unwrap_or_default().replace('\'', "''"));
+        let band_json = format!(
+            "'{}'::jsonb",
+            serde_json::to_string(band)
+                .unwrap_or_default()
+                .replace('\'', "''")
+        );
         let limits_json = match limits {
-            Some(l) if !py_falsy(l) => format!("'{}'::jsonb", serde_json::to_string(l).unwrap_or_default().replace('\'', "''")),
+            Some(l) if !py_falsy(l) => format!(
+                "'{}'::jsonb",
+                serde_json::to_string(l)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             _ => "NULL".to_string(),
         };
         let budget_sql = match budget {
@@ -1389,11 +1485,21 @@ impl MetadataDatabaseRepository {
         };
         let wid = wish_id.replace('\'', "''");
         let claims_set = match claims {
-            Some(c) => format!("'{}'::jsonb", serde_json::to_string(c).unwrap_or_default().replace('\'', "''")),
+            Some(c) => format!(
+                "'{}'::jsonb",
+                serde_json::to_string(c)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             None => "NULL".to_string(),
         };
         let terms_set = match terms {
-            Some(t) => format!("'{}'::jsonb", serde_json::to_string(t).unwrap_or_default().replace('\'', "''")),
+            Some(t) => format!(
+                "'{}'::jsonb",
+                serde_json::to_string(t)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             None => "NULL".to_string(),
         };
         let query = format!(
@@ -1421,7 +1527,10 @@ impl MetadataDatabaseRepository {
     pub fn delete_wish(&self, wish_id: &str) -> DbResult<()> {
         let db_config = self._get_db_config();
         let wid = wish_id.replace('\'', "''");
-        let query = format!("DELETE FROM {} WHERE id = '{}';", self.steerwishes_table_name, wid);
+        let query = format!(
+            "DELETE FROM {} WHERE id = '{}';",
+            self.steerwishes_table_name, wid
+        );
         self.db.execute_query(&db_config, &query, false)?;
         info!("Steerwish purged from registry: {}", wish_id);
         Ok(())
@@ -1445,9 +1554,19 @@ impl MetadataDatabaseRepository {
         standard: &str,
     ) -> DbResult<()> {
         let db_config = self._get_db_config();
-        let band_json = format!("'{}'", serde_json::to_string(band).unwrap_or_default().replace('\'', "''"));
+        let band_json = format!(
+            "'{}'",
+            serde_json::to_string(band)
+                .unwrap_or_default()
+                .replace('\'', "''")
+        );
         let limits_json = match limits {
-            Some(l) if !py_falsy(l) => format!("'{}'::jsonb", serde_json::to_string(l).unwrap_or_default().replace('\'', "''")),
+            Some(l) if !py_falsy(l) => format!(
+                "'{}'::jsonb",
+                serde_json::to_string(l)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             _ => "NULL".to_string(),
         };
         let budget_sql = match budget {
@@ -1457,15 +1576,30 @@ impl MetadataDatabaseRepository {
         let outcome_sql = outcome.replace('\'', "''");
         let regime_sql = regime.replace('\'', "''");
         let claims_json = match claims {
-            Some(c) if !py_falsy(c) => format!("'{}'::jsonb", serde_json::to_string(c).unwrap_or_default().replace('\'', "''")),
+            Some(c) if !py_falsy(c) => format!(
+                "'{}'::jsonb",
+                serde_json::to_string(c)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             _ => "NULL".to_string(),
         };
         let terms_json = match terms {
-            Some(t) if !py_falsy(t) => format!("'{}'::jsonb", serde_json::to_string(t).unwrap_or_default().replace('\'', "''")),
+            Some(t) if !py_falsy(t) => format!(
+                "'{}'::jsonb",
+                serde_json::to_string(t)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             _ => "NULL".to_string(),
         };
         let seek_json = match seek {
-            Some(s) if !py_falsy(s) => format!("'{}'::jsonb", serde_json::to_string(s).unwrap_or_default().replace('\'', "''")),
+            Some(s) if !py_falsy(s) => format!(
+                "'{}'::jsonb",
+                serde_json::to_string(s)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             _ => "NULL".to_string(),
         };
         let answer_sql = answer.replace('\'', "''");
@@ -1618,18 +1752,19 @@ impl MetadataDatabaseRepository {
         VALUES('{}', '{}', {},
                TO_TIMESTAMP({}));
         "#,
-            self.steerwish_events_table_name,
-            wish_id_sql,
-            event_type_sql,
-            detail_sql,
-            at_epoch
+            self.steerwish_events_table_name, wish_id_sql, event_type_sql, detail_sql, at_epoch
         );
         self.db.execute_query(&db_config, &query, false)?;
         Ok(())
     }
 
     /// The fold-in's dedupe: this book event already mirrored?
-    pub fn has_wish_event_at(&self, wish_id: &str, event_type: &str, at_epoch: f64) -> DbResult<bool> {
+    pub fn has_wish_event_at(
+        &self,
+        wish_id: &str,
+        event_type: &str,
+        at_epoch: f64,
+    ) -> DbResult<bool> {
         let db_config = self._get_db_config();
         let wish_id_sql = wish_id.replace('\'', "''");
         let event_type_sql = event_type.replace('\'', "''");
@@ -1641,10 +1776,7 @@ impl MetadataDatabaseRepository {
         AND event_type = '{}'
         AND at = TO_TIMESTAMP({});
         "#,
-            self.steerwish_events_table_name,
-            wish_id_sql,
-            event_type_sql,
-            at_epoch
+            self.steerwish_events_table_name, wish_id_sql, event_type_sql, at_epoch
         );
         let result = self.db.execute_query(&db_config, &query, true)?;
         let count = result
@@ -1697,7 +1829,12 @@ impl MetadataDatabaseRepository {
             spec.as_str().map(|s| s.to_string()).unwrap_or_default()
         };
         let metadata_json = match metadata {
-            Some(m) if !py_falsy(m) => format!("'{}'::jsonb", serde_json::to_string(m).unwrap_or_default().replace('\'', "''")),
+            Some(m) if !py_falsy(m) => format!(
+                "'{}'::jsonb",
+                serde_json::to_string(m)
+                    .unwrap_or_default()
+                    .replace('\'', "''")
+            ),
             _ => "NULL".to_string(),
         };
 

@@ -1,11 +1,11 @@
 //! The f/controller/targets_get windmill script - python's controller/targets_get.py,
 //! ported verbatim (validate at the door, call the service, envelope the result).
 
-use serde_json::json;
-use serde_json::Value;
-use crate::target_get::format_target;
 use crate::database::DbConfig;
 use crate::database::MetadataDatabaseRepository;
+use crate::target_get::format_target;
+use serde_json::json;
+use serde_json::Value;
 
 pub fn run(_rd: &Value) -> Value {
     let outcome = (|| -> Result<Value, String> {

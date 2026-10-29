@@ -1,12 +1,12 @@
 //! The f/controller/target_get windmill script - python's controller/target_get.py,
 //! ported verbatim (validate at the door, call the service, envelope the result).
 
-use serde_json::json;
-use serde_json::Value;
-use crate::timefmt::pg_ts_to_iso;
+use crate::credential_get::cell_json;
 use crate::database::DbConfig;
 use crate::database::MetadataDatabaseRepository;
-use crate::credential_get::cell_json;
+use crate::timefmt::pg_ts_to_iso;
+use serde_json::json;
+use serde_json::Value;
 
 pub fn run(rd: &Value) -> Value {
     let tid = rd.get("targetId").and_then(|v| v.as_str());
