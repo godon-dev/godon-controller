@@ -91,7 +91,10 @@ pub fn extract_systemtender_config(request_data: &Value) -> Result<Value, String
 
 /// SystemtenderConfig.validate_constraints_v03 - constraint structure
 /// (list of ranges or values). Returns "int" or "categorical".
-pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result<&'static str, String> {
+pub fn validate_constraints_v03(
+    constraints: &Value,
+    param_name: &str,
+) -> Result<&'static str, String> {
     // Pragmatic approach: Accept both dict and list formats
     // - Dict with 'values' -> categorical, normalize to list
     // - List -> validate each item
@@ -230,8 +233,16 @@ pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result
                 }
             }
 
-            let lower = obj.get("lower").expect("checked above").as_f64().unwrap_or(0.0);
-            let upper = obj.get("upper").expect("checked above").as_f64().unwrap_or(0.0);
+            let lower = obj
+                .get("lower")
+                .expect("checked above")
+                .as_f64()
+                .unwrap_or(0.0);
+            let upper = obj
+                .get("upper")
+                .expect("checked above")
+                .as_f64()
+                .unwrap_or(0.0);
             if lower >= upper {
                 return Err(format!(
                     "Parameter '{}': constraint {}: 'lower' ({}) must be less than 'upper' ({})",
@@ -242,7 +253,11 @@ pub fn validate_constraints_v03(constraints: &Value, param_name: &str) -> Result
                 ));
             }
 
-            let step = obj.get("step").expect("checked above").as_f64().unwrap_or(0.0);
+            let step = obj
+                .get("step")
+                .expect("checked above")
+                .as_f64()
+                .unwrap_or(0.0);
             if step <= 0.0 {
                 return Err(format!(
                     "Parameter '{}': constraint {}: 'step' must be positive, got {}",
@@ -303,7 +318,10 @@ pub fn validate_guardrails_v03(systemtender_config: &Value) -> Result<(), String
 
         let name_str = name.as_str().unwrap_or("").to_string();
         if !name.is_string() || name_str.trim().is_empty() {
-            return Err(format!("Guardrail {}: 'name' must be a non-empty string", idx));
+            return Err(format!(
+                "Guardrail {}: 'name' must be a non-empty string",
+                idx
+            ));
         }
 
         match obj.get("hard_limit") {
@@ -680,7 +698,9 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
         );
     }
 
-    let target_refs = systemtender_config.get("effectuation").and_then(|e| e.get("targetRefs"));
+    let target_refs = systemtender_config
+        .get("effectuation")
+        .and_then(|e| e.get("targetRefs"));
     let target_refs_ok = match target_refs {
         Some(Value::Array(a)) => !a.is_empty(),
         _ => false,
@@ -704,7 +724,9 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
         .unwrap_or(&empty_settings);
 
     if systemtender_type_str == "linux_performance" {
-        let has_any_category = supported_categories.iter().any(|c| settings.contains_key(*c));
+        let has_any_category = supported_categories
+            .iter()
+            .any(|c| settings.contains_key(*c));
         if !has_any_category {
             errors.push(format!(
                 "Missing settings configuration. At least one category required: {}",
@@ -939,7 +961,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                     }
                 }
 
-                let obj_name_for = |key: &str| -> String {
+                let obj_name_for = |_key: &str| -> String {
                     obj_obj
                         .get("name")
                         .and_then(|n| n.as_str())
@@ -996,7 +1018,10 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
     if !errors.is_empty() {
         let error_count = errors.len();
         let plural = if error_count > 1 { "s" } else { "" };
-        let mut error_msg = format!("Config validation failed ({} error{}):\n", error_count, plural);
+        let mut error_msg = format!(
+            "Config validation failed ({} error{}):\n",
+            error_count, plural
+        );
         let numbered: Vec<String> = errors
             .iter()
             .enumerate()
@@ -1009,7 +1034,10 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
     let mut result = Map::new();
     result.insert("success".to_string(), Value::Bool(true));
     if !warnings.is_empty() {
-        result.insert("warnings".to_string(), Value::Array(warnings.into_iter().map(Value::String).collect()));
+        result.insert(
+            "warnings".to_string(),
+            Value::Array(warnings.into_iter().map(Value::String).collect()),
+        );
     }
     Ok(Value::Object(result))
 }
@@ -1035,7 +1063,10 @@ mod tests {
     fn lower_ge_upper_fails() {
         let c = json!([{"step": 1, "lower": 10, "upper": 10}]);
         let err = validate_constraints_v03(&c, "p").unwrap_err();
-        assert!(err.contains("'lower' (10) must be less than 'upper' (10)"), "{err}");
+        assert!(
+            err.contains("'lower' (10) must be less than 'upper' (10)"),
+            "{err}"
+        );
     }
 
     #[test]
