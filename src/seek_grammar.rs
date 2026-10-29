@@ -26,7 +26,9 @@ fn truthy(v: &Value) -> bool {
 /// Render a wire value the way python's f-string rendered it in the
 /// error strings (numbers plain, strings bare).
 fn shown(v: &Value) -> String {
-    v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string())
+    v.as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| v.to_string())
 }
 
 /// The walk body at the door (design §XIV; wire re-pinned §XVII):
@@ -108,7 +110,10 @@ pub fn checked_seek_body(body: &Value) -> Result<Value, String> {
             return Err(format!("region.{}: hi must exceed lo", dial));
         }
         if is_int && (lo_n.fract() != 0.0 || hi_n.fract() != 0.0) {
-            return Err(format!("region.{}: integer dial needs integer bounds", dial));
+            return Err(format!(
+                "region.{}: integer dial needs integer bounds",
+                dial
+            ));
         }
         let lo_v = if is_int {
             json!(lo_n as i64)
@@ -154,29 +159,28 @@ pub fn checked_seek_body(body: &Value) -> Result<Value, String> {
     }
 
     let budget_val = obj.get("budget").filter(|b| truthy(b));
-    let budget: Option<i64> = if form == "find_best" {
-        match budget_val.and_then(|b| b.as_i64()) {
-            Some(b) if b > 0 => Some(b),
-            _ => {
-                return Err(
+    let budget: Option<i64> =
+        if form == "find_best" {
+            match budget_val.and_then(|b| b.as_i64()) {
+                Some(b) if b > 0 => Some(b),
+                _ => return Err(
                     "find_best declares a budget: a positive integer (the feelers it may spend)"
                         .to_string(),
-                )
+                ),
             }
-        }
-    } else {
-        if budget_val.is_some() {
-            return Err("cover_now walks on standing duty - it carries no budget".to_string());
-        }
-        None
-    };
+        } else {
+            if budget_val.is_some() {
+                return Err("cover_now walks on standing duty - it carries no budget".to_string());
+            }
+            None
+        };
 
     let candidates = match obj.get("candidates") {
         Some(v) if truthy(v) => {
             let n = v.as_i64();
             if v.is_boolean() || n.is_none() || n.unwrap_or(0) < 0 {
                 return Err(
-                    "candidates must be a non-negative integer (omitted = none)".to_string(),
+                    "candidates must be a non-negative integer (omitted = none)".to_string()
                 );
             }
             n.unwrap_or(0)

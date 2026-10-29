@@ -68,8 +68,7 @@ fn fetch_job_args() -> Result<Value, String> {
     let base = std::env::var("BASE_INTERNAL_URL")
         .or_else(|_| std::env::var("WM_BASE_URL"))
         .map_err(|_| "no platform base url (BASE_INTERNAL_URL or WM_BASE_URL)".to_string())?;
-    let workspace =
-        std::env::var("WM_WORKSPACE").map_err(|_| "no WM_WORKSPACE".to_string())?;
+    let workspace = std::env::var("WM_WORKSPACE").map_err(|_| "no WM_WORKSPACE".to_string())?;
     let job_id = std::env::var("WM_JOB_ID").map_err(|_| "no WM_JOB_ID".to_string())?;
     let token = std::env::var("WM_TOKEN").map_err(|_| "no WM_TOKEN".to_string())?;
 

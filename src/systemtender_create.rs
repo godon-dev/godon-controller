@@ -1,10 +1,10 @@
 //! The f/controller/systemtender_create windmill script - python's controller/systemtender_create.py,
 //! ported verbatim (validate at the door, call the service, envelope the result).
 
-use serde_json::json;
-use serde_json::Value;
 use crate::systemtender_service::SystemtenderService;
 use crate::verbs::truthy_rd;
+use serde_json::json;
+use serde_json::Value;
 
 pub fn run(rd: &Value) -> Value {
     if !truthy_rd(rd) {

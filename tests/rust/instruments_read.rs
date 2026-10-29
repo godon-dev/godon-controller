@@ -48,7 +48,8 @@ fn rollout_order_falls_back() {
 
 #[test]
 fn missing_table_still_no_verdict() {
-    let db = FakeDb::with_handler(|_q| Err(dberr("relation \"systemtender_state\" does not exist")));
+    let db =
+        FakeDb::with_handler(|_q| Err(dberr("relation \"systemtender_state\" does not exist")));
     assert!(repo(db).read_state_verdict("db").unwrap().is_none());
 }
 

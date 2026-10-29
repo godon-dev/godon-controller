@@ -73,7 +73,10 @@ pub fn job_reached_terminal_state(w: &dyn WindmillGateway, job_id: &str) -> bool
             // The queue endpoint can hard-error for a job whose
             // completed row already exists - probe the completed
             // endpoint the SDK itself uses for sync waits.
-            warn!("jobs_u/get error polling {}: {} - probing completed endpoint", job_id, e);
+            warn!(
+                "jobs_u/get error polling {}: {} - probing completed endpoint",
+                job_id, e
+            );
             let text = e.to_lowercase();
             if text.contains("404") || text.contains("not found") {
                 return true;
@@ -152,7 +155,8 @@ pub fn determine_config_shard(
     };
 
     for category in supported_categories {
-        let Some(settings_space) = settings.get_mut(category).and_then(|c| c.as_object_mut()) else {
+        let Some(settings_space) = settings.get_mut(category).and_then(|c| c.as_object_mut())
+        else {
             continue;
         };
         let keys: Vec<String> = settings_space.keys().cloned().collect();
@@ -163,8 +167,9 @@ pub fn determine_config_shard(
             if !setting_value.is_object() {
                 continue;
             }
-            let Some(constraints_list) =
-                setting_value.get_mut("constraints").and_then(|c| c.as_array_mut())
+            let Some(constraints_list) = setting_value
+                .get_mut("constraints")
+                .and_then(|c| c.as_array_mut())
             else {
                 continue;
             };
@@ -180,7 +185,10 @@ pub fn determine_config_shard(
                 let Some(obj) = constraint.as_object_mut() else {
                     continue;
                 };
-                if !(obj.contains_key("step") && obj.contains_key("lower") && obj.contains_key("upper")) {
+                if !(obj.contains_key("step")
+                    && obj.contains_key("lower")
+                    && obj.contains_key("upper"))
+                {
                     continue;
                 }
                 let lower = obj.get("lower").and_then(|v| v.as_f64());
@@ -269,10 +277,7 @@ impl SystemtenderService {
                 DbConfig::archive_from_env(),
                 db.clone(),
             ),
-            metadata_repo: MetadataDatabaseRepository::with_gateway(
-                DbConfig::meta_from_env(),
-                db,
-            ),
+            metadata_repo: MetadataDatabaseRepository::with_gateway(DbConfig::meta_from_env(), db),
             wmill,
             causal,
         }
@@ -322,21 +327,23 @@ impl SystemtenderService {
                             .and_then(|c| c.as_deref())
                             .and_then(|t| serde_json::from_str::<Value>(t).ok())
                         {
-                                if let Some(slot) = cfg
-                                    .get("systemtender")
-                                    .and_then(|s| s.get("watermark_slot"))
-                                    .and_then(|v| v.as_i64())
-                                {
-                                    used_slots.push(slot);
-                                }
+                            if let Some(slot) = cfg
+                                .get("systemtender")
+                                .and_then(|s| s.get("watermark_slot"))
+                                .and_then(|v| v.as_i64())
+                            {
+                                used_slots.push(slot);
                             }
+                        }
                     }
                 }
             }
         }
 
         if (used_slots.len() as i64) < max_slots {
-            let assigned = (0..max_slots).find(|s| !used_slots.contains(s)).unwrap_or(0);
+            let assigned = (0..max_slots)
+                .find(|s| !used_slots.contains(s))
+                .unwrap_or(0);
             systemtender_config
                 .as_object_mut()
                 .and_then(|o| o.get_mut("systemtender"))
@@ -420,7 +427,12 @@ impl SystemtenderService {
             .as_object_mut()
             .and_then(|o| o.get_mut("effectuation"))
             .and_then(|e| e.as_object_mut())
-            .map(|e| e.insert("targets".to_string(), Value::Array(resolved_targets.clone())));
+            .map(|e| {
+                e.insert(
+                    "targets".to_string(),
+                    Value::Array(resolved_targets.clone()),
+                )
+            });
         info!(
             "Resolved {} targets from {} references",
             resolved_targets.len(),
@@ -448,10 +460,8 @@ impl SystemtenderService {
             .cloned()
             .unwrap_or_default();
         let targets_count = targets.len();
-        let is_cooperative = config
-            .get("cooperation")
-            .and_then(|c| c.get("active"))
-            == Some(&Value::Bool(true));
+        let is_cooperative =
+            config.get("cooperation").and_then(|c| c.get("active")) == Some(&Value::Bool(true));
 
         let mut failures: Vec<Value> = Vec::new();
         let mut job_ids: Vec<String> = Vec::new();
@@ -601,8 +611,7 @@ impl SystemtenderService {
                 error!("Failed to accept systemtender create: {}", e);
                 if let Some(uuid) = &systemtender_uuid {
                     let db_name = format!("systemtender_{}", uuid.replace('-', "_"));
-                    if let Err(cleanup_error) =
-                        self.rollback_systemtender_creation(uuid, &db_name)
+                    if let Err(cleanup_error) = self.rollback_systemtender_creation(uuid, &db_name)
                     {
                         error!(
                             "Failed to cleanup after systemtender create failure: {}",
@@ -615,9 +624,16 @@ impl SystemtenderService {
         }
     }
 
-    fn rollback_systemtender_creation(&self, systemtender_uuid: &str, db_name: &str) -> Result<(), String> {
+    fn rollback_systemtender_creation(
+        &self,
+        systemtender_uuid: &str,
+        db_name: &str,
+    ) -> Result<(), String> {
         warn!("Rolling back systemtender creation: {}", systemtender_uuid);
-        if let Err(e) = self.metadata_repo.remove_systemtender_meta(systemtender_uuid) {
+        if let Err(e) = self
+            .metadata_repo
+            .remove_systemtender_meta(systemtender_uuid)
+        {
             error!(
                 "Failed to delete metadata for systemtender {}: {}",
                 systemtender_uuid, e.0
@@ -701,7 +717,10 @@ impl SystemtenderService {
             // Semantic validation the controller can't do; runs a
             // strain script. A missing/failing script is a warning,
             // not a stop (strains without preflight still launch).
-            info!("Running preflight check for systemtender type: {}", systemtender_type);
+            info!(
+                "Running preflight check for systemtender type: {}",
+                systemtender_type
+            );
             let preflight_script_path =
                 format!("f/systemtender/strains/{}/preflight", systemtender_type);
             match self
@@ -757,7 +776,8 @@ impl SystemtenderService {
                     if let Some(o) = flow_config.as_object_mut() {
                         o.insert("creation_ts".to_string(), json!(creation_ts));
                     }
-                    let flow_id = format!("{}_{}_{}", systemtender_instance_name, target_count, run_id);
+                    let flow_id =
+                        format!("{}_{}_{}", systemtender_instance_name, target_count, run_id);
                     if !is_cooperative {
                         determine_config_shard(
                             run_id,
@@ -874,7 +894,10 @@ impl SystemtenderService {
             if !cancel_job_by_id(
                 self.wmill.as_ref(),
                 job_id,
-                Some(&format!("Create failed for systemtender {}", systemtender_id)),
+                Some(&format!(
+                    "Create failed for systemtender {}",
+                    systemtender_id
+                )),
             ) {
                 error!(
                     "Failed to cancel launched worker {}; cancel it manually before retrying",
@@ -919,12 +942,15 @@ impl SystemtenderService {
         let check_interval = std::time::Duration::from_millis(500);
         let attempts = (max_wait * 1000 / check_interval.as_millis() as i64) as i32;
         for attempt in 0..attempts {
-            match self
-                .archive_repo
-                .raw_query(systemtender_db_name, "SELECT COUNT(*) FROM systemtender_state;")
-            {
+            match self.archive_repo.raw_query(
+                systemtender_db_name,
+                "SELECT COUNT(*) FROM systemtender_state;",
+            ) {
                 Ok(_) => {
-                    info!("Systemtender state table is ready in {}", systemtender_db_name);
+                    info!(
+                        "Systemtender state table is ready in {}",
+                        systemtender_db_name
+                    );
                     return Ok(());
                 }
                 Err(e) => {
@@ -965,7 +991,11 @@ impl SystemtenderService {
             // the lifecycle row below then speaks the state. A hard
             // error here made GET fail during creation instead of
             // answering 'creating'.
-            let state = self.archive_repo.read_state_verdict(&db_name).ok().flatten();
+            let state = self
+                .archive_repo
+                .read_state_verdict(&db_name)
+                .ok()
+                .flatten();
             if let Some(state) = &state {
                 let interval = state
                     .get("interval_secs")
@@ -976,7 +1006,11 @@ impl SystemtenderService {
                 // the int 90, the interval wins as a float - the
                 // envelope carries that shape (parity)
                 let threshold = (90.0f64).max(6.0 * interval);
-                let threshold_json = if 6.0 * interval > 90.0 { json!(threshold) } else { json!(90) };
+                let threshold_json = if 6.0 * interval > 90.0 {
+                    json!(threshold)
+                } else {
+                    json!(90)
+                };
                 let finished = state.get("finished") == Some(&Value::Bool(true));
                 let age = state.get("age_secs").and_then(|v| v.as_f64());
                 if finished {
@@ -1002,7 +1036,11 @@ impl SystemtenderService {
                 .cloned()
                 .unwrap_or(Value::Null);
 
-            let lifecycle = self.metadata_repo.get_lifecycle(systemtender_id).ok().flatten();
+            let lifecycle = self
+                .metadata_repo
+                .get_lifecycle(systemtender_id)
+                .ok()
+                .flatten();
             let mut deletion_reason: Value = Value::Null;
             let mut creation_reason: Value = Value::Null;
             if let Some(lifecycle) = &lifecycle {
@@ -1171,7 +1209,10 @@ impl SystemtenderService {
                 }));
             }
 
-            info!("Successfully started/resumed systemtender: {}", systemtender_id);
+            info!(
+                "Successfully started/resumed systemtender: {}",
+                systemtender_id
+            );
             Ok(json!({
                 "result": "SUCCESS",
                 "data": {
@@ -1211,7 +1252,10 @@ impl SystemtenderService {
                 .set_shutdown_requested(&db_name, true)
                 .map_err(|e| e.0)?;
 
-            info!("Graceful shutdown requested for systemtender: {}", systemtender_id);
+            info!(
+                "Graceful shutdown requested for systemtender: {}",
+                systemtender_id
+            );
             Ok(json!({
                 "result": "SUCCESS",
                 "message": "Graceful shutdown requested. Workers will stop after completing current trials.",
@@ -1225,7 +1269,10 @@ impl SystemtenderService {
         match outcome {
             Ok(v) => v,
             Err(e) => {
-                error!("Failed to request shutdown for systemtender {}: {}", systemtender_id, e);
+                error!(
+                    "Failed to request shutdown for systemtender {}: {}",
+                    systemtender_id, e
+                );
                 json!({ "result": "FAILURE", "error": e })
             }
         }
@@ -1258,7 +1305,11 @@ impl SystemtenderService {
                 .claim_for_deletion(systemtender_id, JOB_CLAIM_STALE_SECONDS, force)
                 .map_err(|e| e.0)?
             {
-                let lifecycle = self.metadata_repo.get_lifecycle(systemtender_id).ok().flatten();
+                let lifecycle = self
+                    .metadata_repo
+                    .get_lifecycle(systemtender_id)
+                    .ok()
+                    .flatten();
                 let state = lifecycle
                     .as_ref()
                     .and_then(|l| l.get("state"))
@@ -1335,7 +1386,9 @@ impl SystemtenderService {
         let mut resurrections_out = json!({});
 
         let outcome = (|| -> Result<(), String> {
-            self.metadata_repo.ensure_reconcile_state_table().map_err(|e| e.0)?;
+            self.metadata_repo
+                .ensure_reconcile_state_table()
+                .map_err(|e| e.0)?;
             if !self
                 .metadata_repo
                 .claim_reconcile_tick(RECONCILE_CLAIM_STALE_SECONDS)
@@ -1357,11 +1410,9 @@ impl SystemtenderService {
                     ReconcileStep::Waiting => deletions_waiting += 1,
                     ReconcileStep::Failed(reason) => {
                         error!("Deletion convergence failed for {}: {}", id, reason);
-                        let _ = self.metadata_repo.set_lifecycle(
-                            &id,
-                            "deletion-failed",
-                            Some(&reason),
-                        );
+                        let _ =
+                            self.metadata_repo
+                                .set_lifecycle(&id, "deletion-failed", Some(&reason));
                         deletions_failed += 1;
                     }
                 }
@@ -1373,14 +1424,17 @@ impl SystemtenderService {
                 .scan_lifecycle_state("creating")
                 .map_err(|e| e.0)?;
             for (id, _forced, attempts, claimed_age) in creating {
-                let stale_after =
-                    RECONCILE_REDRIVE_BASE_STALE_SECONDS << attempts.min(RECONCILE_REDRIVE_MAX_ATTEMPTS);
+                let stale_after = RECONCILE_REDRIVE_BASE_STALE_SECONDS
+                    << attempts.min(RECONCILE_REDRIVE_MAX_ATTEMPTS);
                 if (claimed_age as i64) < stale_after {
                     creations_waiting += 1;
                     continue;
                 }
                 if attempts >= RECONCILE_REDRIVE_MAX_ATTEMPTS {
-                    error!("Executor wedged for {} after {} reconcile re-drives", id, attempts);
+                    error!(
+                        "Executor wedged for {} after {} reconcile re-drives",
+                        id, attempts
+                    );
                     let _ = self.metadata_repo.set_lifecycle(
                         &id,
                         "create-failed",
@@ -1400,7 +1454,10 @@ impl SystemtenderService {
                         creations_redriven += 1;
                     }
                     Err(e) => {
-                        warn!("Reconcile re-drive dispatch failed for {} (next tick retries): {}", id, e);
+                        warn!(
+                            "Reconcile re-drive dispatch failed for {} (next tick retries): {}",
+                            id, e
+                        );
                         creations_waiting += 1;
                     }
                 }
@@ -1473,7 +1530,10 @@ impl SystemtenderService {
         let rows = match self.metadata_repo.fetch_systemtenders_list() {
             Ok(r) => r,
             Err(e) => {
-                warn!("Resurrection registry scan failed (next tick retries): {}", e.0);
+                warn!(
+                    "Resurrection registry scan failed (next tick retries): {}",
+                    e.0
+                );
                 return json!({"relaunched": 0, "waiting": 0, "capped": 0, "failed": 0});
             }
         };
@@ -1553,9 +1613,11 @@ impl SystemtenderService {
                 })
                 .unwrap_or_default();
 
-            if let Some(newest) = recent.iter().cloned().fold(None::<f64>, |acc, t| {
-                Some(acc.map_or(t, |a: f64| a.max(t)))
-            }) {
+            if let Some(newest) = recent
+                .iter()
+                .cloned()
+                .fold(None::<f64>, |acc, t| Some(acc.map_or(t, |a: f64| a.max(t))))
+            {
                 if now_epoch - newest < RESURRECT_MIN_SPACING_SECS as f64 {
                     waiting += 1;
                     continue; // the relaunched worker has not stamped yet
@@ -1629,7 +1691,11 @@ impl SystemtenderService {
         let worker_job_ids: Vec<String> = config
             .get("worker_job_ids")
             .and_then(|w| w.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         let db_name = format!("systemtender_{}", systemtender_id.replace('-', "_"));
 
@@ -1672,7 +1738,10 @@ impl SystemtenderService {
                 .map_err(|e| e.0)?;
 
             match self.causal.purge_curves(systemtender_id) {
-                Ok(status) => info!("Causal curve purge for {}: HTTP {}", systemtender_id, status),
+                Ok(status) => info!(
+                    "Causal curve purge for {}: HTTP {}",
+                    systemtender_id, status
+                ),
                 Err(e) => warn!(
                     "Causal curve purge failed for {} (ghost curves may linger in /curves): {}",
                     systemtender_id, e
@@ -1682,7 +1751,10 @@ impl SystemtenderService {
             let remaining = self.count_systemtenders_in_group(&group_id);
             if remaining == 0 {
                 let _ = self.archive_repo.cleanup_group_lease(&group_id);
-                info!("Purged group lease - last systemtender in group '{}' deleted", group_id);
+                info!(
+                    "Purged group lease - last systemtender in group '{}' deleted",
+                    group_id
+                );
             }
 
             self.metadata_repo
@@ -1696,7 +1768,10 @@ impl SystemtenderService {
 
         match dropped {
             Ok(()) => {
-                info!("Reconcile converged deletion for systemtender: {}", systemtender_id);
+                info!(
+                    "Reconcile converged deletion for systemtender: {}",
+                    systemtender_id
+                );
                 ReconcileStep::Dropped
             }
             Err(e) => ReconcileStep::Failed(e),
@@ -1714,10 +1789,7 @@ impl SystemtenderService {
                 return Ok(json!({ "result": "SUCCESS", "data": [] }));
             }
 
-            let lifecycle_states = self
-                .metadata_repo
-                .get_all_lifecycle()
-                .map_err(|e| e.0)?;
+            let lifecycle_states = self.metadata_repo.get_all_lifecycle().map_err(|e| e.0)?;
 
             let mut configured: Vec<Value> = Vec::new();
             for row in &rows {
@@ -1753,13 +1825,19 @@ impl SystemtenderService {
         {
             Ok(r) => r,
             Err(e) => {
-                warn!("Failed to count systemtenders in group {}: {}", group_id, e.0);
+                warn!(
+                    "Failed to count systemtenders in group {}: {}",
+                    group_id, e.0
+                );
                 return -1;
             }
         };
         let mut count = 0;
         for row in &rows {
-            if let Ok(meta) = self.metadata_repo.fetch_meta_data(&row[0].clone().unwrap_or_default()) {
+            if let Ok(meta) = self
+                .metadata_repo
+                .fetch_meta_data(&row[0].clone().unwrap_or_default())
+            {
                 if let Some(first) = meta.first() {
                     if let Some(cfg) = first
                         .get(3)
@@ -1786,7 +1864,10 @@ impl SystemtenderService {
     fn count_config_params(&self, config: &Value) -> i64 {
         let mut new_param_count: i64 = 0;
         let empty = Map::new();
-        let settings = config.get("settings").and_then(|s| s.as_object()).unwrap_or(&empty);
+        let settings = config
+            .get("settings")
+            .and_then(|s| s.as_object())
+            .unwrap_or(&empty);
         for category in ["sysctl", "sysfs", "cpufreq", "ethtool"] {
             if let Some(category_settings) = settings.get(category).and_then(|c| c.as_object()) {
                 for (_param_name, param_config) in category_settings {
@@ -1850,7 +1931,10 @@ impl SystemtenderService {
                 .as_deref()
                 .and_then(|t| serde_json::from_str(t).ok())
                 .unwrap_or(Value::Null);
-            let mut stashed = attrs.get("effectuation_params").cloned().unwrap_or(Value::Null);
+            let mut stashed = attrs
+                .get("effectuation_params")
+                .cloned()
+                .unwrap_or(Value::Null);
             if let Some(s) = stashed.as_str() {
                 stashed = serde_json::from_str(s).unwrap_or(Value::Null);
             }
@@ -1917,18 +2001,33 @@ impl SystemtenderService {
         let cfg = DbConfig::archive_from_env();
         let repo = ArchiveDatabaseRepository::with_gateway(cfg, self.archive_repo_gateway());
         let tables = [
-            "trials", "study_directions", "study_user_attributes",
-            "study_system_attributes", "trial_user_attributes",
-            "trial_system_attributes", "trial_params", "trial_values",
-            "trial_intermediate_values", "study", "alembic_version",
+            "trials",
+            "study_directions",
+            "study_user_attributes",
+            "study_system_attributes",
+            "trial_user_attributes",
+            "trial_system_attributes",
+            "trial_params",
+            "trial_values",
+            "trial_intermediate_values",
+            "study",
+            "alembic_version",
         ];
         for table in tables {
-            let _ = repo.raw_query(&db_name, &format!("DROP TABLE IF EXISTS {} CASCADE;", table));
+            let _ = repo.raw_query(
+                &db_name,
+                &format!("DROP TABLE IF EXISTS {} CASCADE;", table),
+            );
         }
         info!("Cleared trial data for systemtender: {}", systemtender_id);
     }
 
-    pub fn update_systemtender(&self, systemtender_id: &str, mut new_config: Value, force: bool) -> Value {
+    pub fn update_systemtender(
+        &self,
+        systemtender_id: &str,
+        mut new_config: Value,
+        force: bool,
+    ) -> Value {
         let outcome = (|| -> Result<Value, String> {
             self.metadata_repo.create_table().map_err(|e| e.0)?;
             let rows = self
@@ -2001,7 +2100,10 @@ impl SystemtenderService {
 
             if force {
                 self.clear_trial_data(systemtender_id);
-                info!("Force mode: cleared trial data for systemtender {}", systemtender_id);
+                info!(
+                    "Force mode: cleared trial data for systemtender {}",
+                    systemtender_id
+                );
             }
 
             let mut config_history: Vec<Value> = old_config
@@ -2031,7 +2133,8 @@ impl SystemtenderService {
                 .update_systemtender_meta(systemtender_id, &new_config)
                 .map_err(|e| e.0)?;
 
-            let (job_ids, failures) = self.launch_workers(systemtender_id, &instance_name, &new_config);
+            let (job_ids, failures) =
+                self.launch_workers(systemtender_id, &instance_name, &new_config);
 
             if !job_ids.is_empty() {
                 if let Some(o) = new_config.as_object_mut() {
@@ -2052,7 +2155,10 @@ impl SystemtenderService {
                 }));
             }
 
-            info!("Successfully updated systemtender: {} (force={})", systemtender_id, force);
+            info!(
+                "Successfully updated systemtender: {} (force={})",
+                systemtender_id, force
+            );
             Ok(json!({
                 "result": "SUCCESS",
                 "data": {

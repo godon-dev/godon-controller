@@ -17,8 +17,8 @@
 //!   service exists. The finite guards stay ported as defense.
 
 use godon_controller::database::{DbConfig, DbError, MetadataDatabaseRepository, TextRow};
-use godon_controller::verbs::dispatch;
 use godon_controller::steer_grammar::checked_steer_band;
+use godon_controller::verbs::dispatch;
 use godon_controller::wish_service::WishService;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -459,7 +459,10 @@ fn single_claim_rides_the_engine_shape() {
     );
     assert_eq!(ask["claims"][0]["band"]["lo"], -0.14);
     assert_eq!(ask["claims"][0]["band"]["hi"], -0.06);
-    assert!(ask.get("outcome").is_none(), "the sugar shape is gone from the ask");
+    assert!(
+        ask.get("outcome").is_none(),
+        "the sugar shape is gone from the ask"
+    );
 }
 
 #[test]
@@ -1482,13 +1485,13 @@ fn stale_heartbeat_refused_loudly() {
     assert!(assignment_calls(&db).is_empty());
     let refusals = refused_events(&db);
     assert!(
-        refusals.iter().any(|q| q.contains("no_tender") && q.contains("heartbeat stale")),
+        refusals
+            .iter()
+            .any(|q| q.contains("no_tender") && q.contains("heartbeat stale")),
         "the refusal must name the stale heartbeat: {refusals:?}"
     );
     assert!(
-        !plan_errors(&db)
-            .iter()
-            .any(|q| q.contains("not alive")),
+        !plan_errors(&db).iter().any(|q| q.contains("not alive")),
         "a dead tender is a refusal, not an error"
     );
 }
@@ -1530,7 +1533,9 @@ fn unknown_tender_refused() {
     assert!(assignment_calls(&db).is_empty());
     let refusals = refused_events(&db);
     assert!(
-        refusals.iter().any(|q| q.contains("no_tender") && q.contains("unknown tender")),
+        refusals
+            .iter()
+            .any(|q| q.contains("no_tender") && q.contains("unknown tender")),
         "{refusals:?}"
     );
 }
@@ -1544,7 +1549,9 @@ fn unreachable_archive_refused() {
     assert!(assignment_calls(&db).is_empty());
     let refusals = refused_events(&db);
     assert!(
-        refusals.iter().any(|q| q.contains("no_tender") && q.contains("unreachable")),
+        refusals
+            .iter()
+            .any(|q| q.contains("no_tender") && q.contains("unreachable")),
         "{refusals:?}"
     );
 }
@@ -1724,7 +1731,6 @@ fn list_columns_in_summary_order() {
     assert!(q[head_end..].contains("w.created_at"));
 }
 
-
 // ── the reconcile family (designs/2026-10-18-worker-death-door, round 2) ──
 
 fn reconcile_db(
@@ -1738,7 +1744,10 @@ fn reconcile_db(
         }
         if q.contains("FROM steerwish_lifecycle") && q.contains("state IN") {
             return Ok(Some(
-                stale_deletions.iter().map(|id| row(&[Some(id.as_str())])).collect(),
+                stale_deletions
+                    .iter()
+                    .map(|id| row(&[Some(id.as_str())]))
+                    .collect(),
             ));
         }
         if q.contains("DISTINCT ON (wish_id)") {
@@ -1791,7 +1800,12 @@ fn reconcile_converges_a_stale_wish_deletion() {
 fn reconcile_leaves_a_fresh_claim_alone() {
     // a live executor holds the slot: not ours to take
     let db = reconcile_db(vec![WISH_ID.to_string()], vec![], false);
-    let svc = WishService::with_parts(db.clone(), Arc::new(FakeWindmill::default()), Arc::new(FakeCausal::default()), false);
+    let svc = WishService::with_parts(
+        db.clone(),
+        Arc::new(FakeWindmill::default()),
+        Arc::new(FakeCausal::default()),
+        false,
+    );
     let r = svc.reconcile_wishes();
     assert_eq!(r["converged"], 0);
     assert!(!db

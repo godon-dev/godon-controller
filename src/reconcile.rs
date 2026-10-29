@@ -3,8 +3,8 @@
 //! tick body lives in the service with the rest of the lifecycle; this
 //! module is only the platform door, like every other verb.
 
-use serde_json::Value;
 use crate::systemtender_service::SystemtenderService;
+use serde_json::Value;
 
 pub fn run(_rd: &Value) -> Value {
     let service = SystemtenderService::new();

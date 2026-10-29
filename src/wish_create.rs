@@ -2,9 +2,9 @@
 //! (python's controller/steerwish_create.py, renamed wish-generic per the family ruling);
 //! ported verbatim (validate at the door, call the service, envelope the result).
 
+use crate::wish_service::WishService;
 use serde_json::json;
 use serde_json::Value;
-use crate::wish_service::WishService;
 
 pub fn run(rd: &Value) -> Value {
     let service = WishService::new(true);

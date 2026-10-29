@@ -47,7 +47,13 @@ fn walk_body() -> Value {
 
 /// The service over one fake db: the wish row served for the fetch,
 /// the sender's registry row + a young heartbeat for the alive door.
-fn service(known_sender: bool) -> (WishService, std::sync::Arc<FakeDb>, std::sync::Arc<FakeWindmill>) {
+fn service(
+    known_sender: bool,
+) -> (
+    WishService,
+    std::sync::Arc<FakeDb>,
+    std::sync::Arc<FakeWindmill>,
+) {
     let walk_text = serde_json::to_string(&walk_body()).unwrap();
     let db = FakeDb::with_handler(move |q| {
         if q.contains("INSERT INTO") {
@@ -60,7 +66,12 @@ fn service(known_sender: bool) -> (WishService, std::sync::Arc<FakeDb>, std::syn
             let rest = &q[pos + "WHERE id = '".len()..];
             let id = &rest[..rest.find("';").unwrap_or(rest.len())];
             if id == SENDER {
-                return Ok(Some(vec![row(&[Some(SENDER), Some("tender-1"), None, Some("{}")])]));
+                return Ok(Some(vec![row(&[
+                    Some(SENDER),
+                    Some("tender-1"),
+                    None,
+                    Some("{}"),
+                ])]));
             }
             return Ok(Some(vec![]));
         }
@@ -93,12 +104,7 @@ fn service(known_sender: bool) -> (WishService, std::sync::Arc<FakeDb>, std::syn
         Ok(None)
     });
     let wmill = FakeWindmill::new();
-    let svc = WishService::with_parts(
-        db.clone(),
-        wmill.clone(),
-        FakeCausal::new(),
-        known_sender,
-    );
+    let svc = WishService::with_parts(db.clone(), wmill.clone(), FakeCausal::new(), known_sender);
     (svc, db, wmill)
 }
 
@@ -123,7 +129,9 @@ fn candidates_over_budget_never_starts() {
 #[test]
 fn find_best_without_criterion_refuses() {
     let (svc, _, _) = service(false);
-    let err = svc.create_wish(&seek_payload(json!({"criterion": null}))).unwrap_err();
+    let err = svc
+        .create_wish(&seek_payload(json!({"criterion": null})))
+        .unwrap_err();
     assert!(err.contains("criterion"), "{}", err);
 }
 
@@ -131,7 +139,9 @@ fn find_best_without_criterion_refuses() {
 fn unknown_direction_refuses() {
     let (svc, _, _) = service(false);
     let err = svc
-        .create_wish(&seek_payload(json!({"criterion": {"outcome": "x", "direction": "toward"}})))
+        .create_wish(&seek_payload(
+            json!({"criterion": {"outcome": "x", "direction": "toward"}}),
+        ))
         .unwrap_err();
     assert!(err.contains("direction"), "{}", err);
 }
@@ -139,14 +149,18 @@ fn unknown_direction_refuses() {
 #[test]
 fn find_best_without_budget_refuses() {
     let (svc, _, _) = service(false);
-    let err = svc.create_wish(&seek_payload(json!({"budget": null}))).unwrap_err();
+    let err = svc
+        .create_wish(&seek_payload(json!({"budget": null})))
+        .unwrap_err();
     assert!(err.to_lowercase().contains("budget"), "{}", err);
 }
 
 #[test]
 fn empty_region_refuses() {
     let (svc, _, _) = service(false);
-    let err = svc.create_wish(&seek_payload(json!({"region": {}}))).unwrap_err();
+    let err = svc
+        .create_wish(&seek_payload(json!({"region": {}})))
+        .unwrap_err();
     assert!(err.contains("region"), "{}", err);
 }
 
@@ -154,7 +168,9 @@ fn empty_region_refuses() {
 fn inverted_range_refuses_named() {
     let (svc, _, _) = service(false);
     let err = svc
-        .create_wish(&seek_payload(json!({"region": {"param_0": [100.0, 0.0, false]}})))
+        .create_wish(&seek_payload(
+            json!({"region": {"param_0": [100.0, 0.0, false]}}),
+        ))
         .unwrap_err();
     assert!(err.contains("param_0"), "{}", err);
 }
@@ -163,7 +179,9 @@ fn inverted_range_refuses_named() {
 fn cover_now_refuses_a_budget() {
     let (svc, _, _) = service(false);
     let err = svc
-        .create_wish(&seek_payload(json!({"form": "cover_now", "criterion": null, "budget": 10})))
+        .create_wish(&seek_payload(
+            json!({"form": "cover_now", "criterion": null, "budget": 10}),
+        ))
         .unwrap_err();
     assert!(err.contains("no budget"), "{}", err);
 }
@@ -223,7 +241,11 @@ fn declared_row_carries_the_body_in_its_own_column() {
         .expect("registry insert");
     assert!(insert.contains("'seek'"), "regime: {}", insert);
     assert!(insert.contains("'room/objective_1'"), "{}", insert);
-    assert!(insert.contains("NULL, NULL, '{"), "claims/terms stay NULL: {}", insert);
+    assert!(
+        insert.contains("NULL, NULL, '{"),
+        "claims/terms stay NULL: {}",
+        insert
+    );
     assert!(insert.contains("\"form\":\"find_best\""), "{}", insert);
     assert!(insert.contains(", 50,"), "{}", insert);
     // the later answer dispatched the plan job, no causal ask
@@ -331,7 +353,11 @@ fn map_reads_it_refusal_carries_the_reading() {
         .filter(|q| q.contains("'refused'"))
         .collect();
     assert_eq!(refused.len(), 1);
-    assert!(refused[0].contains("\"reason\":\"map_reads_it\""), "{}", refused[0]);
+    assert!(
+        refused[0].contains("\"reason\":\"map_reads_it\""),
+        "{}",
+        refused[0]
+    );
     assert!(refused[0].contains("\"reading\":0.83"), "{}", refused[0]);
     assert_eq!(
         db.queries()
@@ -367,7 +393,9 @@ fn missing_type_refuses_no_omission() {
 #[test]
 fn walk_without_form_refuses_no_omission() {
     let (svc, _, _) = service(false);
-    let err = svc.create_wish(&seek_payload(json!({"form": null}))).unwrap_err();
+    let err = svc
+        .create_wish(&seek_payload(json!({"form": null})))
+        .unwrap_err();
     assert!(err.contains("speaks its form"), "{}", err);
 }
 

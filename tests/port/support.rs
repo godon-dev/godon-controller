@@ -129,10 +129,7 @@ impl FakeWindmill {
         self
     }
     pub fn queue_completed(&self, v: Option<Value>) -> &Self {
-        self.completed_results
-            .lock()
-            .unwrap()
-            .push_back(Ok(v));
+        self.completed_results.lock().unwrap().push_back(Ok(v));
         self
     }
     pub fn queue_sync(&self, v: Value) -> &Self {
@@ -218,12 +215,18 @@ impl CausalClient for FakeCausal {
     }
 
     fn ask_to_plan(&self, plan_request: &Value) -> Result<Value, String> {
-        self.asks.lock().unwrap().push_back(Ok(plan_request.clone()));
+        self.asks
+            .lock()
+            .unwrap()
+            .push_back(Ok(plan_request.clone()));
         pop(&self.asks, Ok(Value::Null))
     }
 
     fn purge_curves(&self, systemtender_id: &str) -> Result<u16, String> {
-        self.purged.lock().unwrap().push(systemtender_id.to_string());
+        self.purged
+            .lock()
+            .unwrap()
+            .push(systemtender_id.to_string());
         pop(&self.purge_results, Ok(200))
     }
 

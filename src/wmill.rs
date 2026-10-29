@@ -209,7 +209,10 @@ impl WindmillGateway for HttpWindmill {
         let job_id = self.run_script_by_path_async(path, args, None)?;
         loop {
             if let Some(done) = self.get_completed_maybe(&job_id)? {
-                let success = done.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                let success = done
+                    .get("success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if success {
                     return Ok(done.get("result").cloned().unwrap_or(Value::Null));
                 }

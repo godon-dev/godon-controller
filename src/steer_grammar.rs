@@ -48,7 +48,11 @@ pub fn checked_steer_claim(claim: &Value, where_: &str) -> Result<Value, String>
     if !claim.is_object() {
         return Err(format!("{} must be an object (outcome, band)", where_));
     }
-    if claim.get("direction").map(|d| !d.is_null()).unwrap_or(false) {
+    if claim
+        .get("direction")
+        .map(|d| !d.is_null())
+        .unwrap_or(false)
+    {
         return Err(format!(
             "{}.direction is refused: the direction rung is not built - declare a band",
             where_
@@ -69,7 +73,12 @@ pub fn checked_steer_claim(claim: &Value, where_: &str) -> Result<Value, String>
     let mut m = Map::new();
     m.insert(
         "outcome".to_string(),
-        Value::String(name.and_then(|n| n.as_str()).unwrap_or("").trim().to_string()),
+        Value::String(
+            name.and_then(|n| n.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+        ),
     );
     m.insert("band".to_string(), band);
     Ok(Value::Object(m))
@@ -78,7 +87,10 @@ pub fn checked_steer_claim(claim: &Value, where_: &str) -> Result<Value, String>
 fn checked_steer_claim_band(claim: &Value, where_: &str) -> Result<Value, String> {
     match claim.get("band") {
         Some(b) => checked_steer_band(b, &format!("{}.band", where_)),
-        None => Err(format!("{}.band requires lo and hi (in the outcome measurement units)", where_)),
+        None => Err(format!(
+            "{}.band requires lo and hi (in the outcome measurement units)",
+            where_
+        )),
     }
 }
 

@@ -37,7 +37,12 @@ fn service(registry: &[&str]) -> (WishService, std::sync::Arc<FakeDb>) {
             let rest = &q[pos + "WHERE id = '".len()..];
             let id = &rest[..rest.find("';").unwrap_or(rest.len())];
             if known.iter().any(|k| k == id) {
-                return Ok(Some(vec![row(&[Some(id), Some("tender"), None, Some("{}")])]));
+                return Ok(Some(vec![row(&[
+                    Some(id),
+                    Some("tender"),
+                    None,
+                    Some("{}"),
+                ])]));
             }
             return Ok(Some(vec![]));
         }
@@ -104,9 +109,7 @@ fn hold_payload() -> Value {
 fn events_of(db: &FakeDb, kind: &str) -> Vec<String> {
     db.queries()
         .into_iter()
-        .filter(|q| {
-            q.trim_start().starts_with("INSERT INTO steerwish_events") && q.contains(kind)
-        })
+        .filter(|q| q.trim_start().starts_with("INSERT INTO steerwish_events") && q.contains(kind))
         .collect()
 }
 
@@ -171,9 +174,10 @@ fn zero_move_plan_with_dead_receiver_refuses_naming_the_assignable() {
         "assignable names the live tenders: {}",
         refused[0]
     );
-    assert!(!refused[0].contains(RECEIVER.to_string().as_str())
-        || refused[0].contains("dead"),
-        "the receiver appears as dead, not assignable");
+    assert!(
+        !refused[0].contains(RECEIVER.to_string().as_str()) || refused[0].contains("dead"),
+        "the receiver appears as dead, not assignable"
+    );
     assert_eq!(
         causal.book_purges.lock().unwrap().len(),
         1,

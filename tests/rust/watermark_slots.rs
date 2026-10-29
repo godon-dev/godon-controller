@@ -49,7 +49,10 @@ fn configs(pairs: &[(&str, Option<i64>)]) -> Map<String, Value> {
         if let Some(s) = slot {
             inner.insert("watermark_slot".to_string(), json!(s));
         }
-        m.insert(id.to_string(), json!({"systemtender": Value::Object(inner)}));
+        m.insert(
+            id.to_string(),
+            json!({"systemtender": Value::Object(inner)}),
+        );
     }
     m
 }
@@ -76,7 +79,11 @@ fn second_systemtender_gets_slot_1() {
 
 #[test]
 fn fills_gap_when_slot_freed() {
-    let service = make_service(&configs(&[("id-1", Some(0)), ("id-2", Some(2)), ("id-3", Some(3))]));
+    let service = make_service(&configs(&[
+        ("id-1", Some(0)),
+        ("id-2", Some(2)),
+        ("id-3", Some(3)),
+    ]));
     let mut config = fresh_config();
     service.assign_watermark_slot(&mut config);
     assert_eq!(config["systemtender"]["watermark_slot"], json!(1));
@@ -106,7 +113,12 @@ fn no_collision_across_six_systemtenders() {
         let pairs: Vec<(&str, Option<i64>)> = used_slots
             .iter()
             .enumerate()
-            .map(|(i, slot)| (Box::leak(format!("id-{}", i + 1).into_boxed_str()) as &str, Some(*slot)))
+            .map(|(i, slot)| {
+                (
+                    Box::leak(format!("id-{}", i + 1).into_boxed_str()) as &str,
+                    Some(*slot),
+                )
+            })
             .collect();
         let service = make_service(&configs(&pairs));
         let mut config = fresh_config();

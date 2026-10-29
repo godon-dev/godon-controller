@@ -2,9 +2,9 @@
 //! (python's controller/steerwish_update.py, renamed wish-generic per the family ruling);
 //! ported verbatim (validate at the door, call the service, envelope the result).
 
+use crate::wish_service::WishService;
 use serde_json::json;
 use serde_json::Value;
-use crate::wish_service::WishService;
 
 pub fn run(rd: &Value) -> Value {
     let wish_id = rd.get("wish_id").and_then(|v| v.as_str());
@@ -12,7 +12,10 @@ pub fn run(rd: &Value) -> Value {
         return json!({"result": "FAILURE", "error": "Missing wish_id"});
     };
     let claims = rd.get("claims");
-    if claims.map(|c| c.is_null() || c.as_array().map(|a| a.is_empty()).unwrap_or(true)).unwrap_or(true) {
+    if claims
+        .map(|c| c.is_null() || c.as_array().map(|a| a.is_empty()).unwrap_or(true))
+        .unwrap_or(true)
+    {
         return json!({
             "result": "FAILURE",
             "error": "Missing claims ([{outcome, band}]) - the sugar shape is retired"
