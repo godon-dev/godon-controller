@@ -813,22 +813,28 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
         errors.push(e);
     }
 
-    let cooperation_active = systemtender_config
-        .get("cooperation")
-        .and_then(|c| c.get("active"))
-        .cloned()
-        .unwrap_or(Value::Bool(false));
-    if cooperation_active == Value::Bool(true) {
-        let parallel = systemtender_config
+    // The cooperation section is optimizer-era residue: its
+    // cooperation-requires-parallel cross-check was dropped by #97,
+    // resurrected here at some point, and is deleted again (2026-10-29,
+    // the #96/#97 rewind). The section is ignored; live declarations
+    // stopped carrying it (godon#418 pruned the templates).
+
+    // The completion sections are optimizer-era and dropped by seal:
+    // worker exits reduce to the stop flag and work-complete (robots
+    // #236 — budgets, wall clock, quality exit deleted) and the door
+    // refuses both spellings (controller #96; the #97 amendment refused
+    // the run/cooperation sections outright, later walked back so
+    // run.parallel could live). A systemtender runs until work is
+    // complete, a stop is requested, or the worker fails. Refuse the
+    // words loudly — declarations carry only live vocabulary.
+    for spelling in ["completion", "completion_criteria"] {
+        if systemtender_config
             .get("run")
-            .and_then(|r| r.get("parallel"))
-            .cloned()
-            .unwrap_or(Value::Number(serde_json::Number::from(1)));
-        let parallel_f = parallel.as_f64().unwrap_or(0.0);
-        if parallel_f <= 1.0 {
+            .and_then(|r| r.get(spelling))
+            .is_some()
+        {
             errors.push(format!(
-                "Cooperation enabled but run.parallel={}. Cooperation requires parallel > 1 for multiple workers to share trials.",
-                &parallel
+                "'run.{spelling}' is optimizer-era and dropped (robots #236, controller #96/#97) - a systemtender runs until work is complete, a stop is requested, or the worker fails"
             ));
         }
     }
@@ -987,60 +993,6 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
         }
     }
 
-    let run_config = systemtender_config
-        .get("run")
-        .and_then(|r| r.get("completion"));
-    if let Some(completion) = run_config {
-        let empty_completion = Map::new();
-        let completion_obj = match completion.as_object() {
-            Some(o) => o,
-            None => {
-                errors.push(format!(
-                    "'run.completion' must be a dict, got {}",
-                    json_type_name(completion)
-                ));
-                // python raises inside the else-branch; nothing further
-                &empty_completion
-            }
-        };
-        if let Some(iterations) = completion_obj.get("iterations") {
-            match iterations.as_object() {
-                Some(o) => {
-                    let iterations_min = o.get("min");
-                    let iterations_max = o.get("max");
-
-                    if let (Some(mn), Some(mx)) = (iterations_min, iterations_max) {
-                        if !(mn.is_i64() || mn.is_u64()) || mn.as_f64().unwrap_or(0.0) < 1.0 {
-                            errors.push(
-                                "'run.completion.iterations.min' must be an integer >= 1"
-                                    .to_string(),
-                            );
-                        } else if !(mx.is_i64() || mx.is_u64())
-                            || mx.as_f64().unwrap_or(0.0) < 1.0
-                        {
-                            errors.push(
-                                "'run.completion.iterations.max' must be an integer >= 1"
-                                    .to_string(),
-                            );
-                        } else if mn.as_f64().unwrap_or(0.0) > mx.as_f64().unwrap_or(0.0) {
-                            errors.push(format!(
-                                "'run.completion.iterations.min' ({}) must be <= 'max' ({})",
-                                mn,
-                                mx
-                            ));
-                        }
-                    }
-                }
-                None => {
-                    errors.push(format!(
-                        "'run.completion.iterations' must be a dict, got {}",
-                        json_type_name(iterations)
-                    ));
-                }
-            }
-        }
-    }
-
     if !errors.is_empty() {
         let error_count = errors.len();
         let plural = if error_count > 1 { "s" } else { "" };
@@ -1084,6 +1036,37 @@ mod tests {
         let c = json!([{"step": 1, "lower": 10, "upper": 10}]);
         let err = validate_constraints_v03(&c, "p").unwrap_err();
         assert!(err.contains("'lower' (10) must be less than 'upper' (10)"), "{err}");
+    }
+
+    #[test]
+    fn optimizer_era_completion_sections_are_refused() {
+        let base = json!({
+            "meta": {"configVersion": "0.3"},
+            "systemtender": {"type": "linux_performance"},
+            "objectives": [{"name": "latency", "reconnaissance": {"service": "prometheus", "query": "rate(x)"}}],
+            "run": {"parallel": 1},
+            "effectuation": {"targetRefs": ["t1"]},
+            "settings": {"sysctl": {"vm.swappiness": {"constraints": [{"step": 5, "lower": 0, "upper": 100}]}}},
+        });
+        // both spellings of the dropped era are refused loudly
+        // (the #96 rewind; the #97 amendment's breadth minus the
+        // run-section refusal that was walked back for parallel)
+        for spelling in ["completion", "completion_criteria"] {
+            let mut cfg = base.clone();
+            cfg["run"][spelling] = json!({"iterations": {"min": 1, "max": 10}});
+            let err = validate_minimal(&cfg, false).unwrap_err();
+            assert!(
+                err.contains(&format!("'run.{spelling}' is optimizer-era")),
+                "{err}"
+            );
+        }
+        // the clean shape still passes
+        validate_minimal(&base, false).unwrap();
+        // cooperation rides silently (post-#97: ignored, not checked -
+        // its cross-check was deleted twice now)
+        let mut coop = base.clone();
+        coop["cooperation"] = json!({"active": true});
+        validate_minimal(&coop, false).unwrap();
     }
 
     #[test]
