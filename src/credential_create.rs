@@ -1,11 +1,11 @@
 //! The f/controller/credential_create windmill script - python's controller/credential_create.py,
 //! ported verbatim (validate at the door, call the service, envelope the result).
 
-use serde_json::json;
-use serde_json::Value;
-use crate::verbs::truthy_rd;
 use crate::database::DbConfig;
 use crate::database::MetadataDatabaseRepository;
+use crate::verbs::truthy_rd;
+use serde_json::json;
+use serde_json::Value;
 
 pub fn run(rd: &Value) -> Value {
     if !truthy_rd(rd) {
@@ -23,7 +23,9 @@ pub fn run(rd: &Value) -> Value {
             return Ok(json!({"result": "FAILURE", "error": "Invalid name: name cannot be empty"}));
         }
         let Some(credential_type) = rd.get("credentialType") else {
-            return Ok(json!({"result": "FAILURE", "error": "Missing required field: credentialType"}));
+            return Ok(
+                json!({"result": "FAILURE", "error": "Missing required field: credentialType"}),
+            );
         };
         if !name_chars_ok(name_str) {
             return Ok(json!({
@@ -34,9 +36,17 @@ pub fn run(rd: &Value) -> Value {
                 )
             }));
         }
-        let valid_types = "['ssh_private_key', 'api_token', 'database_connection', 'http_basic_auth']";
+        let valid_types =
+            "['ssh_private_key', 'api_token', 'database_connection', 'http_basic_auth']";
         let ct = credential_type.as_str().unwrap_or("");
-        if !["ssh_private_key", "api_token", "database_connection", "http_basic_auth"].contains(&ct) {
+        if ![
+            "ssh_private_key",
+            "api_token",
+            "database_connection",
+            "http_basic_auth",
+        ]
+        .contains(&ct)
+        {
             return Ok(json!({
                 "result": "FAILURE",
                 "error": format!("Invalid credentialType: '{}'. Must be one of: {}", ct, valid_types)
@@ -64,7 +74,9 @@ pub fn run(rd: &Value) -> Value {
                     "error": format!("Credential with name '{}' already exists", name_str)
                 }));
             }
-            return Ok(json!({"result": "FAILURE", "error": format!("Failed to create credential: {}", e.0)}));
+            return Ok(
+                json!({"result": "FAILURE", "error": format!("Failed to create credential: {}", e.0)}),
+            );
         }
 
         Ok(json!({
@@ -90,5 +102,7 @@ pub fn run(rd: &Value) -> Value {
 
 pub(crate) fn name_chars_ok(name: &str) -> bool {
     !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }

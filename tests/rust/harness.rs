@@ -152,11 +152,7 @@ impl WindmillGateway for FakeWindmill {
             .lock()
             .unwrap()
             .push((job_id.to_string(), reason.map(|r| r.to_string())));
-        self.cancel_q
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or(Ok(()))
+        self.cancel_q.lock().unwrap().pop_front().unwrap_or(Ok(()))
     }
 
     fn get_job(&self, job_id: &str) -> Result<Option<Value>, String> {
@@ -268,7 +264,10 @@ impl CausalClient for FakeCausal {
     }
 
     fn purge_curves(&self, systemtender_id: &str) -> Result<u16, String> {
-        self.purges.lock().unwrap().push(systemtender_id.to_string());
+        self.purges
+            .lock()
+            .unwrap()
+            .push(systemtender_id.to_string());
         self.purge_q.lock().unwrap().pop_front().unwrap_or(Ok(200))
     }
 

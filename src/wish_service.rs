@@ -4,14 +4,16 @@
 //! this service asks, never computes. State is the latest lifecycle
 //! event, derived on read, never stored.
 
-use crate::database::{ArchiveDatabaseRepository, DbConfig, DbGateway, MetadataDatabaseRepository, TextRow};
+use crate::database::{
+    ArchiveDatabaseRepository, DbConfig, DbGateway, MetadataDatabaseRepository, TextRow,
+};
+use crate::steer_grammar::{checked_declaration_options, checked_steer_band, checked_steer_claim};
 use crate::timefmt::pg_ts_to_iso;
 use crate::wmill::CausalClient;
 use log::{debug, info, warn};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::steer_grammar::{checked_declaration_options, checked_steer_band, checked_steer_claim};
 
 pub const BEAT_MULTIPLIER: f64 = 3.0;
 
@@ -21,7 +23,6 @@ pub fn heartbeat_fallback_ttl_secs() -> f64 {
         .and_then(|v| v.parse().ok())
         .unwrap_or(60.0)
 }
-
 
 /// The reconciler's retry pace for wish deletions - a marker newer
 /// than this belongs to a live executor, not to us.
@@ -86,9 +87,7 @@ impl WishService {
         // field of the walk grammar only.
         let wish_type = match payload.get("type") {
             None | Some(Value::Null) => {
-                return Err(
-                    "the wish speaks its type: steer or seek (no omission)".to_string(),
-                );
+                return Err("the wish speaks its type: steer or seek (no omission)".to_string());
             }
             Some(t) => t
                 .as_str()
@@ -104,19 +103,13 @@ impl WishService {
             return self.create_seek_wish(payload);
         }
         if wish_type != "steer" {
-            return Err(format!(
-                "unknown wish type: {} (steer or seek)",
-                wish_type
-            ));
+            return Err(format!("unknown wish type: {} (steer or seek)", wish_type));
         }
         if payload.get("form").map(|f| !f.is_null()).unwrap_or(false) {
-            return Err(
-                "form belongs to seek wishes - a hold speaks claims and terms".to_string(),
-            );
+            return Err("form belongs to seek wishes - a hold speaks claims and terms".to_string());
         }
 
         if payload_obj.contains_key("outcome") && !payload_obj.get("outcome").unwrap().is_null()
-
             || payload_obj.contains_key("band") && !payload_obj.get("band").unwrap().is_null()
         {
             return Err(
@@ -151,13 +144,19 @@ impl WishService {
 
         let mut names: Vec<String> = Vec::new();
         for c in claims.iter().chain(terms.iter()) {
-            names.push(c.get("outcome").and_then(|o| o.as_str()).unwrap_or("").to_string());
+            names.push(
+                c.get("outcome")
+                    .and_then(|o| o.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            );
         }
         let mut sorted_names = names.clone();
         sorted_names.sort();
         sorted_names.dedup();
         if sorted_names.len() != names.len() {
-            let mut duplicated: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let mut duplicated: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
             for n in &names {
                 if names.iter().filter(|x| x == &n).count() > 1 {
                     duplicated.insert(n.clone());
@@ -510,7 +509,11 @@ impl WishService {
             let terms = parse(&row.get(9).cloned().flatten());
             let terms = if terms.is_null() { json!([]) } else { terms };
             let limits = parse(&row[3].clone());
-            let limits = if limits.is_null() { None } else { Some(limits.clone()) };
+            let limits = if limits.is_null() {
+                None
+            } else {
+                Some(limits.clone())
+            };
             let budget = row[4].as_ref().and_then(|t| t.parse::<i64>().ok());
             self.ask_causal_to_plan(
                 wish_id,
@@ -555,10 +558,7 @@ impl WishService {
                         }
                         let detail = e.get(2).and_then(|c| c.as_deref()).unwrap_or("");
                         let d: Value = serde_json::from_str(detail).unwrap_or(Value::Null);
-                        let db_name = d
-                            .get("db")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                        let db_name = d.get("db").and_then(|v| v.as_str()).map(|s| s.to_string());
                         let Some(db_name) = db_name else {
                             continue;
                         };
@@ -632,7 +632,10 @@ impl WishService {
         let mut failed = 0;
         let mut untended = 0;
 
-        let stale = match self.repo.scan_stale_wish_deletions(WISH_RECONCILE_STALE_SECONDS) {
+        let stale = match self
+            .repo
+            .scan_stale_wish_deletions(WISH_RECONCILE_STALE_SECONDS)
+        {
             Ok(ids) => ids,
             Err(e) => {
                 log::warn!("Wish deletion scan failed (next tick retries): {}", e.0);
@@ -780,9 +783,9 @@ impl WishService {
         // declare estate-wide with position_conflict). Purge FIRST -
         // on failure nothing has changed and the door retries; the
         // delete path already speaks this error shape.
-        self.causal.purge_book_page(wish_id).map_err(|e| {
-            format!("causal close failed: {e} - nothing forgotten; retry")
-        })?;
+        self.causal
+            .purge_book_page(wish_id)
+            .map_err(|e| format!("causal close failed: {e} - nothing forgotten; retry"))?;
         self.repo
             .insert_wish_event(wish_id, "closed", None)
             .map_err(|e| e.0)?;
@@ -831,13 +834,19 @@ impl WishService {
 
         let mut names: Vec<String> = Vec::new();
         for c in claims.iter().chain(terms.iter()) {
-            names.push(c.get("outcome").and_then(|o| o.as_str()).unwrap_or("").to_string());
+            names.push(
+                c.get("outcome")
+                    .and_then(|o| o.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            );
         }
         let mut sorted_names = names.clone();
         sorted_names.sort();
         sorted_names.dedup();
         if sorted_names.len() != names.len() {
-            let mut duplicated: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let mut duplicated: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
             for n in &names {
                 if names.iter().filter(|x| x == &n).count() > 1 {
                     duplicated.insert(n.clone());
@@ -858,9 +867,7 @@ impl WishService {
         }
 
         let budget: Option<i64> = match payload.get("budget") {
-            None | Some(Value::Null) => wish
-                .get("budget")
-                .and_then(|b| b.as_i64()),
+            None | Some(Value::Null) => wish.get("budget").and_then(|b| b.as_i64()),
             Some(b) => b.as_i64(),
         };
 
@@ -922,7 +929,12 @@ impl WishService {
     pub fn delete_wish(&self, wish_id: &str) -> Value {
         let outcome = (|| -> Result<Value, String> {
             self.ensure_registry()?;
-            if self.repo.fetch_wish_by_id(wish_id).map_err(|e| e.0)?.is_none() {
+            if self
+                .repo
+                .fetch_wish_by_id(wish_id)
+                .map_err(|e| e.0)?
+                .is_none()
+            {
                 self.repo.remove_wish_lifecycle(wish_id).map_err(|e| e.0)?;
                 info!("Delete of steerwish {}: already gone", wish_id);
                 return Ok(json!({
@@ -931,7 +943,11 @@ impl WishService {
                 }));
             }
 
-            if !self.repo.claim_wish_deletion(wish_id, 300).map_err(|e| e.0)? {
+            if !self
+                .repo
+                .claim_wish_deletion(wish_id, 300)
+                .map_err(|e| e.0)?
+            {
                 let lifecycle = self.repo.get_wish_lifecycle(wish_id).ok().flatten();
                 let state = lifecycle
                     .as_ref()
@@ -956,7 +972,9 @@ impl WishService {
 
             let fail = |reason: String| -> Value {
                 log::error!("Steerwish deletion failed for {}: {}", wish_id, reason);
-                let _ = self.repo.set_wish_lifecycle(wish_id, "deletion-failed", Some(&reason));
+                let _ = self
+                    .repo
+                    .set_wish_lifecycle(wish_id, "deletion-failed", Some(&reason));
                 json!({
                     "result": "FAILURE",
                     "error": reason,
@@ -966,9 +984,11 @@ impl WishService {
 
             match self.close_wish(wish_id) {
                 Ok(None) => {
-                    return Ok(fail("wish vanished mid-deletion; retry the delete".to_string()))
+                    return Ok(fail(
+                        "wish vanished mid-deletion; retry the delete".to_string(),
+                    ))
                 }
- Err(e) => {
+                Err(e) => {
                     return Ok(fail(format!(
                         "causal close failed: {} - nothing forgotten; retry the delete",
                         e
@@ -1011,20 +1031,34 @@ impl WishService {
         };
         let beat = match archive.read_heartbeat(&db_name) {
             Ok(b) => b,
-            Err(e) => return (false, format!("archive db unreachable ({}): {}", db_name, e.0)),
+            Err(e) => {
+                return (
+                    false,
+                    format!("archive db unreachable ({}): {}", db_name, e.0),
+                )
+            }
         };
         let Some((age, interval)) = beat else {
-            return (false, format!("no state row in {} (db missing or empty)", db_name));
+            return (
+                false,
+                format!("no state row in {} (db missing or empty)", db_name),
+            );
         };
         let window = interval
             .map(|i| BEAT_MULTIPLIER * i)
             .unwrap_or_else(heartbeat_fallback_ttl_secs);
         if age <= window {
-            (true, format!("heartbeat {:.0}s old (window {:.0}s)", age, window))
+            (
+                true,
+                format!("heartbeat {:.0}s old (window {:.0}s)", age, window),
+            )
         } else {
             (
                 false,
-                format!("heartbeat stale: last beat {:.0}s ago (window {:.0}s)", age, window),
+                format!(
+                    "heartbeat stale: last beat {:.0}s ago (window {:.0}s)",
+                    age, window
+                ),
             )
         }
     }
@@ -1116,7 +1150,11 @@ impl WishService {
         };
         let mut mirrored = 0;
         let empty = Vec::new();
-        let events = page.get("events").and_then(|e| e.as_array()).cloned().unwrap_or(empty);
+        let events = page
+            .get("events")
+            .and_then(|e| e.as_array())
+            .cloned()
+            .unwrap_or(empty);
         for e in &events {
             let Some(tsz) = e.get("tsz").and_then(|t| t.as_f64()) else {
                 continue;
@@ -1130,7 +1168,8 @@ impl WishService {
             if seen {
                 continue;
             }
-            let detail = json!({"at": tsz, "book": e.get("detail").cloned().unwrap_or(Value::Null)});
+            let detail =
+                json!({"at": tsz, "book": e.get("detail").cloned().unwrap_or(Value::Null)});
             if let Err(ex) = self.repo.insert_wish_event_at(
                 wish_id,
                 event,
@@ -1289,7 +1328,10 @@ impl WishService {
             info!(
                 "Wish {} refused: {}",
                 wish_id,
-                plan_response.get("reason").and_then(|r| r.as_str()).unwrap_or("")
+                plan_response
+                    .get("reason")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("")
             );
         }
     }
@@ -1312,7 +1354,11 @@ impl WishService {
             let db_name = detail
                 .and_then(|d| d.as_str())
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
-                .and_then(|d| d.get("db").and_then(|db| db.as_str()).map(|s| s.to_string()));
+                .and_then(|d| {
+                    d.get("db")
+                        .and_then(|db| db.as_str())
+                        .map(|s| s.to_string())
+                });
             if let Some(db_name) = db_name {
                 if let Err(e) = archive.delete_wish_assignment(
                     &db_name,

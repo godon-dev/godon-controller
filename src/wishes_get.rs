@@ -2,9 +2,9 @@
 //! (python's controller/steerwishes_get.py, renamed wish-generic per the family ruling);
 //! ported verbatim (validate at the door, call the service, envelope the result).
 
+use crate::wish_service::WishService;
 use serde_json::json;
 use serde_json::Value;
-use crate::wish_service::WishService;
 
 pub fn run(_rd: &Value) -> Value {
     // The list door does not mirror (fold-in only): once the get door
