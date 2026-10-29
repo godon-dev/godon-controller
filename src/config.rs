@@ -850,7 +850,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
         if parallel_f <= 1.0 {
             errors.push(format!(
                 "Cooperation enabled but run.parallel={}. Cooperation requires parallel > 1 for multiple workers to share trials.",
-                &parallel
+                parallel
             ));
         }
     }
@@ -955,7 +955,7 @@ pub fn validate_minimal(systemtender_config: &Value, strict_mode: bool) -> Resul
                     }
                 }
 
-                let obj_name_for = |key: &str| -> String {
+                let obj_name_for = |_key: &str| -> String {
                     obj_obj
                         .get("name")
                         .and_then(|n| n.as_str())

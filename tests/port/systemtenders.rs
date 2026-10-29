@@ -10,10 +10,8 @@ use godon_controller::systemtender_service::{
     job_reached_terminal_state, wait_for_jobs_to_quiesce, SystemtenderService,
 };
 use godon_controller::verbs::dispatch;
-use godon_controller::wmill::WindmillGateway;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::support::{arc_db, row, FakeCausal, FakeDb, FakeWindmill};
 
@@ -95,7 +93,7 @@ fn reconcile_service_claim_refused(
         .iter()
         .map(|(id, f, a, age)| (id.to_string(), *f, *a, *age))
         .collect();
-    let creating: Vec<(String, i64, f64)> = Vec::new();
+    let _creating: Vec<(String, i64, f64)> = Vec::new();
     let db = arc_db(move |_db_name, q| {
         if q.contains("CREATE TABLE") {
             return Ok(None);

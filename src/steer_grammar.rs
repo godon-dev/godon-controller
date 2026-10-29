@@ -25,7 +25,7 @@ pub fn checked_steer_band(band: &Value, where_: &str) -> Result<Value, String> {
     let (Some(lo), Some(hi)) = (lo, hi) else {
         return Err(format!("{} lo and hi must be numbers", where_));
     };
-    if !(lo < hi) {
+    if lo.partial_cmp(&hi) != Some(std::cmp::Ordering::Less) {
         return Err(format!("{} lo must be below hi", where_));
     }
     if !(lo.is_finite() && hi.is_finite()) {

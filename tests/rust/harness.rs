@@ -1,3 +1,7 @@
+// scaffolding helpers kept for the suites — not every helper is wired
+// by every test file; dead_code allowed so unused helpers don't gate CI.
+#![allow(dead_code)]
+
 //! Test seams: the fakes python's tests built by patching
 //! execute_query and the wmill module functions at import time.
 //! The gateway traits (DbGateway, WindmillGateway, CausalClient) are
@@ -27,11 +31,14 @@ pub fn dberr(msg: &str) -> DbError {
 // FakeDb
 // ---------------------------------------------------------------------------
 
+/// answers one query with its rows — the fake's canned responder
+pub type QueryResponder = Box<dyn Fn(&str) -> DbResult<Option<Vec<TextRow>>> + Send + Sync>;
+
 /// Records every (database, query) call; answers from the handler.
 /// The default handler answers Ok(None) - python's capture pattern.
 pub struct FakeDb {
     calls: Mutex<Vec<(String, String)>>,
-    handler: Box<dyn Fn(&str) -> DbResult<Option<Vec<TextRow>>> + Send + Sync>,
+    handler: QueryResponder,
 }
 
 impl FakeDb {
