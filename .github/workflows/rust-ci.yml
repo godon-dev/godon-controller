@@ -1,4 +1,4 @@
-name: Controller Rust CI
+name: Rust Integrity
 
 # The controller's CI: fmt and cargo clippy gates ahead of the tests
 # (per-PR), plus the mutants job — the test-discrimination instrument
