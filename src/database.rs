@@ -1342,25 +1342,47 @@ impl MetadataDatabaseRepository {
         Ok(rows.iter().filter_map(|r| cell_str(&r[0])).collect())
     }
 
-    /// Wishes standing on a tender that no longer exists: the latest
-    /// standing event is assigned/planned and names a sender absent
-    /// from the registry. Their claims (causal book pages) were
-    /// written for the dead tender - the orphan pass untends them.
+    /// Wishes standing on tenders that no longer exist. The sealed
+    /// persistence ruling says tender death is a state change - the
+    /// wish goes UNTENDED, it does not die; endings stay deliberate.
+    /// Standing is judged by the wish's own trail, not by one
+    /// enumerated happy-path state (found live 2026-10-29, godon#420:
+    /// the previous filter matched only latest-event assigned/planned,
+    /// so a wish orphaned mid-remeasure - the missed/refused/replanned
+    /// family latest - was never untended; and a zero-move hold names
+    /// no sender at all - the receiver alone tends it). Three limbs:
+    /// - service was TAKEN UP: an assigned event names a serving
+    ///   tender (a sender, or the receiver of a zero-move hold) - a
+    ///   wish refused before any assignment owes nothing and stays
+    ///   untouched (its ending was already deliberate)
+    /// - the latest event is not a terminal ending
+    ///   (released / untended / closed)
+    /// - EVERY named serving tender is absent from the registry.
+    ///
+    /// Their claims (causal book pages) were written for dead tenders
+    /// - the orphan pass untends them.
     pub fn scan_orphaned_wishes(&self) -> DbResult<Vec<(String, String)>> {
         let db_config = self._get_db_config();
         let query = format!(
             r#"
-        SELECT wish_id, sender FROM (
-            SELECT DISTINCT ON (wish_id) wish_id, event_type,
-                   COALESCE(detail::jsonb ->> 'sender', '') AS sender
-            FROM {events}
-            WHERE event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
-            ORDER BY wish_id, at DESC, id DESC
-        ) latest
-        WHERE latest.event_type IN ('assigned', 'planned')
-          AND latest.sender <> ''
-          AND latest.sender NOT IN (SELECT id FROM {systemtenders})
-          AND latest.wish_id IN (SELECT id FROM {wishes});
+        SELECT wish_id, tender FROM (
+            SELECT w.id AS wish_id,
+                   (SELECT array_agg(DISTINCT named.t)
+                      FROM (SELECT COALESCE(NULLIF(e.detail::jsonb->>'sender',''),
+                                            NULLIF(e.detail::jsonb->>'receiver','')) AS t
+                              FROM {events} e
+                             WHERE e.wish_id = w.id
+                               AND e.event_type = 'assigned') named
+                     WHERE named.t IS NOT NULL) AS tender,
+                   (SELECT e1.event_type FROM {events} e1
+                     WHERE e1.wish_id = w.id
+                     ORDER BY e1.at DESC, e1.id DESC LIMIT 1) AS latest_event
+            FROM {wishes} w
+        ) s
+        WHERE s.tender IS NOT NULL
+          AND COALESCE(s.latest_event, '') NOT IN ('released', 'untended', 'closed')
+          AND NOT EXISTS (SELECT 1 FROM {systemtenders} st
+                           WHERE st.id = ANY(s.tender));
         "#,
             events = self.steerwish_events_table_name,
             systemtenders = self.systemtender_table_name,
