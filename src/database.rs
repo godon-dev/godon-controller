@@ -1270,6 +1270,39 @@ impl MetadataDatabaseRepository {
         Ok(rows.iter().filter_map(|r| cell_str(&r[0])).collect())
     }
 
+    /// Wishes standing on a tender that no longer exists: the latest
+    /// standing event is assigned/planned and names a sender absent
+    /// from the registry. Their claims (causal book pages) were
+    /// written for the dead tender - the orphan pass untends them.
+    pub fn scan_orphaned_wishes(&self) -> DbResult<Vec<(String, String)>> {
+        let db_config = self._get_db_config();
+        let query = format!(
+            r#"
+        SELECT wish_id, sender FROM (
+            SELECT DISTINCT ON (wish_id) wish_id, event_type,
+                   COALESCE(detail::jsonb ->> 'sender', '') AS sender
+            FROM {events}
+            WHERE event_type NOT IN ('walk_opened', 'walk_probe', 'walk_closed')
+            ORDER BY wish_id, at DESC, id DESC
+        ) latest
+        WHERE latest.event_type IN ('assigned', 'planned')
+          AND latest.sender <> ''
+          AND latest.sender NOT IN (SELECT id FROM {systemtenders})
+          AND latest.wish_id IN (SELECT id FROM {wishes});
+        "#,
+            events = self.steerwish_events_table_name,
+            systemtenders = self.systemtender_table_name,
+            wishes = self.steerwishes_table_name
+        );
+        let rows = self.db.execute_query(&db_config, &query, true)?.unwrap_or_default();
+        Ok(rows
+            .iter()
+            // r.get(1): rows without a sender column (narrow readers,
+            // mocked gateways) yield no pair, never a panic
+            .filter_map(|r| Some((cell_str(&r[0])?, r.get(1).and_then(|c| cell_str(c))?)))
+            .collect())
+    }
+
     /// Deletion state for one wish, or None when no marker stands.
     pub fn get_wish_lifecycle(&self, wish_id: &str) -> DbResult<Option<Value>> {
         let db_config = self._get_db_config();

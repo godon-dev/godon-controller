@@ -630,6 +630,7 @@ impl WishService {
         let mut converged = 0;
         let mut redriven = 0;
         let mut failed = 0;
+        let mut untended = 0;
 
         let stale = match self.repo.scan_stale_wish_deletions(WISH_RECONCILE_STALE_SECONDS) {
             Ok(ids) => ids,
@@ -680,6 +681,55 @@ impl WishService {
             }
         }
 
+        // Orphans: wishes still standing on a tender that no longer
+        // exists. The sealed persistence ruling says tender death is a
+        // state change - the wish goes UNTENDED, it does not die;
+        // endings stay deliberate. The CLAIM dies with the tender (the
+        // lease law the engine keeps for dials, kept here for wishes):
+        // causal's book page is purged FIRST - on failure nothing has
+        // changed and the next tick retries, the close_wish contract.
+        // (Found live 2026-10-24: an undecidable planned wish held a
+        // dead tender's band ~14h and refused every steer declare
+        // estate-wide with position_conflict - godon#416.)
+        let orphans = match self.repo.scan_orphaned_wishes() {
+            Ok(pairs) => pairs,
+            Err(e) => {
+                log::warn!("Orphan-wish scan failed (next tick retries): {}", e.0);
+                Vec::new()
+            }
+        };
+        for (wish_id, sender) in orphans {
+            if let Err(e) = self.causal.purge_book_page(&wish_id) {
+                warn!(
+                    "Wish {} orphan purge failed (next tick retries): {}",
+                    wish_id, e
+                );
+                failed += 1;
+                continue;
+            }
+            let detail = json!({"tender": sender, "reason": "tender gone"});
+            match self.repo.insert_wish_event(
+                &wish_id,
+                "untended",
+                Some(&serde_json::to_string(&detail).unwrap_or_default()),
+            ) {
+                Ok(()) => {
+                    info!(
+                        "Wish {} untended - tender {} gone; claim released, wish stands",
+                        wish_id, sender
+                    );
+                    untended += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        "Wish {} untended-event write failed (next tick retries): {}",
+                        wish_id, e.0
+                    );
+                    failed += 1;
+                }
+            }
+        }
+
         let unasked = match self.repo.scan_unasked_wishes(WISH_ASK_PATIENCE_SECONDS) {
             Ok(ids) => ids,
             Err(e) => {
@@ -710,6 +760,7 @@ impl WishService {
         json!({
             "converged": converged,
             "redriven": redriven,
+            "untended": untended,
             "failed": failed,
         })
     }
