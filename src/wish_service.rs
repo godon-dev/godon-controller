@@ -697,6 +697,12 @@ impl WishService {
         let orphans = match self.repo.scan_orphaned_wishes() {
             Ok(pairs) => pairs,
             Err(e) => {
+                // Counted, not swallowed: a broken scan must read as a
+                // failure in the tick's own result (found live
+                // 2026-10-30, godon#420 follow-up: a uuid/text operator
+                // error returned empty silently for a week — the
+                // envelope showed zeros and no one could see the fault).
+                failed += 1;
                 log::warn!("Orphan-wish scan failed (next tick retries): {}", e.0);
                 Vec::new()
             }

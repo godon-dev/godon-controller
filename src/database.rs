@@ -1382,7 +1382,7 @@ impl MetadataDatabaseRepository {
         WHERE s.tender IS NOT NULL
           AND COALESCE(s.latest_event, '') NOT IN ('released', 'untended', 'closed')
           AND NOT EXISTS (SELECT 1 FROM {systemtenders} st
-                           WHERE st.id = ANY(s.tender));
+                           WHERE st.id::text = ANY(s.tender));
         "#,
             events = self.steerwish_events_table_name,
             systemtenders = self.systemtender_table_name,
