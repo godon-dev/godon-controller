@@ -58,6 +58,7 @@ jobs:
         run: cargo mutants --output mutants.out
 
       - name: Upload outcomes
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mutants-outcomes
