@@ -1501,6 +1501,7 @@ impl SystemtenderService {
                     "wishes": {
                         "converged": wishes_out.get("converged").cloned().unwrap_or(json!(0)),
                         "redriven": wishes_out.get("redriven").cloned().unwrap_or(json!(0)),
+                        "untended": wishes_out.get("untended").cloned().unwrap_or(json!(0)),
                         "failed": wishes_out.get("failed").cloned().unwrap_or(json!(0)),
                     },
                     "resurrections": {
