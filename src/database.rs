@@ -508,6 +508,32 @@ impl ArchiveDatabaseRepository {
         Ok(())
     }
 
+    /// The unreleased wish assignments in the tender's own archive DB —
+    /// the "wanted" witness for finished walkers: a row is planted only
+    /// when the acceptance door passes, and leaves when the wish ends
+    /// (the serving worker releases it). A tender whose table or db is
+    /// absent answers no rows — nothing was ever planted, never an
+    /// error: the same two wordings for "not there" the verdict read
+    /// tolerates.
+    pub fn read_wish_assignments(&self, systemtender_db_name: &str) -> DbResult<Vec<TextRow>> {
+        let db_config = self.base_config.with_database(systemtender_db_name);
+        match self.db.execute_query(
+            &db_config,
+            "SELECT wish_id, role FROM wish_assignments",
+            true,
+        ) {
+            Ok(rows) => Ok(rows.unwrap_or_default()),
+            Err(e) => {
+                let t = e.0.to_lowercase();
+                if t.contains("does not exist") || t.contains("not found in raft group") {
+                    Ok(Vec::new())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
     /// The seek's RETURN from the serving tender's own ledger.
     ///
     /// The worker writes seek_return::<wish_id> into its ledger_state

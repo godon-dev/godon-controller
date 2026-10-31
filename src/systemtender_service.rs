@@ -1579,7 +1579,19 @@ impl SystemtenderService {
                 continue; // no verdict answers nothing
             };
             if verdict.get("finished") == Some(&Value::Bool(true)) {
-                continue; // finished is an end, not a death
+                // Finished is an end, not a death — unless a wish is
+                // waiting on this tender (room thirteen, 2026-10-31):
+                // the acceptance door passes finished walkers as
+                // revivable and plants the assignment; that unreleased
+                // row renews the purpose. Revive through the same
+                // guarded door below; wishless finished stays an end.
+                if !self.finished_tender_is_wanted(&id, &db_name) {
+                    continue;
+                }
+                info!(
+                    "Finished worker for {} has a waiting wish — purpose renewed, reviving",
+                    id
+                );
             }
             let interval = verdict
                 .get("interval_secs")
@@ -1665,6 +1677,34 @@ impl SystemtenderService {
             "capped": capped,
             "failed": failed,
         })
+    }
+
+    /// Does a wish wait on this tender? The primary witness: an
+    /// unreleased assignment row in the tender's own db — planted only
+    /// when the acceptance door passed (finished walkers pass as
+    /// revivable), released when the wish ends, so the row present IS
+    /// the waiting. Belt: a non-terminal wish naming the tender by
+    /// outcome prefix. Nothing found answers false — the finished skip
+    /// keeps its old meaning for wishless tenders.
+    fn finished_tender_is_wanted(&self, id: &str, db_name: &str) -> bool {
+        if let Ok(assignments) = self.archive_repo.read_wish_assignments(db_name) {
+            if !assignments.is_empty() {
+                return true;
+            }
+        }
+        if let Ok(wishes) = self.metadata_repo.fetch_wishes_list() {
+            let prefix = format!("{}/", id);
+            for w in &wishes {
+                let outcome = w.get(1).and_then(|c| c.as_deref()).unwrap_or("");
+                let state = w.get(2).and_then(|c| c.as_deref()).unwrap_or("");
+                if outcome.starts_with(&prefix)
+                    && !matches!(state, "unservable" | "returned" | "closed" | "done")
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// One deleting row: send the untrusted hint, read the estate's

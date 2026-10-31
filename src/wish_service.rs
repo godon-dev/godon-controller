@@ -1059,13 +1059,33 @@ impl WishService {
                 format!("heartbeat {:.0}s old (window {:.0}s)", age, window),
             )
         } else {
-            (
-                false,
-                format!(
-                    "heartbeat stale: last beat {:.0}s ago (window {:.0}s)",
-                    age, window
-                ),
-            )
+            // A stale pulse with the finished stamp is a finished walk,
+            // not a death (room thirteen, 2026-10-31): finished walkers
+            // leave on purpose, their state persists, and this very
+            // wish is the revival signal — the assignment this
+            // acceptance plants is the reaper's witness to revive on.
+            // Refusal stays for stale-and-unfinished: real deaths.
+            let finished = match archive.read_state_verdict(&db_name) {
+                Ok(Some(v)) => v.get("finished") == Some(&Value::Bool(true)),
+                _ => false,
+            };
+            if finished {
+                (
+                    true,
+                    format!(
+                        "finished walk, revivable (pulse {:.0}s old, finished stamp set)",
+                        age
+                    ),
+                )
+            } else {
+                (
+                    false,
+                    format!(
+                        "heartbeat stale: last beat {:.0}s ago (window {:.0}s)",
+                        age, window
+                    ),
+                )
+            }
         }
     }
 
