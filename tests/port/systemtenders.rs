@@ -1780,6 +1780,7 @@ fn resurrection_service(
     stop_flag: Option<bool>,
     verdict: Option<(&str, &str, &str)>, // (finished, age_secs, interval_secs)
     config: &str,
+    assignments: &[&str],
 ) -> (SystemtenderService, Arc<FakeDb>, Arc<FakeWindmill>) {
     let registry: Vec<TextRow> = registry
         .iter()
@@ -1798,6 +1799,7 @@ fn resurrection_service(
     let wmill = Arc::new(FakeWindmill::default());
     wmill.queue_async(Ok("job-relaunch-1".to_string()));
     let config = config.to_string();
+    let assignments: Vec<String> = assignments.iter().map(|s| s.to_string()).collect();
     let verdict = verdict.map(|(f, a, i)| (f.to_string(), a.to_string(), i.to_string()));
     let db = arc_db(move |_db, q| {
         if q.contains("CREATE TABLE") {
@@ -1837,6 +1839,14 @@ fn resurrection_service(
                 None => vec![],
             }));
         }
+        if q.contains("SELECT wish_id, role FROM wish_assignments") {
+            return Ok(Some(
+                assignments
+                    .iter()
+                    .map(|w| row(&[Some(w.as_str()), Some("receiver")]))
+                    .collect(),
+            ));
+        }
         if q.contains("FROM systemtender_meta_data WHERE id") {
             return Ok(Some(vec![row(&[
                 Some("row-id"),
@@ -1875,6 +1885,7 @@ fn resurrects_a_worker_dead_past_the_verdict_threshold() {
         Some(false),
         Some(("f", "7200", "60")),
         "{}",
+        &[],
     );
     let r = svc.reconcile_tick();
     assert_eq!(
@@ -1886,8 +1897,14 @@ fn resurrects_a_worker_dead_past_the_verdict_threshold() {
 
 #[test]
 fn leaves_a_live_worker_alone() {
-    let (svc, _db, _wmill) =
-        resurrection_service(&["row-id"], &[], Some(false), Some(("f", "10", "60")), "{}");
+    let (svc, _db, _wmill) = resurrection_service(
+        &["row-id"],
+        &[],
+        Some(false),
+        Some(("f", "10", "60")),
+        "{}",
+        &[],
+    );
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "alive: {r}");
     assert_eq!(r["data"]["resurrections"]["failed"], 0);
@@ -1902,6 +1919,7 @@ fn a_deliberate_park_is_never_revived() {
         Some(true),
         Some(("f", "7200", "60")),
         "{}",
+        &[],
     );
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "parked: {r}");
@@ -1915,14 +1933,38 @@ fn a_finished_worker_is_not_a_death() {
         Some(false),
         Some(("t", "7200", "60")),
         "{}",
+        &[],
     );
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "finished: {r}");
 }
 
 #[test]
+fn a_finished_worker_with_a_waiting_wish_is_revived() {
+    // Room thirteen (2026-10-31): finished walkers leave on purpose —
+    // but when the acceptance door (which passes finished walkers as
+    // revivable) plants the wish assignment, that unreleased row is
+    // the renewal: the tick revives through the same guarded start
+    // door. Wishless finished stays an end (the test above).
+    let (svc, _db, _wmill) = resurrection_service(
+        &["row-id"],
+        &[],
+        Some(false),
+        Some(("t", "7200", "60")),
+        "{}",
+        &["wish-99f7a2c8"],
+    );
+    let r = svc.reconcile_tick();
+    assert_eq!(
+        r["data"]["resurrections"]["relaunched"], 1,
+        "a waiting wish renews the finished walker's purpose: {r}"
+    );
+    assert_eq!(r["data"]["resurrections"]["failed"], 0);
+}
+
+#[test]
 fn no_verdict_answers_nothing() {
-    let (svc, _db, _wmill) = resurrection_service(&["row-id"], &[], Some(false), None, "{}");
+    let (svc, _db, _wmill) = resurrection_service(&["row-id"], &[], Some(false), None, "{}", &[]);
     let r = svc.reconcile_tick();
     assert_eq!(
         r["data"]["resurrections"]["relaunched"], 0,
@@ -1939,6 +1981,7 @@ fn other_families_own_their_states() {
             Some(false),
             Some(("f", "7200", "60")),
             "{}",
+            &[],
         );
         let r = svc.reconcile_tick();
         assert_eq!(
@@ -1958,6 +2001,7 @@ fn a_fresh_resurrection_gets_its_spacing() {
         Some(false),
         Some(("f", "7200", "60")),
         &history_config(&[120]),
+        &[],
     );
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "spacing: {r}");
@@ -1973,6 +2017,7 @@ fn a_worker_that_keeps_dying_goes_loud_not_looped() {
         Some(false),
         Some(("f", "7200", "60")),
         &history_config(&[1200, 2400, 3000]),
+        &[],
     );
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["resurrections"]["relaunched"], 0, "capped: {r}");
@@ -1981,7 +2026,7 @@ fn a_worker_that_keeps_dying_goes_loud_not_looped() {
 
 #[test]
 fn an_empty_registry_is_quiet() {
-    let (svc, _db, _wmill) = resurrection_service(&[], &[], None, None, "{}");
+    let (svc, _db, _wmill) = resurrection_service(&[], &[], None, None, "{}", &[]);
     let r = svc.reconcile_tick();
     assert_eq!(r["data"]["resurrections"]["relaunched"], 0);
     assert_eq!(r["data"]["resurrections"]["waiting"], 0);

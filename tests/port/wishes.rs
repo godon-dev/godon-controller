@@ -1374,6 +1374,18 @@ fn liveness_db(
         if q.contains("SELECT event_type, at, detail") {
             return Ok(Some(evs.clone()));
         }
+        // the state-verdict read: must answer BEFORE the
+        // beat_interval_secs catch — the verdict query contains that
+        // column name too (room thirteen's revivable door). "t" only
+        // in finished mode; every other mode reads an unfinished walk.
+        if q.contains("SELECT finished_at IS NOT NULL") {
+            return Ok(Some(vec![row(&[
+                Some(if mode == "finished" { "t" } else { "f" }),
+                Some(age_s.as_str()),
+                interval_s.as_deref(),
+                None,
+            ])]));
+        }
         if q.contains("beat_interval_secs") {
             if mode == "unreachable" {
                 return Err(DbError("conn refused".to_string()));
@@ -1491,6 +1503,28 @@ fn stale_heartbeat_refused_loudly() {
     assert!(
         !plan_errors(&db).iter().any(|q| q.contains("not alive")),
         "a dead tender is a refusal, not an error"
+    );
+}
+
+#[test]
+fn stale_but_finished_is_revivable() {
+    // Room thirteen (2026-10-31): the walker finished its walk, left
+    // on purpose ("finished walkers leave, holders park"), and its
+    // pulse went stale. The door passes it as revivable — the wish
+    // being declared IS the revival signal; the assignment plants and
+    // the reaper's resurrection family wakes the worker. Refusal is
+    // for stale-and-unfinished only (the test above).
+    let (db, _hb, _ao) = liveness_db("finished", 99999.0, Some(10.0), false);
+    liveness_declare(db.clone());
+    assert_eq!(
+        assignment_calls(&db).len(),
+        1,
+        "a finished walker must be plantable — the wish is the revival signal"
+    );
+    assert!(
+        !refused_events(&db).iter().any(|q| q.contains("no_tender")),
+        "no refusal for a finished walk: {refused:?}",
+        refused = refused_events(&db)
     );
 }
 
